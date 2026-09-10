@@ -1805,6 +1805,51 @@ class EMS extends IPSModule
      * fuer jeden Slot gleich bleiben (siehe Aufrufer fuer den Aufbau).
      * Liefert ['plan' => [...], 'soc' => $neuerSoc].
      */
+    /**
+     * Physikalische Automatik-Simulation fuer die Tagesplan-Anzeige an
+     * Tagen/Slots ohne Preis-Arbitrage-Chance (siehe hasArbitrageInPrices()).
+     * NICHT dieselbe Entscheidungslogik wie simulateDaySlot() -- die
+     * enthaelt Preis-Schwellwert-Branches, die hier NICHT gelten sollen
+     * (kein EMS-Preis-Eingreifen, nur das, was die WR-eigene Automatik von
+     * selbst tut): PV laedt die Batterie zuerst, ab Vollladung wird
+     * eingespeist; reicht PV nicht, deckt die Batterie die Hauslast bis zur
+     * Reserve-Grenze, danach kommt der Rest aus dem Netz. `op`/`gw` bleiben
+     * bewusst durchgehend EMS_OP_AUTO/GW_MODE_AUTO (das ist es, was EMS
+     * tatsaechlich an den WR sendet), nur `reason` beschreibt informativ,
+     * was die Automatik in diesem Slot voraussichtlich physikalisch macht.
+     * Live-Fund 10.09.2026 (Dietmar): eine einfach eingefrorene SOC-Zahl
+     * fuer den Rest des Tages waere falsch, die Batterie laedt/entlaedt ja
+     * trotzdem, nur eben ohne EMS-Preis-Entscheidung.
+     */
+    private function simulateAutomatikSlot($pvW, $price, $soc, array $ctx): array
+    {
+        $loadW    = $ctx['avgHouseW'];
+        $surplusW = $pvW - $loadW;
+        $floor    = $ctx['socMin'] + $ctx['socReserve'];
+
+        if ($surplusW > 0 && $soc < 99.5) {
+            $gainKwh = min($surplusW, $ctx['chargeKw'] * 1000.0) / 1000.0 * 0.25;
+            $soc = min(100.0, $soc + ($gainKwh / max(0.001, $ctx['capKwh']) * 100.0));
+            $reason = ($soc >= 99.5)
+                ? sprintf('Automatik: PV-Überschuss %.0fW, Batterie erreicht Vollladung', $surplusW)
+                : sprintf('Automatik: PV-Überschuss %.0fW lädt Batterie (SOC %.0f%%)', $surplusW, $soc);
+        } elseif ($surplusW > 0) {
+            $reason = sprintf('Automatik: Batterie voll, PV-Überschuss %.0fW wird eingespeist', $surplusW);
+        } else {
+            $deficitW = -$surplusW;
+            if ($soc > $floor) {
+                $lossKwh = min($deficitW, $ctx['dischargeKw'] * 1000.0) / 1000.0 * 0.25;
+                $soc = max($floor, $soc - ($lossKwh / max(0.001, $ctx['capKwh']) * 100.0));
+                $reason = sprintf('Automatik: Hauslast %.0fW aus Batterie (SOC %.0f%%)', $loadW, $soc);
+            } else {
+                $reason = sprintf('Automatik: Batterie an Reserve-Grenze (SOC %.0f%%), Hauslast aus Netz', $soc);
+            }
+        }
+
+        return array('plan' => array('op' => EMS_OP_AUTO, 'gw' => GW_MODE_AUTO, 'power' => 0,
+            'reason' => $reason, 'price' => $price, 'soc' => round($soc, 1)), 'soc' => $soc);
+    }
+
     private function simulateDaySlot($slot, $price, $pvW, $soc, array $cheapRank, array $ctx, $expensiveReserveKwh = 0.0)
     {
         $hourOfSlot = (int)($slot / 4);
@@ -2784,15 +2829,11 @@ class EMS extends IPSModule
                     'price' => $prices[$slot], 'soc' => round($soc, 1));
                 continue;
             }
-            if (!$hasArbitrageToday) {
-                $plan[$slot] = array('op' => EMS_OP_AUTO, 'gw' => GW_MODE_AUTO, 'power' => 0,
-                    'reason' => 'Keine Preis-Arbitrage-Chance heute (günstigster Preis über Eigenökonomie) -- Automatik',
-                    'price' => $prices[$slot], 'soc' => round($soc, 1));
-                continue;
-            }
             $price = $prices[$slot];
             $pvW   = (float)($pvfSlots[$slot] ?? 0.0);
-            $result = $this->simulateDaySlot($slot, $price, $pvW, $soc, $cheapRank, $ctx, $expensiveReserve[$slot] ?? 0.0);
+            $result = $hasArbitrageToday
+                ? $this->simulateDaySlot($slot, $price, $pvW, $soc, $cheapRank, $ctx, $expensiveReserve[$slot] ?? 0.0)
+                : $this->simulateAutomatikSlot($pvW, $price, $soc, $ctx);
             $plan[$slot] = $result['plan'];
             $soc = $result['soc'];
         }
@@ -2832,15 +2873,11 @@ class EMS extends IPSModule
 
         $tomorrowPlan = array();
         for ($slot = 0; $slot < 96; $slot++) {
-            if (!$hasArbitrageTomorrow) {
-                $tomorrowPlan[$slot] = array('op' => EMS_OP_AUTO, 'gw' => GW_MODE_AUTO, 'power' => 0,
-                    'reason' => 'Keine Preis-Arbitrage-Chance morgen (günstigster Preis über Eigenökonomie) -- Automatik',
-                    'price' => $tomorrowPrices[$slot], 'soc' => round($soc, 1));
-                continue;
-            }
             $price = $tomorrowPrices[$slot];
             $pvW   = (float)($pvfSlots[96 + $slot] ?? 0.0);
-            $result = $this->simulateDaySlot($slot, $price, $pvW, $soc, $tomorrowCheapRank, $ctxTomorrow, $tomorrowExpensiveReserve[$slot] ?? 0.0);
+            $result = $hasArbitrageTomorrow
+                ? $this->simulateDaySlot($slot, $price, $pvW, $soc, $tomorrowCheapRank, $ctxTomorrow, $tomorrowExpensiveReserve[$slot] ?? 0.0)
+                : $this->simulateAutomatikSlot($pvW, $price, $soc, $ctxTomorrow);
             $tomorrowPlan[$slot] = $result['plan'];
             $soc = $result['soc'];
         }

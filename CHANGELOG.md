@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.28.4 (2026-09-10)
+- **Fix zu 0.28.3, noch am selben Tag (Dietmars Nachfrage):** Der
+  Arbitrage-Fallback in `BuildDayPlan()` fror den angezeigten SOC für den
+  Rest des Tages einfach ein — falsch, die Batterie lädt/entlädt ja auch
+  ohne EMS-Preis-Eingriff ganz normal weiter. Neue Funktion
+  `simulateAutomatikSlot()`: physikalische Simulation dessen, was die
+  WR-eigene Automatik tatsächlich tut (PV lädt Batterie bis Vollladung,
+  danach Einspeisung; reicht PV nicht, deckt die Batterie die Hauslast bis
+  zur Reserve-Grenze, danach Netzbezug) — ohne die Preis-Schwellwert-Logik
+  aus `simulateDaySlot()`. `op`/`gw` bleiben durchgehend Automatik (das
+  sendet EMS tatsächlich), `reason` beschreibt nur informativ den
+  physikalisch erwarteten Verlauf.
+
 ## 0.28.3 (2026-09-10)
 - **Fix: `BuildDayPlan()` ignorierte die neue Arbitrage-Selbsteinschätzung
   (0.28.1) komplett.** Live-Fund von Dietmar: "Tagesplan neu berechnen"
