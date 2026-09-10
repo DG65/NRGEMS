@@ -584,11 +584,6 @@
                     "maximum": 2
                 },
                 {
-                    "type": "CheckBox",
-                    "name": "WB_GridRewards_Active",
-                    "caption": "Grid Rewards Modus aktiv (Tibber steuert Wallbox, Batterie passiv)"
-                },
-                {
                     "type": "NumberSpinner",
                     "name": "VEH_Home_Radius_Km",
                     "caption": "Heimfahrt-Umkreis (km) — Fahrzeug-Ladebedarf bei Rückkehr",

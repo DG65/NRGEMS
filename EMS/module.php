@@ -218,7 +218,6 @@ class EMS extends IPSModule
         // ── Wallboxen ───────────────────────────────────────────────
         $this->RegisterPropertyBoolean('WB_Active',            false);
         $this->RegisterPropertyInteger('WB_Count',             1);
-        $this->RegisterPropertyBoolean('WB_GridRewards_Active',false);
         $this->RegisterPropertyInteger('WB_Cooldown_Sec',      120);
         $this->RegisterPropertyInteger('WB_Min_Charge_Min',    5);
         $this->RegisterPropertyInteger('BOOST_Duration_Min',   30);
@@ -332,7 +331,9 @@ class EMS extends IPSModule
         $this->RegisterVariableBoolean('WATCHDOG_Brake_Tripped', '⚠️ Totmann-Bremse ausgelöst (Reset nötig)', '~Alert', 150);
         $this->RegisterVariableBoolean('WATCHDOG_Reset_Brake',   'Totmann-Bremse zurücksetzen',              '~Switch', 151);
 
-        $this->EnableAction('EMS_GridRewards');
+        // EMS_GridRewards NICHT mehr per EnableAction schaltbar (0.29.5,
+        // Dietmar 10.09.2026): wird jetzt automatisch von
+        // detectGridRewardsActive() gesetzt, kein manueller Schalter mehr.
         $this->EnableAction('INVOICE_Ist_Betrag');
         $this->EnableAction('INVOICE_Ist_MwSt');
         $this->EnableAction('INVOICE_Ist_Gutschrift');
@@ -1773,6 +1774,29 @@ class EMS extends IPSModule
     }
 
     /**
+     * Automatische Grid-Rewards-Erkennung (Dietmar, 10.09.2026): vorher musste
+     * er `EMS_GridRewards` von Hand umlegen, obwohl `TIBBERGR_GetActiveControls()`
+     * (Vertrag 2.0) genau das bereits pro Gerät live meldet -- ein Eintrag
+     * existiert nur, wenn Tibber GERADE `GridRewardDelivering` fuer ein
+     * Fahrzeug/eine Batterie ist (Filter sitzt schon im Tibber-Modul selbst,
+     * siehe dessen GetActiveControls()-Kommentar). Deckt sowohl den
+     * "Stromeinkauf"- als auch den "Ladestopp wegen Netzengpass"-Fall ab
+     * (beide sind laut Tibbers eigenem DetermineMode() ein Delivering-Zustand,
+     * nur mit unterschiedlichem `reason`-Text) -- fuer EMS macht das keinen
+     * Unterschied, weil der Stromeinkauf-Sollwert ohnehin aus der tatsaechlich
+     * gemessenen Wallbox-Leistung berechnet wird (0W beim Ladestopp ergibt
+     * automatisch 0W Sollwert, kein Sonderfall noetig).
+     */
+    private function detectGridRewardsActive(): bool
+    {
+        if (!function_exists('TIBBERGR_GetActiveControls')) { return false; }
+        $tibberId = $this->getTibberGridRewardInstance();
+        if ($tibberId <= 0) { return false; }
+        $controls = @TIBBERGR_GetActiveControls($tibberId);
+        return is_array($controls) && !empty($controls);
+    }
+
+    /**
      * Liefert die kombinierte Tibber-Preiskurve (heute+morgen, sobald von
      * Tibber veroeffentlicht) als JSON, EINMAL abgerufen -- korrigiert
      * 20.08.2026 nach Rueckmeldung von Tibber Grid Reward: es gibt KEINEN
@@ -2598,12 +2622,6 @@ class EMS extends IPSModule
 
     public function RequestAction($ident, $value)
     {
-        if ($ident === 'EMS_GridRewards') {
-            $this->SetValue('EMS_GridRewards', (bool)$value);
-            $this->emsLog(EMS_LOG_BASIC, 'Grid Rewards ' . ($value ? 'aktiviert' : 'deaktiviert'));
-            $this->Update();
-            return;
-        }
         if (in_array($ident, array('INVOICE_Ist_Betrag', 'INVOICE_Ist_MwSt', 'INVOICE_Ist_Gutschrift'), true)) {
             // Direkte WebFront-Eingabe der monatlichen Tibber-Rechnung
             // (Dietmars Vorgabe 25.08.2026: kein PDF-Parsing, Option 3).
@@ -3552,7 +3570,12 @@ class EMS extends IPSModule
         // Wallboxen
         $s['wb_active']     = $this->ReadPropertyBoolean('WB_Active');
         $s['wb_count']      = $this->ReadPropertyInteger('WB_Count');
-        $s['grid_rewards']  = $this->GetValue('EMS_GridRewards');
+        // Automatisch erkannt (siehe detectGridRewardsActive()) statt manuell
+        // geschaltet -- die Variable selbst bleibt als sichtbarer/archivierter
+        // Status stehen (Tagesplan-Farbmarkierung 0.29.2 liest sie historisch),
+        // wird aber jetzt von EMS selbst gesetzt statt vom Nutzer.
+        $s['grid_rewards']  = $this->detectGridRewardsActive();
+        $this->SetValue('EMS_GridRewards', $s['grid_rewards']);
         $s['wb1_pow_kw']    = (float)$this->readVar('VAR_WB1_Power',  0);
         $s['wb1_status']    = (int)  $this->readVar('VAR_WB1_Status', 0);
         $s['wb1_cable']     = (int)  $this->readVar('VAR_WB1_Cable',  0);

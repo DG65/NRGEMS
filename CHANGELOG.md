@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.29.5 (2026-09-10)
+- **Grid Rewards wird jetzt automatisch erkannt, kein manueller Schalter
+  mehr.** `EMS_GridRewards` musste bisher von Hand umgelegt werden, obwohl
+  `TIBBERGR_GetActiveControls()` (Vertrag 2.0) genau das bereits pro Gerät
+  live meldet — ein Eintrag existiert nur, wenn Tibber GERADE
+  `GridRewardDelivering` für ein Fahrzeug/eine Batterie ist. Neue
+  `detectGridRewardsActive()` liest das jeden Zyklus aus; die Variable
+  `EMS_GridRewards` bleibt als sichtbarer/archivierter Status bestehen
+  (weiterhin Grundlage der Tagesplan-Farbmarkierung aus 0.29.2), wird aber
+  von EMS selbst gesetzt statt vom Nutzer. `EnableAction`/
+  `RequestAction`-Handler entfernt. Deckt sowohl den "Stromeinkauf"- als
+  auch den "Ladestopp wegen Netzengpass"-Fall ab (Dietmar, 10.09.2026) —
+  beide sind laut Tibbers eigenem `DetermineMode()` ein Delivering-Zustand,
+  nur mit unterschiedlichem `reason`-Text; EMS braucht dafür keine
+  Sonderbehandlung, weil der Stromeinkauf-Sollwert ohnehin aus der
+  tatsächlich gemessenen Wallbox-Leistung berechnet wird (0W beim
+  Ladestopp ergibt automatisch 0W Sollwert).
+- **Totes Formular-Property `WB_GridRewards_Active` entfernt.** Wurde im
+  Code nirgends gelesen, Beschriftung ("Batterie passiv") beschrieb das
+  längst verworfene Grid-Rewards-Verhalten von vor der heutigen Korrektur
+  (0.27.2/0.27.3) — reines Überbleibsel, das irreführend im Formular stand.
+
 ## 0.29.4 (2026-09-10)
 - **Fix: "Keine eigene Anlage als Norm" — `hasArbitrageInPrices()` hätte bei
   JEDEM anderen Nutzer ohne konfigurierte Einspeisevergütung Dietmars
