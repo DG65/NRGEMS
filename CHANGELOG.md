@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.28.2 (2026-09-10)
+- **Klarstellung/Aufräumen: Grid Rewards bleibt von `hasArbitrageToday()`
+  unberührt.** Dietmars Hinweis: Grid Rewards liefert meist günstigere
+  Energie als die eigene Erzeugung, auch wenn der Preis vorher nicht
+  bekannt ist (Tibbers eigene Disposition, nicht in der sichtbaren
+  Tagespreiskurve enthalten) — die neue Arbitrage-Selbsteinschätzung (0.28.1)
+  dürfte das also niemals unterdrücken. War bereits korrekt (Grid-Rewards-
+  Zweig steht in `optimize()` vor der Arbitrage-Prüfung, feuert
+  unconditional), jetzt zusätzlich explizit dokumentiert. Nebenbei eine
+  veraltete, aus einer Zwischenversion stehen gebliebene Kommentar-Leiche
+  entfernt, die fälschlich noch auf die 0.27.2-Zwischenlösung verwies.
+
 ## 0.28.1 (2026-09-10)
 - **Korrektur zu 0.28.0, noch am selben Tag:** Dietmar wollte KEINEN
   manuellen Schalter ("Du sollst Dir das merken und dann selbstständig

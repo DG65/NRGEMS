@@ -3458,19 +3458,6 @@ class EMS extends IPSModule
             return $d;
         }
 
-        // ── Grid Rewards ─────────────────────────────────────────────
-        // KORRIGIERT 10.09.2026 (Dietmars Anwendungsfall: PV soll waehrend
-        // Grid Rewards weiter ganz normal Batterie+Haus bedienen, NUR die von
-        // Tibber direkt gesteuerte Wallbox soll komplett aus dem Netz laufen).
-        // Frueher stand hier ein eigener Zweig, der bei aktiven Grid Rewards
-        // die Batterie komplett stillgelegt und einen festen Netz-Import fuer
-        // Haus+WB erzwungen hat -- das verhinderte PV-Ladung der Batterie,
-        // genau das Gegenteil vom gewuenschten Verhalten. Die Wallbox-
-        // Ausklammerung (EMS darf sie nicht schalten, Tibber steuert direkt)
-        // passiert jetzt zentral NACH optimize() im Aufrufer (Update()), egal
-        // welcher der folgenden Zweige gerade die Batterie-/PV-Entscheidung
-        // trifft -- siehe dort.
-
         // ── Batterie-Boost (Nutzerwunsch 29.07.2026, Vorbild evcc) ──────
         // Manuell ausgeloester, zeitlich begrenzter Modus: Batterie entlaedt
         // mit maximaler Leistung, alle Wallboxen werden freigegeben, damit ein
@@ -3502,6 +3489,16 @@ class EMS extends IPSModule
         }
 
         // ── Grid Rewards ─────────────────────────────────────────────
+        // WICHTIG: dieser Zweig steht bewusst VOR der Arbitrage-Selbst-
+        // einschaetzung weiter unten (hasArbitrageToday()) und ist von ihr
+        // komplett unabhaengig. Dietmars Hinweis 10.09.2026: Grid Rewards
+        // liefert Energie, die meist guenstiger als die eigene Erzeugung
+        // ist, AUCH WENN der tatsaechliche Preis vorher nicht bekannt ist
+        // (Tibbers eigene, nicht einsehbare Disposition) -- eine
+        // Preiseinschaetzung anhand der sichtbaren Tagespreiskurve wuerde
+        // das also grundsaetzlich nicht erfassen koennen. Grid Rewards
+        // greift deshalb IMMER, unabhaengig davon, ob hasArbitrageToday()
+        // fuer den sichtbaren Tagespreis "keine Chance" errechnet.
         // ZWEITE KORREKTUR 10.09.2026 (Dietmar, live): reine native Automatik
         // (wie in der ersten Korrektur versucht) waere FALSCH -- die WR-
         // Automatik unterscheidet nicht zwischen Wallbox- und Hausverbrauch,
