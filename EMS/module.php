@@ -2769,10 +2769,24 @@ class EMS extends IPSModule
             }
         }
 
+        // Arbitrage-Selbsteinschaetzung (Dietmar, 10.09.2026, siehe
+        // hasArbitrageInPrices()): wenn es heute gar keine Preis-Arbitrage-
+        // Chance gibt, soll der SICHTBARE Tagesplan das auch zeigen, statt
+        // weiterhin aktive Schaltvorgaenge zu planen, die optimize() zur
+        // Laufzeit ohnehin nicht mehr ausfuehren wuerde (applyPlanSlot()
+        // wird bei fehlender Arbitrage-Chance gar nicht erst aufgerufen).
+        $hasArbitrageToday = $this->hasArbitrageInPrices($prices);
+
         $plan = array();
         for ($slot = 0; $slot < 96; $slot++) {
             if ($slot < $nowSlot) {
                 $plan[$slot] = array('op' => EMS_OP_AUTO, 'gw' => GW_MODE_AUTO, 'power' => 0, 'reason' => '(vergangen)',
+                    'price' => $prices[$slot], 'soc' => round($soc, 1));
+                continue;
+            }
+            if (!$hasArbitrageToday) {
+                $plan[$slot] = array('op' => EMS_OP_AUTO, 'gw' => GW_MODE_AUTO, 'power' => 0,
+                    'reason' => 'Keine Preis-Arbitrage-Chance heute (günstigster Preis über Eigenökonomie) -- Automatik',
                     'price' => $prices[$slot], 'soc' => round($soc, 1));
                 continue;
             }
@@ -2814,9 +2828,16 @@ class EMS extends IPSModule
         $ctxTomorrow['avgHouseW'] = $avgHouseWTomorrow;
 
         $tomorrowExpensiveReserve = $this->computeExpensiveReserveKwh($tomorrowPrices, $thDischarge, $avgHouseWTomorrow);
+        $hasArbitrageTomorrow = $this->hasArbitrageInPrices($tomorrowPrices);
 
         $tomorrowPlan = array();
         for ($slot = 0; $slot < 96; $slot++) {
+            if (!$hasArbitrageTomorrow) {
+                $tomorrowPlan[$slot] = array('op' => EMS_OP_AUTO, 'gw' => GW_MODE_AUTO, 'power' => 0,
+                    'reason' => 'Keine Preis-Arbitrage-Chance morgen (günstigster Preis über Eigenökonomie) -- Automatik',
+                    'price' => $tomorrowPrices[$slot], 'soc' => round($soc, 1));
+                continue;
+            }
             $price = $tomorrowPrices[$slot];
             $pvW   = (float)($pvfSlots[96 + $slot] ?? 0.0);
             $result = $this->simulateDaySlot($slot, $price, $pvW, $soc, $tomorrowCheapRank, $ctxTomorrow, $tomorrowExpensiveReserve[$slot] ?? 0.0);
@@ -3124,7 +3145,19 @@ class EMS extends IPSModule
      */
     private function hasArbitrageToday(): bool
     {
-        $prices = $this->parsePT15M($this->getPT15MTodayJson());
+        return $this->hasArbitrageInPrices($this->parsePT15M($this->getPT15MTodayJson()));
+    }
+
+    /**
+     * Kern der Arbitrage-Einschaetzung, wiederverwendbar fuer beliebige
+     * Preisreihen (heute in optimize(), heute UND morgen in BuildDayPlan()
+     * -- sonst zeigt der sichtbare Tagesplan weiterhin aktive Schaltvorgaenge,
+     * obwohl optimize() sie gar nicht mehr ausfuehren wuerde, siehe Dietmars
+     * Live-Fund 10.09.2026 "Tagesplan neu berechnen bringt keine neue
+     * Erkenntnis").
+     */
+    private function hasArbitrageInPrices(array $prices): bool
+    {
         $minPrice = null;
         foreach ($prices as $p) {
             if ($p === null) { continue; }

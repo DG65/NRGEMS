@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.28.3 (2026-09-10)
+- **Fix: `BuildDayPlan()` ignorierte die neue Arbitrage-Selbsteinschätzung
+  (0.28.1) komplett.** Live-Fund von Dietmar: "Tagesplan neu berechnen"
+  zeigte weiterhin aktive Einspeisen/Eigenverbrauch-Schaltungen, obwohl
+  `optimize()` sie bei fehlender Preis-Arbitrage-Chance gar nicht mehr
+  ausführen würde — der sichtbare Plan und das tatsächliche Verhalten
+  liefen auseinander. `hasArbitrageToday()` in die wiederverwendbare
+  `hasArbitrageInPrices($prices)` aufgeteilt und jetzt auch in
+  `BuildDayPlan()` angewendet, für heute UND morgen (jeweils eigene
+  Preiskurve) — ohne Arbitrage-Chance zeigt der Plan ab jetzt ehrlich
+  "Automatik" statt eines Plans, der nie ausgeführt wird.
+
 ## 0.28.2 (2026-09-10)
 - **Klarstellung/Aufräumen: Grid Rewards bleibt von `hasArbitrageToday()`
   unberührt.** Dietmars Hinweis: Grid Rewards liefert meist günstigere
