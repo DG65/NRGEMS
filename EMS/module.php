@@ -3356,6 +3356,16 @@ class EMS extends IPSModule
             if ($minPrice === null || $p < $minPrice) { $minPrice = $p; }
         }
         if ($minPrice === null) { return false; }
+        // "Keine eigene Anlage als Norm": OHNE konfigurierte Einspeise-
+        // verguetung darf hier NICHT Dietmars eigener Wert (0,1836 EUR/kWh)
+        // als stiller Standard fuer jeden Nutzer einspringen -- ein anderer
+        // Nutzer mit z.B. 7ct Einspeiseverguetung wuerde sonst mit einer
+        // fast dreimal zu hohen Schwelle rechnen und die preisgesteuerten
+        // Zweige faelschlich abschalten. Ohne Konfiguration bleibt die
+        // Arbitrage-Chance deshalb bewusst IMMER "ja" (frueheres Verhalten
+        // vor 0.28.1, sicherer Fallback) statt einen falschen Wert zu raten.
+        $feedTariffVarId = $this->ReadPropertyInteger('VAR_TIB_Feed_Tariff');
+        if ($feedTariffVarId <= 0) { return true; }
         $feedTariff = (float)$this->readVar('VAR_TIB_Feed_Tariff', 0.1836);
         return $minPrice < $feedTariff;
     }

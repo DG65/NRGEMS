@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.29.4 (2026-09-10)
+- **Fix: "Keine eigene Anlage als Norm" — `hasArbitrageInPrices()` hätte bei
+  JEDEM anderen Nutzer ohne konfigurierte Einspeisevergütung Dietmars
+  eigenen Wert (0,1836 €/kWh) als stillen Standard verwendet.** Dietmars
+  Nachfrage "Würde das heute besprochene Szenario bei jedem Nutzer ohne
+  Eingreifen funktionieren?" deckte auf: `VAR_TIB_Feed_Tariff` ist ein
+  optionales Formularfeld ohne Pflicht/Hinweis auf den Fallback-Wert — ein
+  Nutzer mit z. B. 7 ct Einspeisevergütung hätte durch den fast dreimal zu
+  hohen Fallback-Vergleichswert die preisgesteuerten Zweige (§14a-
+  Nachtladen/Grünste Ladezeit/Tagesplan) fälschlich als "keine Arbitrage-
+  Chance" komplett stillgelegt bekommen, ohne dass er das je konfiguriert
+  hätte. Gefixt: ist `VAR_TIB_Feed_Tariff` nicht verknüpft, gilt die
+  Arbitrage-Chance jetzt bewusst immer als gegeben (Verhalten wie vor
+  0.28.1) statt mit einem geratenen Wert zu rechnen — sicherer Fallback statt
+  stillschweigend übernommener Dietmar-spezifischer Zahl. Betrifft nur
+  `hasArbitrageInPrices()`; die älteren, bereits vor dieser Session
+  bestehenden `VAR_TIB_Feed_Tariff`-Fallback-Stellen in der Export-vs-
+  Entladen-Preisentscheidung (`simulateDaySlot()`, Zeile ~2854/2454/3563)
+  sind vom selben Muster betroffen, aber bewusst NICHT mit angefasst — das
+  wäre eine tiefere, eigenständig zu prüfende Änderung an bestehender,
+  bereits produktiver Preislogik.
+
 ## 0.29.3 (2026-09-10)
 - **Fix, noch am selben Tag: eigentliche Ursache für "Grid Rewards nirgends
   im Tagesplan zu sehen" war nicht die Farb-Kategorie aus 0.29.2, sondern
