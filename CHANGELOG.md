@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.28.1 (2026-09-10)
+- **Korrektur zu 0.28.0, noch am selben Tag:** Dietmar wollte KEINEN
+  manuellen Schalter ("Du sollst Dir das merken und dann selbstständig
+  entscheiden können") — `OPT_AutomatikOnly`-Property und Formularfeld
+  wieder entfernt. Stattdessen berechnet EMS jeden Zyklus selbst
+  (`hasArbitrageToday()`), ob es heute überhaupt eine Preis-Arbitrage-Chance
+  gibt (günstigster Tagespreis < eigene Erzeugungs-/Einspeise-Ökonomie,
+  `VAR_TIB_Feed_Tariff`) — nur wenn ja, greifen §14a-Nachtladen/Grünste
+  Ladezeit/Tagesplan überhaupt. Kein Bedienelement, keine Konfiguration
+  nötig. §14a-Lastbegrenzung, Batterie-Boost und Grid-Rewards unverändert.
+
 ## 0.28.0 (2026-09-10)
 - **Neuer Schalter `OPT_AutomatikOnly`** (Formular: "🆕 Nur Automatik"),
   Default **AN**. Dietmars Begründung: an Tagen ohne echte Preis-Arbitrage-

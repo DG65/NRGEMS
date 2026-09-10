@@ -289,12 +289,6 @@ class EMS extends IPSModule
         $this->RegisterPropertyFloat(  'OPT_Hysteresis_Price',     0.01);
         $this->RegisterPropertyInteger('OPT_Cooldown_Sec',         60);
         $this->RegisterPropertyInteger('OPT_Planning_Horizon_H',   24);
-        // Dietmars Schalter (10.09.2026): Default AN -- solange der
-        // Tagesplan-Algorithmus "keine Preis-Arbitrage-Chance heute" nicht
-        // selbst erkennt, greift EMS lieber gar nicht aktiv ein und ueber-
-        // laesst Batterie/Haus/Einspeisung komplett der WR-Automatik. Nur
-        // §14a-Lastbegrenzung, Batterie-Boost und Grid Rewards bleiben aktiv.
-        $this->RegisterPropertyBoolean('OPT_AutomatikOnly',        true);
 
         // ── Statusvariablen ─────────────────────────────────────────
         $this->RegisterVariableBoolean('EMS_Active_State', 'EMS aktiv',             '', 10);
@@ -3115,6 +3109,32 @@ class EMS extends IPSModule
         return $total;
     }
 
+    /**
+     * Gibt es heute UEBERHAUPT eine Preis-Arbitrage-Chance? Dietmars Vorgabe
+     * 10.09.2026: wenn selbst der guenstigste Tagespreis ueber der eigenen
+     * Erzeugungs-/Einspeise-Oekonomie (VAR_TIB_Feed_Tariff) liegt, gibt es
+     * fuer den ganzen Tag nichts zu optimieren -- die WR-Automatik liefert
+     * dasselbe Ergebnis von selbst (Batterie laedt aus PV, speist bei
+     * Vollladung automatisch ein, holt Hauslast bei fehlender PV automatisch
+     * aus der Batterie). Bewusst KEIN manueller Schalter (Dietmar explizit:
+     * "Du sollst Dir das merken und dann selbststaendig entscheiden koennen")
+     * -- EMS berechnet das jeden Zyklus selbst aus den vorliegenden Preisen.
+     * Keine Preisdaten vorhanden -> false (sicherer Default, entspricht dem
+     * bestehenden Automatik-Fallback-Verhalten bei fehlendem Tagesplan).
+     */
+    private function hasArbitrageToday(): bool
+    {
+        $prices = $this->parsePT15M($this->getPT15MTodayJson());
+        $minPrice = null;
+        foreach ($prices as $p) {
+            if ($p === null) { continue; }
+            if ($minPrice === null || $p < $minPrice) { $minPrice = $p; }
+        }
+        if ($minPrice === null) { return false; }
+        $feedTariff = (float)$this->readVar('VAR_TIB_Feed_Tariff', 0.1836);
+        return $minPrice < $feedTariff;
+    }
+
     private function parsePT15M($json, int $dayOffset = 0)
     {
         $prices = array_fill(0, 96, null);
@@ -3521,23 +3541,18 @@ class EMS extends IPSModule
         $soc            = $s['bat_soc'];
         $pvW            = $s['pv_total_w'];
 
-        // ── Automatik-Only-Schalter (Dietmar, 10.09.2026) ────────────────
-        // Wenn aktiv, werden die drei preis-/plan-gesteuerten Zweige unten
-        // (§14a Nacht-Laden, Gruenste Ladezeit, Tagesplan) komplett
-        // uebersprungen -- EMS greift dann so gut wie gar nicht aktiv ein,
-        // die WR-eigene Automatik uebernimmt Batterieladung aus PV,
-        // Volllade-Einspeisung und Hausversorgung aus der Batterie von
-        // selbst. Begruendung fuers Default an (Dietmars Beispieltag): wenn
-        // selbst der guenstigste Netzpreis des Tages ueber der eigenen
-        // Erzeugungs-/Einspeise-Oekonomie liegt, gibt es keine echte Preis-
-        // Arbitrage-Chance -- der Tagesplan wuerde dann unnoetig aktiv
-        // schalten (z.B. Einspeisen/Eigenverbrauch-Wechsel), obwohl die
-        // Automatik dasselbe Ergebnis von selbst und ohne Risiko liefert.
-        // Kein Freifahrtschein fuer den Tagesplan-Algorithmus selbst: das
-        // eigentliche Problem (Tagesplan erkennt "keine Arbitrage-Chance
-        // heute" nicht von selbst) bleibt offen, dieser Schalter ist der
-        // pragmatische Schnellzugriff bis das nachgeschaerft ist.
-        if (!$this->ReadPropertyBoolean('OPT_AutomatikOnly')) {
+        // ── Arbitrage-Selbsteinschaetzung (Dietmar, 10.09.2026) ──────────
+        // KEIN manueller Schalter -- EMS berechnet jeden Zyklus selbst
+        // (hasArbitrageToday()), ob es heute ueberhaupt eine Preis-
+        // Arbitrage-Chance gibt (guenstigster Tagespreis < eigene Erzeugungs-
+        // /Einspeise-Oekonomie). Wenn nicht, werden die drei preis-/plan-
+        // gesteuerten Zweige unten (§14a Nacht-Laden, Gruenste Ladezeit,
+        // Tagesplan) komplett uebersprungen -- die WR-eigene Automatik
+        // uebernimmt Batterieladung aus PV, Volllade-Einspeisung und
+        // Hausversorgung aus der Batterie von selbst, ohne dass EMS aktiv
+        // eingreifen muss (Dietmars Beispieltag: guenstigster Preis >25ct
+        // liegt ueber 18,36ct Eigenoekonomie -- nichts zu optimieren).
+        if ($this->hasArbitrageToday()) {
 
         // ── 1. §14a Nacht-Laden ──────────────────────────────────────
         if ($s['enwg_in_window'] && $s['bat_active'] && $soc < ($socTargetNight - $hystSoc)) {
@@ -3588,7 +3603,7 @@ class EMS extends IPSModule
             return $planned;
         }
 
-        } // Ende Automatik-Only-Schalter
+        } // Ende Arbitrage-Selbsteinschaetzung
 
         // ── 4. Fallback: Automatik (kein Tagesplan vorhanden, z.B. PVF/LFC
         // fehlt oder noch keine Preisdaten da -- oder das Plan-Sicherheits-
