@@ -3325,7 +3325,7 @@ class EMS extends IPSModule
     /**
      * Gibt es heute UEBERHAUPT eine Preis-Arbitrage-Chance? Dietmars Vorgabe
      * 10.09.2026: wenn selbst der guenstigste Tagespreis ueber der eigenen
-     * Erzeugungs-/Einspeise-Oekonomie (VAR_TIB_Feed_Tariff) liegt, gibt es
+     * Einspeisevergütung (VAR_TIB_Feed_Tariff) liegt, gibt es
      * fuer den ganzen Tag nichts zu optimieren -- die WR-Automatik liefert
      * dasselbe Ergebnis von selbst (Batterie laedt aus PV, speist bei
      * Vollladung automatisch ein, holt Hauslast bei fehlender PV automatisch
@@ -3766,8 +3766,8 @@ class EMS extends IPSModule
         // ── Arbitrage-Selbsteinschaetzung (Dietmar, 10.09.2026) ──────────
         // KEIN manueller Schalter -- EMS berechnet jeden Zyklus selbst
         // (hasArbitrageToday()), ob es heute ueberhaupt eine Preis-
-        // Arbitrage-Chance gibt (guenstigster Tagespreis < eigene Erzeugungs-
-        // /Einspeise-Oekonomie). Wenn nicht, werden die drei preis-/plan-
+        // Arbitrage-Chance gibt (guenstigster Tagespreis < eigene
+        // Einspeisevergütung). Wenn nicht, werden die drei preis-/plan-
         // gesteuerten Zweige unten (§14a Nacht-Laden, Gruenste Ladezeit,
         // Tagesplan) komplett uebersprungen -- die WR-eigene Automatik
         // uebernimmt Batterieladung aus PV, Volllade-Einspeisung und
