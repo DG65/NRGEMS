@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.29.3 (2026-09-10)
+- **Fix, noch am selben Tag: eigentliche Ursache für "Grid Rewards nirgends
+  im Tagesplan zu sehen" war nicht die Farb-Kategorie aus 0.29.2, sondern
+  fehlende Archivierung.** Live-Diagnose zeigte: `getArchivedSlotsToday()`
+  lieferte für `EMS_HousePower` UND `EMS_GridRewards` durchgehend leer
+  (`AC_GetLoggedValues()` gab `false` zurück), während dieselbe Funktion für
+  den SOC (`#37014`) problemlos 40 Zeilen lieferte. Ursache:
+  `AC_GetLoggingStatus()` bestätigte, dass für beide EMS-eigenen Variablen
+  Archivierung nie eingeschaltet war — Symcon aktiviert das standardmäßig
+  NICHT für neu registrierte Variablen, der SOC funktionierte nur zufällig,
+  weil InverterHub diese Variable schon lange selbst archiviert. Gefixt mit
+  neuer `ensureArchiving()`, analog zu `ensureDayPlanEvent()` bei jedem
+  `ApplyChanges()` aufgerufen: schaltet `AC_SetLoggingStatus()` für
+  `EMS_HousePower`/`EMS_GridRewards` idempotent ein, sofern eine Archive-
+  Control-Instanz vorhanden ist — kein manueller Schritt mehr für neue
+  Installationen nötig. Live an Dietmars System sofort auch händisch
+  nachgezogen (Archivierung ab 10.09.2026 12:02 Uhr aktiv); die Farbe aus
+  0.29.2 war schon richtig, nur ohne Daten dahinter unsichtbar. Vergangene
+  Grid-Reward-Zeiträume VOR diesem Zeitpunkt bleiben unwiederbringlich ohne
+  Archivdaten — erst ab jetzt sammelt die Variable Historie.
+
 ## 0.29.2 (2026-09-10)
 - **Tagesplan: vergangene Grid-Rewards-Slots farblich markiert.** Dietmars
   Wunsch: "Wenn Du Grid Rewards bemerkst, dann könntest Du die in der

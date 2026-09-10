@@ -409,6 +409,12 @@ class EMS extends IPSModule
             $this->emsLog(EMS_LOG_BASIC, 'Tagesplan-Event konnte nicht angelegt werden: ' . $e->getMessage());
         }
 
+        try {
+            $this->ensureArchiving();
+        } catch (Throwable $e) {
+            $this->emsLog(EMS_LOG_BASIC, 'Archivierung fuer EMS-Variablen konnte nicht gesetzt werden: ' . $e->getMessage());
+        }
+
         $active   = $this->ReadPropertyBoolean('EMS_Active');
         $interval = $this->ReadPropertyInteger('EMS_Interval');
 
@@ -3071,6 +3077,39 @@ class EMS extends IPSModule
      * der EMS-Instanz (Muster: Dietmars Winterskript, Event #10593) --
      * legt nur an, was fehlt, wie bei den NRG.*-Variablenprofilen.
      */
+    /**
+     * Live-Fund 10.09.2026: der Tagesplan zeigte fuer vergangene Slots nie
+     * Hauslast und nie "Grid Rewards war aktiv", obwohl getArchivedSlotsToday()
+     * (0.29.0/0.29.2) technisch korrekt implementiert war -- Ursache war, dass
+     * fuer EMS_HousePower und EMS_GridRewards schlicht NIE Archivierung
+     * eingeschaltet wurde (Symcon-Voreinstellung: neue Variablen sind nicht
+     * geloggt, das ist ein manueller Opt-in in der Konsole). Der SOC-Wert kam
+     * nur zufaellig durch, weil InverterHub diese Variable schon lange vorher
+     * selbst archiviert. Statt das jedem Nutzer als manuellen Schritt
+     * aufzuerlegen, schaltet EMS die Archivierung fuer seine eigenen, fuer den
+     * Tagesplan noetigen Variablen bei jedem ApplyChanges() selbst ein
+     * (idempotent, AC_SetLoggingStatus() bereits aktiver Variablen ist ein
+     * No-Op) -- konsistent mit "Gilt das fuer JEDEN Nutzer?", nicht nur fuer
+     * Dietmars Anlage.
+     */
+    private function ensureArchiving()
+    {
+        if (!function_exists('AC_SetLoggingStatus')) {
+            return; // kein Archive Control installiert -- Tagesplan zeigt dann weiterhin "(vergangen, keine Archivdaten)"
+        }
+        $archiveId = $this->getArchiveInstanceId();
+        if ($archiveId <= 0) {
+            return;
+        }
+        foreach (array('EMS_HousePower', 'EMS_GridRewards') as $ident) {
+            $varId = @$this->GetIDForIdent($ident);
+            if ($varId > 0) {
+                @AC_SetLoggingStatus($archiveId, $varId, true);
+            }
+        }
+        @IPS_ApplyChanges($archiveId);
+    }
+
     private function ensureDayPlanEvent()
     {
         $eventId = $this->ReadAttributeInteger('DayPlanEventId');
