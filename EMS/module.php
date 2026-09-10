@@ -63,6 +63,9 @@ define('GUID_PVFORECAST', '{257DD4E8-9705-462E-89FC-56D0A1038353}');
 // fuer ein beliebiges Zeitfenster) -- fuer das dynamische, energiebasierte
 // Batterie-Tagesziel, siehe getDynamicSocTargetDay().
 define('GUID_LFC', '{DC5AD508-507F-40EA-8630-0959AED83050}');
+// IP-Symcon Kern-Modul "Archivierung" (nicht NRG-Stack) -- fuer echte
+// Ist-Werte (SOC/Hauslast) im Tagesplan links vom "jetzt"-Zeitpunkt.
+define('GUID_ARCHIVECONTROL', '{018EF6B5-AB94-40C6-AA53-46943E824ACF}');
 // SteuerboxHub (SBH_GetState-Vertrag: §14a-Netzbetreiber-Dimmung, oberste
 // Prioritaet -- siehe SUITE.md "§14a-Lastabwurf-Priorisierung")
 define('GUID_STEUERBOXHUB', '{B76BE0BA-DF99-4B81-81BD-636A610011EE}');
@@ -1689,6 +1692,67 @@ class EMS extends IPSModule
         return !empty($list) ? $list[0] : 0;
     }
 
+    /**
+     * Echte 96-Slot-Lastkurve (W je Viertelstunde) aus LFC_GetForecast()
+     * statt eines ueber den Tag flach verteilten Durchschnitts. $offset:
+     * 0=heute, 1=morgen. Liefert ein Array mit 96 Eintraegen (Werte oder
+     * null je Slot), NIE ein leeres Array -- fehlende/kaputte Slots bleiben
+     * null, der Aufrufer faellt dafuer auf $ctx['avgHouseW'] zurueck statt
+     * auf 0W (kein WR-freundliches "kein Verbrauch" vortaeuschen).
+     */
+    private function getLoadForecastSlots(int $lfcId, int $offset): array
+    {
+        $empty = array_fill(0, 96, null);
+        if ($lfcId <= 0 || !function_exists('LFC_GetForecast')) { return $empty; }
+        $fc = @LFC_GetForecast($lfcId, $offset);
+        if (!is_array($fc) || empty($fc['mean']) || !is_array($fc['mean'])) { return $empty; }
+        $mean = array_values($fc['mean']);
+        if (count($mean) !== 96) { return $empty; } // fremdes Slot-Raster -- lieber Fallback als falsch zuordnen
+        return $mean;
+    }
+
+    private function getArchiveInstanceId(): int
+    {
+        if (!function_exists('AC_GetLoggedValues')) { return 0; }
+        $list = IPS_GetInstanceListByModuleID(GUID_ARCHIVECONTROL);
+        return !empty($list) ? $list[0] : 0;
+    }
+
+    /**
+     * Echte archivierte Werte einer Variable, als Stufenfunktion auf das
+     * 96-Slot-Raster von heute gebracht (letzter geloggter Wert VOR/AM
+     * Slot-Ende gilt fuer den ganzen Slot) -- fuer die Tagesplan-Anzeige
+     * links vom "jetzt"-Zeitpunkt (Dietmars Hinweis 10.09.2026: "die
+     * tatsaechliche Last und den SOC links vom roten Strich hast Du ja
+     * auch", statt dort mit einer eingefrorenen Schaetzung zu arbeiten).
+     * Slots ohne Messwert bleiben null (ehrlich fehlend, nicht 0 vortaeuschen).
+     */
+    private function getArchivedSlotsToday(int $variableId): array
+    {
+        $slots = array_fill(0, 96, null);
+        if ($variableId <= 0) { return $slots; }
+        $archiveId = $this->getArchiveInstanceId();
+        if ($archiveId <= 0) { return $slots; }
+        $dayStart = strtotime('today');
+        $rows = @AC_GetLoggedValues($archiveId, $variableId, $dayStart, time(), 0);
+        if (!is_array($rows) || empty($rows)) { return $slots; }
+        // AC_GetLoggedValues liefert absteigend (neueste zuerst) -- fuer die
+        // Slot-Zuordnung aufsteigend nach Zeit sortieren.
+        usort($rows, function ($a, $b) { return $a['TimeStamp'] <=> $b['TimeStamp']; });
+        $n = count($rows);
+        $ri = 0;
+        $lastVal = null;
+        for ($slot = 0; $slot < 96; $slot++) {
+            $slotEnd = $dayStart + ($slot + 1) * 900;
+            while ($ri < $n && $rows[$ri]['TimeStamp'] < $slotEnd) {
+                $lastVal = $rows[$ri]['Value'];
+                $ri++;
+            }
+            $slots[$slot] = $lastVal;
+        }
+        return $slots;
+    }
+
     private function getTibberGridRewardInstance()
     {
         if (!function_exists('TIBBERGR_GetPriceCurve')) { return 0; }
@@ -1821,9 +1885,13 @@ class EMS extends IPSModule
      * fuer den Rest des Tages waere falsch, die Batterie laedt/entlaedt ja
      * trotzdem, nur eben ohne EMS-Preis-Entscheidung.
      */
-    private function simulateAutomatikSlot($pvW, $price, $soc, array $ctx): array
+    private function simulateAutomatikSlot($slot, $pvW, $price, $soc, array $ctx): array
     {
-        $loadW    = $ctx['avgHouseW'];
+        // Echte 15-Min-Lastkurve aus der Lastprognose (LFC_GetForecast),
+        // statt eines ueber den Tag flach verteilten Durchschnitts -- siehe
+        // Dietmars Hinweis 10.09.2026 ("Simulationen hast Du ja mit Prognose
+        // bereits als Gehilfe, deshalb haben wir Prognose auch gebaut").
+        $loadW    = $ctx['houseLoadSlots'][$slot] ?? $ctx['avgHouseW'];
         $surplusW = $pvW - $loadW;
         $floor    = $ctx['socMin'] + $ctx['socReserve'];
 
@@ -1864,7 +1932,10 @@ class EMS extends IPSModule
                 'reason' => '§14a-Fenster (Vorrang vor Plan)', 'price' => $price, 'soc' => round($soc, 1)), 'soc' => $soc);
         }
 
-        $loadW    = $ctx['avgHouseW'];
+        // Echte 15-Min-Lastkurve aus LFC_GetForecast() statt flachem
+        // Tagesdurchschnitt (Dietmars Hinweis 10.09.2026) -- Fallback auf
+        // $ctx['avgHouseW'], falls LFC fuer diesen Slot nichts liefert.
+        $loadW    = $ctx['houseLoadSlots'][$slot] ?? $ctx['avgHouseW'];
         $surplusW = $pvW - $loadW;
 
         if ($price !== null && $price < 0 && $soc < 99.5) {
@@ -2724,8 +2795,8 @@ class EMS extends IPSModule
         // verteilt, wenn LFC eine belastbare Zahl liefert (coverage=1.0),
         // sonst bleibt der feste Erfahrungswert NEG_Avg_House_Load_W die
         // Grundlage (bisher "Solarspitzengesetz"-Property, jetzt allgemeiner
-        // Lastprognose-Fallback fuer den ganzen Tagesplan). Eine echte
-        // 15-Min-Lastkurve ist ein offener Ausbauschritt fuer LFC selbst.
+        // Lastprognose-Fallback fuer den ganzen Tagesplan). Bleibt als
+        // Fallback fuer Slots ohne LFC-Kurvenwert bestehen (siehe unten).
         $avgHouseW = (float)$this->ReadPropertyInteger('NEG_Avg_House_Load_W');
         $avgHouseWTomorrow = $avgHouseW;
         $lfcId = $this->getLfcInstance();
@@ -2746,6 +2817,16 @@ class EMS extends IPSModule
                 $avgHouseWTomorrow = ($windowTomorrow['kwh'] * 1000.0) / 24.0;
             }
         }
+
+        // Echte 15-Min-Lastkurve statt flachem Tagesdurchschnitt (Dietmars
+        // Hinweis 10.09.2026: "Simulationen hast Du ja mit Prognose bereits
+        // als Gehilfe, deshalb haben wir Prognose auch gebaut") --
+        // LFC_GetForecast() liefert seit Laengerem ein echtes 96-Slot-Profil
+        // (k-NN-Aehnliche-Tage), das hier bisher ungenutzt blieb. $avgHouseW
+        // bleibt Slot-Fallback (getLoadForecastSlots() gibt null je Slot ohne
+        // Kurvenwert zurueck).
+        $houseLoadSlotsToday    = $this->getLoadForecastSlots($lfcId, 0);
+        $houseLoadSlotsTomorrow = $this->getLoadForecastSlots($lfcId, 1);
 
         $inv            = $this->getInverterEntry();
         $capKwh         = (float)$this->ReadPropertyFloat('BAT_Capacity_kWh');
@@ -2794,7 +2875,7 @@ class EMS extends IPSModule
 
         $ctx = array(
             'enwgActive' => $enwgActive, 'enwgStartH' => $enwgStartH, 'enwgEndH' => $enwgEndH,
-            'avgHouseW' => $avgHouseW, 'fcMinPower' => $fcMinPower,
+            'avgHouseW' => $avgHouseW, 'houseLoadSlots' => $houseLoadSlotsToday, 'fcMinPower' => $fcMinPower,
             'socTargetDay' => $socTargetDay, 'hystSoc' => $hystSoc,
             'socMin' => $socMin, 'socReserve' => $socReserve, 'socTargetNight' => $socTargetNight,
             'capKwh' => $capKwh, 'chargeKw' => $chargeKw, 'dischargeKw' => $dischargeKw, 'maxW' => $maxW,
@@ -2822,18 +2903,34 @@ class EMS extends IPSModule
         // wird bei fehlender Arbitrage-Chance gar nicht erst aufgerufen).
         $hasArbitrageToday = $this->hasArbitrageInPrices($prices);
 
+        // Echte Ist-Werte fuer die bereits vergangenen Slots heute, statt
+        // sie mit dem AKTUELLEN SOC rueckwirkend einzufrieren (Dietmars
+        // Hinweis 10.09.2026) -- $inv['socID'] ist dieselbe Variable, die
+        // readState() fuer den Live-SOC nutzt, hier nur historisch
+        // ausgelesen. EMS_HousePower ist EMS' eigene, jeden Zyklus
+        // geschriebene Hauslast-Variable.
+        $archivedSoc = ($nowSlot > 0)
+            ? $this->getArchivedSlotsToday((int)($inv['socID'] ?? 0)) : array();
+        $archivedLoad = ($nowSlot > 0)
+            ? $this->getArchivedSlotsToday($this->GetIDForIdent('EMS_HousePower')) : array();
+
         $plan = array();
         for ($slot = 0; $slot < 96; $slot++) {
             if ($slot < $nowSlot) {
-                $plan[$slot] = array('op' => EMS_OP_AUTO, 'gw' => GW_MODE_AUTO, 'power' => 0, 'reason' => '(vergangen)',
-                    'price' => $prices[$slot], 'soc' => round($soc, 1));
+                $pastSoc  = $archivedSoc[$slot] ?? null;
+                $pastLoad = $archivedLoad[$slot] ?? null;
+                $reason = ($pastSoc !== null)
+                    ? sprintf('Ist: SOC %.0f%%%s', $pastSoc, $pastLoad !== null ? sprintf(', Hauslast %.0fW', $pastLoad) : '')
+                    : '(vergangen, keine Archivdaten)';
+                $plan[$slot] = array('op' => EMS_OP_AUTO, 'gw' => GW_MODE_AUTO, 'power' => 0, 'reason' => $reason,
+                    'price' => $prices[$slot], 'soc' => round($pastSoc ?? $soc, 1));
                 continue;
             }
             $price = $prices[$slot];
             $pvW   = (float)($pvfSlots[$slot] ?? 0.0);
             $result = $hasArbitrageToday
                 ? $this->simulateDaySlot($slot, $price, $pvW, $soc, $cheapRank, $ctx, $expensiveReserve[$slot] ?? 0.0)
-                : $this->simulateAutomatikSlot($pvW, $price, $soc, $ctx);
+                : $this->simulateAutomatikSlot($slot, $pvW, $price, $soc, $ctx);
             $plan[$slot] = $result['plan'];
             $soc = $result['soc'];
         }
@@ -2867,6 +2964,7 @@ class EMS extends IPSModule
         // fuer Morgen faelschlich mit der HEUTIGEN Lastprognose.
         $ctxTomorrow = $ctx;
         $ctxTomorrow['avgHouseW'] = $avgHouseWTomorrow;
+        $ctxTomorrow['houseLoadSlots'] = $houseLoadSlotsTomorrow;
 
         $tomorrowExpensiveReserve = $this->computeExpensiveReserveKwh($tomorrowPrices, $thDischarge, $avgHouseWTomorrow);
         $hasArbitrageTomorrow = $this->hasArbitrageInPrices($tomorrowPrices);
@@ -2877,7 +2975,7 @@ class EMS extends IPSModule
             $pvW   = (float)($pvfSlots[96 + $slot] ?? 0.0);
             $result = $hasArbitrageTomorrow
                 ? $this->simulateDaySlot($slot, $price, $pvW, $soc, $tomorrowCheapRank, $ctxTomorrow, $tomorrowExpensiveReserve[$slot] ?? 0.0)
-                : $this->simulateAutomatikSlot($pvW, $price, $soc, $ctxTomorrow);
+                : $this->simulateAutomatikSlot($slot, $pvW, $price, $soc, $ctxTomorrow);
             $tomorrowPlan[$slot] = $result['plan'];
             $soc = $result['soc'];
         }

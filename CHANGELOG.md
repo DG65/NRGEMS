@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.29.0 (2026-09-10)
+- **Tagesplan nutzt jetzt echte Daten statt Näherungen (Dietmars Hinweis):**
+  "Simulationen hast Du ja mit Prognose bereits als Gehilfe" + "die
+  tatsächliche Last und den SOC links vom roten Strich hast Du ja auch".
+  - **Echte 15-Min-Lastkurve:** `LFC_GetForecast()` (Lastprognose, k-NN
+    Ähnliche-Tage) liefert seit Längerem ein echtes 96-Slot-Profil, das
+    bisher ungenutzt blieb — `BuildDayPlan()` verteilte den Tagesverbrauch
+    stattdessen flach über 24h. Neue Funktion `getLoadForecastSlots()`
+    nutzt jetzt die echte Kurve (für heute UND morgen), mit dem alten
+    flachen Durchschnitt nur noch als Fallback für Slots ohne Kurvenwert.
+    Wirkt sowohl in der Preis-Simulation (`simulateDaySlot()`) als auch in
+    der neuen Automatik-Simulation (`simulateAutomatikSlot()`, 0.28.4).
+  - **Echte Ist-Werte für vergangene Slots:** Der Tagesplan zeigte links
+    vom aktuellen Zeitpunkt bisher nur "(vergangen)" mit dem AKTUELLEN SOC
+    rückwirkend eingefroren. Neue Funktionen `getArchiveInstanceId()`/
+    `getArchivedSlotsToday()` lesen die echten archivierten Werte (SOC via
+    `socID`, Hauslast via `EMS_HousePower`) aus dem IP-Symcon-Archiv und
+    zeigen sie als "Ist: SOC X%, Hauslast YW" je Slot — ehrlich fehlend
+    (kein Wert vorgetäuscht), falls keine Archivierung aktiv ist.
+
 ## 0.28.4 (2026-09-10)
 - **Fix zu 0.28.3, noch am selben Tag (Dietmars Nachfrage):** Der
   Arbitrage-Fallback in `BuildDayPlan()` fror den angezeigten SOC für den
