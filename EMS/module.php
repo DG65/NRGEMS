@@ -63,9 +63,15 @@ define('GUID_PVFORECAST', '{257DD4E8-9705-462E-89FC-56D0A1038353}');
 // fuer ein beliebiges Zeitfenster) -- fuer das dynamische, energiebasierte
 // Batterie-Tagesziel, siehe getDynamicSocTargetDay().
 define('GUID_LFC', '{DC5AD508-507F-40EA-8630-0959AED83050}');
-// IP-Symcon Kern-Modul "Archivierung" (nicht NRG-Stack) -- fuer echte
+// IP-Symcon Kern-Modul "Archive Control" (nicht NRG-Stack) -- fuer echte
 // Ist-Werte (SOC/Hauslast) im Tagesplan links vom "jetzt"-Zeitpunkt.
-define('GUID_ARCHIVECONTROL', '{018EF6B5-AB94-40C6-AA53-46943E824ACF}');
+// GUID am 10.09.2026 an Dietmars Live-System verifiziert (Instanz #53244,
+// "Archive") -- NICHT aus Erinnerung/Training uebernehmen, siehe Memory
+// "Feedback: Symcon-API verifizieren". Die zuvor hier eingetragene GUID
+// ({018EF6B5-...}) war schlicht falsch/ungeprueft und fand auf Dietmars
+// System keine Instanz -- deshalb blieben die "Ist"-Werte trotz vorhandener
+// Archivdaten leer.
+define('GUID_ARCHIVECONTROL', '{43192F0B-135B-4CE7-A0A7-1475603F3060}');
 // SteuerboxHub (SBH_GetState-Vertrag: §14a-Netzbetreiber-Dimmung, oberste
 // Prioritaet -- siehe SUITE.md "§14a-Lastabwurf-Priorisierung")
 define('GUID_STEUERBOXHUB', '{B76BE0BA-DF99-4B81-81BD-636A610011EE}');

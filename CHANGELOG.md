@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.29.1 (2026-09-10)
+- **Fix, noch am selben Tag: `GUID_ARCHIVECONTROL` war falsch.** Live-Test
+  zeigte "keine Archivdaten" für alle vergangenen Slots — Ursache: eine aus
+  Erinnerung/Training übernommene, ungeprüfte GUID für "Archive Control"
+  fand auf Dietmars System keine Instanz, obwohl Archivdaten tatsächlich
+  vorliegen (Dietmars Nachfrage: "z.B. an diesen Datenpunkt #37014
+  denken 🤔"). Live an Dietmars System verifiziert (Instanz #53244,
+  "Archive", Modul-GUID `{43192F0B-135B-4CE7-A0A7-1475603F3060}`) und
+  korrigiert. Genau der Fehler, den Memory "Feedback: Symcon-API
+  verifizieren" schon einmal festgehalten hat — wieder passiert, wieder
+  live korrigiert.
+
 ## 0.29.0 (2026-09-10)
 - **Tagesplan nutzt jetzt echte Daten statt Näherungen (Dietmars Hinweis):**
   "Simulationen hast Du ja mit Prognose bereits als Gehilfe" + "die
