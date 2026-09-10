@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.27.3 (2026-09-10)
+- **Zweite Korrektur der Grid-Rewards-Logik, diesmal final (Dietmar, live).**
+  0.27.2 hatte während Grid Rewards auf reine native WR-Automatik
+  zurückgefallen — falsch: die Automatik unterscheidet nicht zwischen
+  Wallbox- und Hauslast, hätte die Wallbox also genauso aus PV/Batterie
+  bedient wie das Haus, statt aus dem Netz. Richtig (Dietmars Vorgabe):
+  aktiver Stromeinkauf-Sollwert (`GW_MODE_AC_IMPORT`, `enable=true`) in
+  Höhe der aktuellen Wallbox-Leistung, dynamisch je Zyklus nachgeführt —
+  der WR deckt genau diesen Betrag aus dem Netz, Haus+Batterie laufen über
+  seine eigene Automatik-Logik obendrauf weiter. Grid-Rewards-Zweig wieder
+  als eigener, priorisierter Zweig in `optimize()` (nach Batterie-Boost,
+  vor §14a-Nacht-Laden) statt als Nachbearbeitung im `Update()`-Aufrufer.
+  `EMS_GetCurrentDecision()`s `source`-Wert `tibber` ist damit wieder aktiv.
+  **Noch nicht live gegen eine echte Grid-Reward-Session getestet.**
+
 ## 0.27.2 (2026-09-10)
 - **Fix: Grid Rewards blockierte bisher die Batterie komplett.** Dietmars
   Anwendungsfall: während einer laufenden Tibber-Grid-Reward-Session soll PV

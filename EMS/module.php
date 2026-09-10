@@ -894,20 +894,6 @@ class EMS extends IPSModule
             $state      = $this->readState();
             $this->updateStatusVars($state);
             $decision = $this->optimize($state);
-            // Waehrend Tibber Grid Rewards eine Wallbox direkt steuert, darf
-            // EMS diese nicht zusaetzlich freigeben/sperren -- unabhaengig
-            // davon, welcher optimize()-Zweig gerade die Batterie-/PV-
-            // Entscheidung trifft (Dietmars Anwendungsfall 10.09.2026: PV
-            // laedt Batterie+Haus normal weiter, nur die Tibber-Wallbox haengt
-            // komplett am Netz). Ausnahme: ein manuell ausgeloester Batterie-
-            // Boost (source='nutzer') ueberstimmt bewusst -- "alle Wallboxen
-            // werden freigegeben" ist dort die erklaerte Absicht.
-            if (!empty($state['grid_rewards']) && ($decision['source'] ?? '') !== 'nutzer') {
-                $decision['wb1_enable'] = false;
-                $decision['wb2_enable'] = false;
-                $decision['reason'] = ($decision['reason'] ?? '')
-                    . ' [Grid Rewards: Wallbox(en) unter Tibber-Kontrolle, PV/Batterie laeuft normal]';
-            }
             $this->applyDecision($decision, $state);
             $this->trackSpecialEvents($state);
             $this->WriteAttributeInteger('ConsecutiveErrors', 0);
@@ -3487,6 +3473,36 @@ class EMS extends IPSModule
             // stumm weiterzulaufen und die Reserve anzugreifen.
             $this->WriteAttributeInteger('BatteryBoostUntil', 0);
             $this->emsLog(EMS_LOG_BASIC, 'Batterie-Boost vorzeitig beendet: SOC-Reserve erreicht');
+        }
+
+        // ── Grid Rewards ─────────────────────────────────────────────
+        // ZWEITE KORREKTUR 10.09.2026 (Dietmar, live): reine native Automatik
+        // (wie in der ersten Korrektur versucht) waere FALSCH -- die WR-
+        // Automatik unterscheidet nicht zwischen Wallbox- und Hausverbrauch,
+        // sie bedient beides gleich PV-/Batterie-zuerst. Unter Automatik
+        // wuerde die Wallbox also GENAUSO aus PV/Batterie laufen wie das
+        // Haus, statt aus dem Netz. Richtige Loesung (Dietmars Vorgabe):
+        // dem WR einen aktiven Stromeinkauf-Sollwert in Hoehe der AKTUELLEN
+        // Wallbox-Leistung geben (dynamisch nachgefuehrt) -- den Rest
+        // (Haus+Batterie) erledigt die WR-Automatik dann selbst obendrauf.
+        // enable=true, weil sich der Sollwert mit der WB-Leistung aendert und
+        // laufend nachgefuehrt werden muss (EMS' 30s-Zyklus reicht dafuer,
+        // deutlich unter dem 60-70s-Reassert-Fenster). Tibber steuert
+        // die Wallbox(en) weiterhin komplett direkt (wb*_enable=false).
+        if ($s['grid_rewards']) {
+            $wbTotalW = (int)round(($s['wb1_pow_kw'] + $s['wb2_pow_kw']) * 1000);
+            $d['op_mode']    = EMS_OP_GRIDREWARDS;
+            $d['gw_mode']    = GW_MODE_AC_IMPORT;
+            $d['gw_power_w'] = max(0, $wbTotalW);
+            $d['gw_enable']  = true;
+            $d['wb1_enable'] = false; // Tibber steuert Wallbox direkt
+            $d['wb2_enable'] = false;
+            $d['reason']     = sprintf(
+                'Grid Rewards: Stromeinkauf=%.0fW (= aktuelle Wallbox-Leistung), Haus+Batterie laeuft ueber WR-Automatik',
+                $wbTotalW
+            );
+            $d['source'] = 'tibber';
+            return $d;
         }
 
         $socMin         = (float)$this->ReadPropertyInteger('BAT_SOC_Min');
