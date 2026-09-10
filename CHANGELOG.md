@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.29.2 (2026-09-10)
+- **Tagesplan: vergangene Grid-Rewards-Slots farblich markiert.** Dietmars
+  Wunsch: "Wenn Du Grid Rewards bemerkst, dann könntest Du die in der
+  Historie (links von Jetzt) wie Automatik in einer anderen Farbe
+  markieren." `BuildDayPlan()` liest jetzt zusätzlich die archivierte
+  `EMS_GridRewards`-Variable über `getArchivedSlotsToday()` (genau die
+  0.29.0-Infrastruktur für SOC/Hauslast) und setzt für bereits vergangene
+  Slots, in denen Grid Rewards aktiv war, `op=EMS_OP_GRIDREWARDS` statt
+  `EMS_OP_AUTO` — inkl. Reason-Text-Präfix "Grid Rewards (Tibber) -- ...".
+  `EMS_OP_GRIDREWARDS` bekommt dafür erstmals eine eigene Kalenderfarbe/
+  -kategorie in `getPlanActions()`/`ensureDayPlanEvent()` (pink `0xE91E63`,
+  bisher gab es dort nur AUTO/PV_SELFUSE/NET_CHARGE/DISCHARGE/EXPORT) und
+  ist in `writeDayPlanEvent()`s `$validOps` aufgenommen, sonst wäre der Wert
+  beim Schreiben wieder still auf AUTO zurückgefallen. Zukunftsslots bleiben
+  unverändert (Grid Rewards ist reaktiv, keine Vorschau möglich).
+
 ## 0.29.1 (2026-09-10)
 - **Fix, noch am selben Tag: `GUID_ARCHIVECONTROL` war falsch.** Live-Test
   zeigte "keine Archivdaten" für alle vergangenen Slots — Ursache: eine aus

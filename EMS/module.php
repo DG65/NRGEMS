@@ -2919,16 +2919,27 @@ class EMS extends IPSModule
             ? $this->getArchivedSlotsToday((int)($inv['socID'] ?? 0)) : array();
         $archivedLoad = ($nowSlot > 0)
             ? $this->getArchivedSlotsToday($this->GetIDForIdent('EMS_HousePower')) : array();
+        // Dietmar, 10.09.2026: vergangene Grid-Rewards-Slots im Tagesplan
+        // farblich von reiner Automatik abheben (EMS_GridRewards ist eine
+        // ganz normal archivierte Variable, genau wie SOC/Hauslast oben).
+        $archivedGridRewards = ($nowSlot > 0)
+            ? $this->getArchivedSlotsToday($this->GetIDForIdent('EMS_GridRewards')) : array();
 
         $plan = array();
         for ($slot = 0; $slot < 96; $slot++) {
             if ($slot < $nowSlot) {
                 $pastSoc  = $archivedSoc[$slot] ?? null;
                 $pastLoad = $archivedLoad[$slot] ?? null;
+                $wasGridRewards = !empty($archivedGridRewards[$slot]);
                 $reason = ($pastSoc !== null)
                     ? sprintf('Ist: SOC %.0f%%%s', $pastSoc, $pastLoad !== null ? sprintf(', Hauslast %.0fW', $pastLoad) : '')
                     : '(vergangen, keine Archivdaten)';
-                $plan[$slot] = array('op' => EMS_OP_AUTO, 'gw' => GW_MODE_AUTO, 'power' => 0, 'reason' => $reason,
+                if ($wasGridRewards) {
+                    $reason = 'Grid Rewards (Tibber) -- ' . $reason;
+                }
+                $plan[$slot] = array(
+                    'op'    => $wasGridRewards ? EMS_OP_GRIDREWARDS : EMS_OP_AUTO,
+                    'gw'    => GW_MODE_AUTO, 'power' => 0, 'reason' => $reason,
                     'price' => $prices[$slot], 'soc' => round($pastSoc ?? $soc, 1));
                 continue;
             }
@@ -3125,6 +3136,7 @@ class EMS extends IPSModule
             array('op' => EMS_OP_NET_CHARGE, 'name' => 'Netz laden',                'color' => 0x2196F3),
             array('op' => EMS_OP_DISCHARGE,  'name' => 'Eigenverbrauch (entladen)', 'color' => 0xFF9800),
             array('op' => EMS_OP_EXPORT,     'name' => 'Einspeisen',                'color' => 0x9C27B0),
+            array('op' => EMS_OP_GRIDREWARDS, 'name' => 'Grid Rewards (Tibber)',    'color' => 0xE91E63),
         );
     }
 
@@ -3135,7 +3147,7 @@ class EMS extends IPSModule
             $this->emsLog(EMS_LOG_BASIC, 'writeDayPlanEvent: ensureDayPlanEvent() lieferte keine gueltige Event-ID -- Tagesplan-Kalender NICHT geschrieben.');
             return array('ok' => 0, 'failed' => 96);
         }
-        $validOps = array(EMS_OP_AUTO, EMS_OP_PV_SELFUSE, EMS_OP_NET_CHARGE, EMS_OP_DISCHARGE, EMS_OP_EXPORT);
+        $validOps = array(EMS_OP_AUTO, EMS_OP_PV_SELFUSE, EMS_OP_NET_CHARGE, EMS_OP_DISCHARGE, EMS_OP_EXPORT, EMS_OP_GRIDREWARDS);
         $ok = 0;
         $failed = array();
         for ($slot = 0; $slot < 96; $slot++) {
