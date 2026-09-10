@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.29.6 (2026-09-10)
+- **Fix, schwerwiegend: Tagesplan-Automatik hielt den WR in einem passiven
+  Wartezustand statt echter Eigenverbrauchs-Automatik.** Dietmars Frage
+  "Warum haben wir gerade vorhin Strom eingekauft?" (Vermutung: "hast Du
+  den WR in den Standby laufen lassen?") führte zur Live-Diagnose:
+  `ctl_ems_enable=true`, `ctl_ems_mode=Automatik(1)`, `power=0` standen seit
+  21:23 Uhr durchgehend, während "Netz Leistung" parallel -280 bis -800W
+  Bezug zeigte und EMS' eigene Entscheidung fälschlich "Hauslast aus
+  Batterie (SOC 73%)" auswies. Ursache: `applyPlanSlot()` (Tagesplan-Zweig)
+  setzte `gw_enable` HART auf `true`, unabhängig vom `op_mode` — auch für
+  `EMS_OP_AUTO`. Genau die am 30.07.2026 bestätigte GoodWe-Falle
+  (`enable=true` + `mode=Automatik` versetzt den WR in einen passiven
+  "3rd party EMS"-Wartezustand statt seine eigene Selbstverbrauchslogik zu
+  fahren, siehe CLAUDE.md) — der fest programmierte Fallback-Automatik-
+  Zweig in `optimize()` hatte das schon immer richtig gemacht
+  (`gw_enable=false`), der Tagesplan-Zweig aber nicht. Gefixt:
+  `'gw_enable' => ($op !== EMS_OP_AUTO)`. Live an Dietmars Anlage sofort
+  auch händisch korrigiert (23:28 Uhr, `ctl_ems_enable=false` gesetzt) —
+  gilt nur bis zum nächsten `Update()`-Zyklus, danach greift wieder der
+  ungefixte Code, bis dieses Modul-Update gezogen ist.
+- **Vermutlich mehrtägig relevant:** Dieser Fehler betraf JEDEN
+  Tagesplan-Slot mit `op=EMS_OP_AUTO` (nicht nur den fehlenden
+  Arbitrage-Fall aus 0.29.4/0.28.1) — also potenziell jede Nacht/jeden Tag,
+  seit der Tagesplan-Zweig existiert (0.19.x), sobald der Plan für den
+  aktuellen Slot "Automatik" vorsah. Wie lange das schon lief, lässt sich
+  ohne archivierte `ctl_ems_enable`-Historie nicht rekonstruieren.
+
 ## 0.29.5 (2026-09-10)
 - **Grid Rewards wird jetzt automatisch erkannt, kein manueller Schalter
   mehr.** `EMS_GridRewards` musste bisher von Hand umgelegt werden, obwohl

@@ -3070,11 +3070,24 @@ class EMS extends IPSModule
         $wb1En = ($s['wb_active'] && $s['wb1_cable'] > 0 && $s['wb1_error'] === 0 && (!$s['tib_active'] || $price < $thWB));
         $wb2En = ($s['wb_active'] && $s['wb_count'] >= 2 && $s['wb2_cable'] > 0 && $s['wb2_error'] === 0 && (!$s['tib_active'] || $price < $thWB));
 
+        // Live-Fund 10.09.2026 (Dietmars Verdacht "WR im Standby?" fuehrte
+        // drauf): gw_enable stand hier HART auf true, auch fuer op=EMS_OP_AUTO
+        // -- genau die am 30.07.2026 bestaetigte Kombination
+        // (enable=true + mode=Automatik), die den WR in einen passiven
+        // "3rd party EMS"-Wartezustand versetzt statt seine eigene
+        // Selbstverbrauchslogik zu fahren (siehe CLAUDE.md). Live beobachtet:
+        // ctl_ems_enable=true/mode=1/power=0 durchgehend seit 21:23 Uhr,
+        // "Netz Leistung" zeigte parallel -280 bis -800W Bezug, obwohl die
+        // Entscheidung "Hauslast aus Batterie" (SOC 73%) lautete -- der WR
+        // hat schlicht nichts autonom getan. Fuer op=EMS_OP_AUTO muss
+        // enable=false gesendet werden (wie im hartcodierten Fallback-Branch
+        // in optimize() schon korrekt gemacht), fuer alle anderen Ops
+        // (aktiver Sollwert) bleibt enable=true noetig.
         return array(
             'op_mode'    => $op,
             'gw_mode'    => $slot['gw'] ?? GW_MODE_AUTO,
             'gw_power_w' => (int)($slot['power'] ?? 0),
-            'gw_enable'  => true,
+            'gw_enable'  => ($op !== EMS_OP_AUTO),
             'wb1_enable' => $wb1En,
             'wb2_enable' => $wb2En,
             'reason'     => 'Tagesplan: ' . ($slot['reason'] ?? ''),
