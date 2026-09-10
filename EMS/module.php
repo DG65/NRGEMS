@@ -894,6 +894,20 @@ class EMS extends IPSModule
             $state      = $this->readState();
             $this->updateStatusVars($state);
             $decision = $this->optimize($state);
+            // Waehrend Tibber Grid Rewards eine Wallbox direkt steuert, darf
+            // EMS diese nicht zusaetzlich freigeben/sperren -- unabhaengig
+            // davon, welcher optimize()-Zweig gerade die Batterie-/PV-
+            // Entscheidung trifft (Dietmars Anwendungsfall 10.09.2026: PV
+            // laedt Batterie+Haus normal weiter, nur die Tibber-Wallbox haengt
+            // komplett am Netz). Ausnahme: ein manuell ausgeloester Batterie-
+            // Boost (source='nutzer') ueberstimmt bewusst -- "alle Wallboxen
+            // werden freigegeben" ist dort die erklaerte Absicht.
+            if (!empty($state['grid_rewards']) && ($decision['source'] ?? '') !== 'nutzer') {
+                $decision['wb1_enable'] = false;
+                $decision['wb2_enable'] = false;
+                $decision['reason'] = ($decision['reason'] ?? '')
+                    . ' [Grid Rewards: Wallbox(en) unter Tibber-Kontrolle, PV/Batterie laeuft normal]';
+            }
             $this->applyDecision($decision, $state);
             $this->trackSpecialEvents($state);
             $this->WriteAttributeInteger('ConsecutiveErrors', 0);
@@ -3433,27 +3447,17 @@ class EMS extends IPSModule
         }
 
         // ── Grid Rewards ─────────────────────────────────────────────
-        // Tibber steuert Wallbox direkt. Batterie darf weder laden noch
-        // entladen. Der Goodwe importiert nur so viel wie die Wallboxen
-        // und der Hausverbrauch benoetigen — keine Batterieladung.
-        if ($s['grid_rewards']) {
-            $wbTotalW = (int)round(($s['wb1_pow_kw'] + $s['wb2_pow_kw']) * 1000);
-            $houseW   = (int)round($s['house_pow_w']);
-            // Leistungseinstellung = nur aktueller Verbrauch ohne Batterie
-            // Goodwe darf nur Haus + WB aus Netz versorgen, PV geht in Eigenverbrauch
-            $importLimit = max(0, $houseW + $wbTotalW);
-            $d['op_mode']    = EMS_OP_GRIDREWARDS;
-            $d['gw_mode']    = GW_MODE_AC_IMPORT;
-            $d['gw_power_w'] = $importLimit;
-            $d['wb1_enable'] = false; // Tibber steuert Wallbox direkt
-            $d['wb2_enable'] = false;
-            $d['reason']     = sprintf(
-                'Grid Rewards: Tibber steuert WB, Import-Limit=%.0fW (Haus=%.0fW WB=%.0fW)',
-                $importLimit, $houseW, $wbTotalW
-            );
-            $d['source'] = 'tibber';
-            return $d;
-        }
+        // KORRIGIERT 10.09.2026 (Dietmars Anwendungsfall: PV soll waehrend
+        // Grid Rewards weiter ganz normal Batterie+Haus bedienen, NUR die von
+        // Tibber direkt gesteuerte Wallbox soll komplett aus dem Netz laufen).
+        // Frueher stand hier ein eigener Zweig, der bei aktiven Grid Rewards
+        // die Batterie komplett stillgelegt und einen festen Netz-Import fuer
+        // Haus+WB erzwungen hat -- das verhinderte PV-Ladung der Batterie,
+        // genau das Gegenteil vom gewuenschten Verhalten. Die Wallbox-
+        // Ausklammerung (EMS darf sie nicht schalten, Tibber steuert direkt)
+        // passiert jetzt zentral NACH optimize() im Aufrufer (Update()), egal
+        // welcher der folgenden Zweige gerade die Batterie-/PV-Entscheidung
+        // trifft -- siehe dort.
 
         // ── Batterie-Boost (Nutzerwunsch 29.07.2026, Vorbild evcc) ──────
         // Manuell ausgeloester, zeitlich begrenzter Modus: Batterie entlaedt

@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.27.2 (2026-09-10)
+- **Fix: Grid Rewards blockierte bisher die Batterie komplett.** Dietmars
+  Anwendungsfall: während einer laufenden Tibber-Grid-Reward-Session soll PV
+  ganz normal Batterie+Haus bedienen, nur die von Tibber direkt gesteuerte
+  Wallbox soll komplett aus dem Netz laufen. Der bisherige Grid-Rewards-Zweig
+  in `optimize()` legte stattdessen die Batterie komplett still und erzwang
+  einen festen Netz-Import für Haus+WB — verhinderte PV-Ladung der Batterie,
+  das Gegenteil vom gewünschten Verhalten. Zweig entfernt; die Wallbox-
+  Ausklammerung (EMS darf Tibber-gesteuerte Wallbox nicht schalten) passiert
+  jetzt zentral im `Update()`-Aufrufer, NACH `optimize()`, unabhängig davon,
+  welcher Zweig gerade die Batterie-/PV-Entscheidung trifft — sichtbar als
+  Zusatztext in `reason`. Ausnahme: ein manueller Batterie-Boost überstimmt
+  weiterhin bewusst (dort sollen alle Wallboxen freigegeben werden).
+  `EMS_GetCurrentDecision()`s `source`-Wert `tibber` entfällt entsprechend.
+  **Noch nicht live gegen eine echte Grid-Reward-Session getestet** — vor
+  dem nächsten Fenster mit Dietmar gegenlesen.
+
 ## 0.27.1 (2026-09-01)
 - **`EMS_GetCurrentDecision()`: Erklärung für Batterie-Entladung parallel zu
   Fahrzeug-Ladung via Tibber Grid Rewards** (Dietmars Rückmeldung über
