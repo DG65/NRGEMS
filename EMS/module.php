@@ -289,6 +289,12 @@ class EMS extends IPSModule
         $this->RegisterPropertyFloat(  'OPT_Hysteresis_Price',     0.01);
         $this->RegisterPropertyInteger('OPT_Cooldown_Sec',         60);
         $this->RegisterPropertyInteger('OPT_Planning_Horizon_H',   24);
+        // Dietmars Schalter (10.09.2026): Default AN -- solange der
+        // Tagesplan-Algorithmus "keine Preis-Arbitrage-Chance heute" nicht
+        // selbst erkennt, greift EMS lieber gar nicht aktiv ein und ueber-
+        // laesst Batterie/Haus/Einspeisung komplett der WR-Automatik. Nur
+        // §14a-Lastbegrenzung, Batterie-Boost und Grid Rewards bleiben aktiv.
+        $this->RegisterPropertyBoolean('OPT_AutomatikOnly',        true);
 
         // ── Statusvariablen ─────────────────────────────────────────
         $this->RegisterVariableBoolean('EMS_Active_State', 'EMS aktiv',             '', 10);
@@ -3515,6 +3521,24 @@ class EMS extends IPSModule
         $soc            = $s['bat_soc'];
         $pvW            = $s['pv_total_w'];
 
+        // ── Automatik-Only-Schalter (Dietmar, 10.09.2026) ────────────────
+        // Wenn aktiv, werden die drei preis-/plan-gesteuerten Zweige unten
+        // (§14a Nacht-Laden, Gruenste Ladezeit, Tagesplan) komplett
+        // uebersprungen -- EMS greift dann so gut wie gar nicht aktiv ein,
+        // die WR-eigene Automatik uebernimmt Batterieladung aus PV,
+        // Volllade-Einspeisung und Hausversorgung aus der Batterie von
+        // selbst. Begruendung fuers Default an (Dietmars Beispieltag): wenn
+        // selbst der guenstigste Netzpreis des Tages ueber der eigenen
+        // Erzeugungs-/Einspeise-Oekonomie liegt, gibt es keine echte Preis-
+        // Arbitrage-Chance -- der Tagesplan wuerde dann unnoetig aktiv
+        // schalten (z.B. Einspeisen/Eigenverbrauch-Wechsel), obwohl die
+        // Automatik dasselbe Ergebnis von selbst und ohne Risiko liefert.
+        // Kein Freifahrtschein fuer den Tagesplan-Algorithmus selbst: das
+        // eigentliche Problem (Tagesplan erkennt "keine Arbitrage-Chance
+        // heute" nicht von selbst) bleibt offen, dieser Schalter ist der
+        // pragmatische Schnellzugriff bis das nachgeschaerft ist.
+        if (!$this->ReadPropertyBoolean('OPT_AutomatikOnly')) {
+
         // ── 1. §14a Nacht-Laden ──────────────────────────────────────
         if ($s['enwg_in_window'] && $s['bat_active'] && $soc < ($socTargetNight - $hystSoc)) {
             $d['op_mode']    = EMS_OP_NET_CHARGE;
@@ -3563,6 +3587,8 @@ class EMS extends IPSModule
         if ($planned !== null) {
             return $planned;
         }
+
+        } // Ende Automatik-Only-Schalter
 
         // ── 4. Fallback: Automatik (kein Tagesplan vorhanden, z.B. PVF/LFC
         // fehlt oder noch keine Preisdaten da -- oder das Plan-Sicherheits-

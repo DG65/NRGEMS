@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.28.0 (2026-09-10)
+- **Neuer Schalter `OPT_AutomatikOnly`** (Formular: "🆕 Nur Automatik"),
+  Default **AN**. Dietmars Begründung: an Tagen ohne echte Preis-Arbitrage-
+  Chance (heutiges Beispiel: günstigster Netzpreis >25ct liegt über der
+  eigenen Erzeugungs-/Einspeise-Ökonomie von 18,36ct) soll EMS gar nicht erst
+  aktiv eingreifen — die WR-eigene Automatik lädt die Batterie aus PV,
+  speist bei voller Batterie automatisch ein und holt die Hausversorgung bei
+  fehlender PV automatisch aus der Batterie, alles ohne EMS-Zutun. Wenn
+  aktiv, überspringt `optimize()` die drei preis-/plan-gesteuerten Zweige
+  (§14a-Nachtladen, Grünste Ladezeit, Tagesplan) komplett und fällt direkt
+  auf die Automatik-Fallback-Logik zurück. §14a-Lastbegrenzung, manueller
+  Batterie-Boost und die Grid-Rewards-Logik (0.27.3) bleiben davon
+  unberührt — nur die *freiwillige* Preisoptimierung wird stillgelegt.
+  Das eigentliche Tagesplan-Problem (erkennt "keine Arbitrage-Chance heute"
+  nicht selbst) bleibt offen, dieser Schalter ist der pragmatische
+  Schnellzugriff bis das nachgeschärft ist.
+
 ## 0.27.3 (2026-09-10)
 - **Zweite Korrektur der Grid-Rewards-Logik, diesmal final (Dietmar, live).**
   0.27.2 hatte während Grid Rewards auf reine native WR-Automatik
