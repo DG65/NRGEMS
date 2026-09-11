@@ -1036,6 +1036,15 @@
                     "caption": "Leer = Platzhalter 0,1836 EUR/kWh wird verwendet -- für die eigene Anlage anpassen, sonst kann die Preis-Arbitrage-Einschätzung falsch liegen."
                 },
                 {
+                    "type": "NumberSpinner",
+                    "name": "OPT_Arbitrage_Min_Spread_ct",
+                    "caption": "Mindestspanne für Preis-Arbitrage (günstigster Tagespreis muss so weit unter der Einspeisevergütung liegen)",
+                    "minimum": 0,
+                    "maximum": 20,
+                    "digits": 1,
+                    "suffix": " ct/kWh"
+                },
+                {
                     "type": "SelectVariable",
                     "name": "VAR_TIB_PT15M_Today",
                     "caption": "15-Min-Preise Heute JSON (nur Fallback, siehe unten)"

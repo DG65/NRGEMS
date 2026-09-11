@@ -212,6 +212,10 @@ class EMS extends IPSModule
         // einen physikalisch widerspruechlichen Zustand ein und faellt dann
         // in den sichersten Zustand (native WR-Eigenregelung) zurueck --
         // ohne Nutzer- oder Entwicklerbeteiligung lauffaehig.
+        // Mindestspanne der Arbitrage-Einschaetzung in ct/kWh (siehe
+        // hasArbitrageInPrices()). 3ct ~ Umwandlungsverluste eines typischen
+        // Heimspeichers (~10 % Round-Trip) bei ueblichen Arbeitspreisen.
+        $this->RegisterPropertyFloat('OPT_Arbitrage_Min_Spread_ct', 3.0);
         $this->RegisterPropertyBoolean('PLAUSI_Enabled',      true);
         $this->RegisterPropertyInteger('PLAUSI_Minutes',      5);
         $this->RegisterPropertyInteger('PLAUSI_GridImport_W', 200);
@@ -2111,9 +2115,14 @@ class EMS extends IPSModule
             // EMS_Max_Power_W als Wert. Jetzt: reale, vom BMS gemeldete
             // Entladeleistung ($ctx['dischargeKw'], siehe
             // getBatteryPowerLimitsKw()) statt 0.
-            return array('plan' => array('op' => EMS_OP_DISCHARGE, 'gw' => GW_MODE_DISCHARGE,
-                'power' => (int)round($ctx['dischargeKw'] * 1000.0),
-                'reason' => sprintf('Bezug %.2fct teuer -- Eigenverbrauch aus Batterie', $price * 100),
+            // 12.09.2026: "Eigenverbrauch aus Batterie" ist exakt das, was die
+            // WR-Automatik von selbst tut -- ein erzwungener Modus 3 mit BMS-
+            // Maximalleistung als Sollwert brachte keinen Mehrwert, aber das
+            // Risiko, die Batterie ins Netz zu entladen (Live-Muster 11.09.,
+            // 05-07 Uhr). Daher native Automatik (applyPlanSlot() sendet fuer
+            // AUTO enable=false). SOC-Simulation oben bleibt unveraendert.
+            return array('plan' => array('op' => EMS_OP_AUTO, 'gw' => GW_MODE_AUTO, 'power' => 0,
+                'reason' => sprintf('Bezug %.2fct teuer -- Eigenverbrauch aus Batterie (WR-Automatik)', $price * 100),
                 'price' => $price, 'soc' => round($soc, 1)), 'soc' => $soc);
         }
 
@@ -3097,10 +3106,19 @@ class EMS extends IPSModule
         // enable=false gesendet werden (wie im hartcodierten Fallback-Branch
         // in optimize() schon korrekt gemacht), fuer alle anderen Ops
         // (aktiver Sollwert) bleibt enable=true noetig.
+        // 12.09.2026: AC-Export ist ein Xset-Modus -- ein Sollwert ueber dem
+        // GEMESSENEN PV-Ueberschuss zapft die Batterie an (sie wuerde fuer die
+        // Einspeiseverguetung ins Netz entladen). Die Planleistung ist nur eine
+        // Prognose; zur Laufzeit zaehlt der echte Ueberschuss.
+        $powerW = (int)($slot['power'] ?? 0);
+        if ($op === EMS_OP_EXPORT && $powerW > 0) {
+            $surplusW = max(0.0, (float)$s['pv_total_w'] - (float)$s['house_pow_w']);
+            $powerW   = (int)min($powerW, round($surplusW));
+        }
         return array(
             'op_mode'    => $op,
             'gw_mode'    => $slot['gw'] ?? GW_MODE_AUTO,
-            'gw_power_w' => (int)($slot['power'] ?? 0),
+            'gw_power_w' => $powerW,
             'gw_enable'  => ($op !== EMS_OP_AUTO),
             'wb1_enable' => $wb1En,
             'wb2_enable' => $wb2En,
@@ -3146,7 +3164,9 @@ class EMS extends IPSModule
         if ($archiveId <= 0) {
             return;
         }
-        foreach (array('EMS_HousePower', 'EMS_GridRewards') as $ident) {
+        // EMS_Mode (12.09.2026): Entscheidungs-Historie, sonst lassen sich
+        // Vorfaelle wie 11.09. 05-07 Uhr im Nachhinein nicht zuordnen.
+        foreach (array('EMS_HousePower', 'EMS_GridRewards', 'EMS_Mode') as $ident) {
             $varId = @$this->GetIDForIdent($ident);
             if ($varId > 0) {
                 @AC_SetLoggingStatus($archiveId, $varId, true);
@@ -3422,7 +3442,14 @@ class EMS extends IPSModule
                 $feedTariff
             ));
         }
-        return $minPrice < $feedTariff;
+        // Mindestspanne (12.09.2026, Live-Fund Tagesplan 12.09.: guenstigster
+        // Preis 17,95ct gegen 18,36ct Verguetung -- 0,4ct Abstand schalteten
+        // den GANZEN Tag von WR-Automatik auf 96 aktive Plan-Slots um, ohne
+        // realen Nutzen). Eine Arbitrage lohnt erst, wenn der Preisvorteil die
+        // Speicher-Umwandlungsverluste deckt; darunter ist die WR-Automatik
+        // gleichwertig und risikoaermer.
+        $spread = max(0.0, (float)$this->ReadPropertyFloat('OPT_Arbitrage_Min_Spread_ct')) / 100.0;
+        return $minPrice < ($feedTariff - $spread);
     }
 
     private function parsePT15M($json, int $dayOffset = 0)

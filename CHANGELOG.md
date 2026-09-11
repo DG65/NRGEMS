@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.31.0 (2026-09-12)
+Auslöser: Tagesplan für den 12.09. bestand aus 96 aktiven Slots und null
+Automatik (52 × „Entladen" Modus 3 mit 48 kW Sollwert, 44 × „Exportieren"
+Modus 5 mit PV-Prognose als Sollwert) — ausgelöst durch einen einzigen Slot
+mit 17,95 ct gegen 18,36 ct Einspeisevergütung.
+- **Arbitrage-Mindestspanne:** `hasArbitrageInPrices()` verlangt jetzt, dass
+  der günstigste Tagespreis mindestens `OPT_Arbitrage_Min_Spread_ct`
+  (Standard 3 ct, ≈ Round-Trip-Verluste eines Heimspeichers) unter der
+  Einspeisevergütung liegt. Ein paar Zehntel Cent schalten den Tag nicht mehr
+  von WR-Automatik auf aktiven Plan um. Im Formular einstellbar.
+- **„Bezug teuer → Eigenverbrauch aus Batterie" ist jetzt WR-Automatik** statt
+  erzwungenem Modus 3 mit BMS-Maximalleistung als Sollwert — das tut die
+  Automatik von selbst, der erzwungene Modus brachte nur das Risiko, die
+  Batterie ins Netz zu entladen (Live-Muster 11.09., 05–07 Uhr: ~7,6 kWh
+  Batterieabgabe bei ~6 kWh Einspeisung ohne nennenswerte PV).
+- **Export-Sollwert begrenzt:** `applyPlanSlot()` setzt für AC-Export nie
+  mehr als den GEMESSENEN PV-Überschuss (PV − Hauslast) — die Planleistung
+  ist nur Prognose, ein höherer Xset-Sollwert zapft die Batterie an.
+- **Entscheidungs-Historie:** `ensureArchiving()` archiviert zusätzlich
+  `EMS_Mode`, damit Vorfälle wie 11.09. 05–07 Uhr künftig zuordenbar sind.
+- **Prüfstand:** neue Regressionsblöcke 1b und 9 (0,4-ct-Fall, Mindestspanne
+  einstellbar, teurer Slot → Automatik, Export auf Überschuss begrenzt, 0 W
+  ohne Überschuss). Gegen den alten Stand: genau diese 5 Prüfungen rot.
+
 ## 0.30.1 (2026-09-11)
 - **Neu: Szenario-Prüfstand `.tools/test-scenarios.php`** (Muster:
   MeterHubs `test-virtual.php`). Bildet so viel IP-Symcon nach, dass

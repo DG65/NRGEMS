@@ -230,7 +230,15 @@ check('Platzhalter wird sichtbar geloggt, nicht still verwendet', (bool)array_fi
 check('keine Preisdaten: keine Arbitrage (sicherer Default)', call($ems, 'hasArbitrageInPrices', [array_fill(0, 96, null)]) === false);
 feedTariffVar(0.10);
 check('verknuepft 0,10 EUR, Preise 0,15: KEINE Arbitrage (eigener Wert zaehlt, nicht der Platzhalter)', call($ems, 'hasArbitrageInPrices', [array_fill(0, 96, 0.15)]) === false);
-check('verknuepft 0,10 EUR, Preise 0,08: Arbitrage', call($ems, 'hasArbitrageInPrices', [array_fill(0, 96, 0.08)]) === true);
+check('verknuepft 0,10 EUR, Preise 0,05: Arbitrage (Spanne 5ct > Mindestspanne 3ct)', call($ems, 'hasArbitrageInPrices', [array_fill(0, 96, 0.05)]) === true);
+check('verknuepft 0,10 EUR, Preise 0,08: KEINE Arbitrage (2ct Spanne deckt die Speicherverluste nicht)', call($ems, 'hasArbitrageInPrices', [array_fill(0, 96, 0.08)]) === false);
+
+echo "\n1b) Regression 12.09.2026 -- 0,4ct Abstand darf den Tag nicht auf aktiven Plan umschalten\n";
+$ems = freshEms();
+$tag1209 = array_fill(0, 96, 0.35); $tag1209[56] = 0.1795; // guenstigster Slot 17,95ct, Verguetung (Platzhalter) 18,36ct
+check('17,95ct gegen 18,36ct (Standard-Mindestspanne 3ct): KEINE Arbitrage', call($ems, 'hasArbitrageInPrices', [$tag1209]) === false);
+prop('OPT_Arbitrage_Min_Spread_ct', 0.0);
+check('Mindestspanne vom Nutzer auf 0 gesetzt: dieselben Preise gelten als Arbitrage (einstellbar, nicht hart)', call($ems, 'hasArbitrageInPrices', [$tag1209]) === true);
 
 // ===========================================================================
 echo "\n2) Regression 0.29.4 -- Nacht, SOC 70 %, keine Arbitrage-Chance, nichts verknuepft: reine WR-Automatik\n";
@@ -372,6 +380,23 @@ check('mit force: enable=false, Modus 1, 0 W werden sofort geschrieben', $GLOBAL
 check('Reihenfolge: enable vor mode vor power', array_column($GLOBALS['ACTIONS'], 1) === ['ctl_ems_enable', 'ctl_ems_mode', 'ctl_ems_power'], json_encode(array_column($GLOBALS['ACTIONS'], 1)));
 check('Attribute nachgezogen (LastGoodweMode=1, LastGoodweEnable=false)', $ems->ReadAttributeInteger('LastGoodweMode') === GW_MODE_AUTO && $ems->ReadAttributeBoolean('LastGoodweEnable') === false);
 check('Grund landet in EMS_LastAction', $ems->GetValue('EMS_LastAction') === 'normal');
+
+// ===========================================================================
+echo "\n9) Regression 12.09.2026 -- Tagesplan darf die Batterie nicht per Sollwert-Modus ins Netz ziehen\n";
+$ems = freshEms();
+$ctx = ['enwgActive' => false, 'enwgStartH' => 0, 'enwgEndH' => 0, 'avgHouseW' => 300.0, 'houseLoadSlots' => [],
+    'fcMinPower' => 100.0, 'socTargetDay' => 86.0, 'hystSoc' => 2.0, 'socMin' => 0.0, 'socReserve' => 10.0,
+    'socTargetNight' => 100.0, 'capKwh' => 40.0, 'chargeKw' => 48.0, 'dischargeKw' => 48.156, 'maxW' => 34500.0,
+    'feedTariff' => 0.1836, 'thCharge' => 0.15, 'thDischarge' => 0.25];
+$r = call($ems, 'simulateDaySlot', [80, 0.47, 0.0, 86.0, [], $ctx, 0.0]); // 20:00, 47ct, keine PV
+check('teurer Abend-Slot: Plan = WR-Automatik, KEIN erzwungener Modus 3 mit 48 kW', $r['plan']['op'] === EMS_OP_AUTO && $r['plan']['gw'] === GW_MODE_AUTO && (int)$r['plan']['power'] === 0, json_encode($r['plan']));
+check('SOC-Simulation laeuft trotzdem weiter (Batterie deckt die Last)', $r['soc'] < 86.0, 'soc=' . $r['soc']);
+pricesToday(0.05); // echte Arbitrage -> applyPlanSlot() wird erreicht
+dayPlanAll(EMS_OP_EXPORT, GW_MODE_AC_EXPORT, 5854); // Prognose: 5854 W PV
+$d = call($ems, 'optimize', [state(['pv_total_w' => 2000.0, 'house_pow_w' => 300.0])]);
+check('Export-Sollwert auf den GEMESSENEN Ueberschuss begrenzt (2000-300 = 1700 W statt Prognose 5854 W)', $d['op_mode'] === EMS_OP_EXPORT && (int)$d['gw_power_w'] === 1700, fmt($d));
+$d = call($ems, 'optimize', [state(['pv_total_w' => 200.0, 'house_pow_w' => 300.0])]);
+check('Export ohne echten Ueberschuss: Sollwert 0 W (Batterie wird nicht angezapft)', (int)$d['gw_power_w'] === 0, fmt($d));
 
 // ===========================================================================
 echo "\n" . ($fails === 0 ? "ALLE SZENARIEN BESTANDEN" : "$fails SZENARIO(S) VERLETZT") . "\n\n";
