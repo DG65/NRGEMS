@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.29.7 (2026-09-11)
+- **Regression aus 0.29.4 behoben — hätte Dietmars eigene Anlage
+  dauerhaft falsch gerechnet.** 0.29.4 hatte `hasArbitrageInPrices()` bei
+  unkonfigurierter `VAR_TIB_Feed_Tariff` auf "immer Arbitrage-Chance"
+  umgestellt, um zu verhindern, dass Dietmars eigener Fallback-Wert
+  (0,1836 EUR/kWh) anderen Nutzern stillschweigend untergeschoben wird.
+  Übersehen dabei: GENAU Dietmars eigene Anlage hat diese Variable NIE
+  verknüpft und sich bewusst auf exakt diesen Fallback verlassen — die
+  0.29.4-Änderung hat dadurch seine eigene, tags zuvor gebaute und
+  bestätigte "keine Arbitrage heute → reine WR-Automatik"-Logik
+  wirkungslos gemacht. Live-Fund 11.09.2026: Tagesplan zeigte wieder aktive
+  Entladen/Einspeisen/Netzladen-Slots trotz Preisen von 31-44ct, weit über
+  seiner Einspeisevergütung. Gefixt: Fallback-Wert wird wieder für die
+  Berechnung verwendet (Stand vor 0.29.4), aber nicht mehr still — fehlt
+  die Verknüpfung, loggt EMS das jetzt sichtbar
+  (`hasArbitrageInPrices(): keine Einspeisevergütung verknüpft...`), und
+  das Formularfeld bekommt einen Hinweistext auf den Platzhalterwert.
+  Löst beide Ziele gleichzeitig: Dietmars Setup rechnet wieder korrekt,
+  andere Nutzer sehen den Platzhalter statt ihn unbemerkt zu übernehmen.
+
 ## 0.29.6 (2026-09-10)
 - **Fix, schwerwiegend: Tagesplan-Automatik hielt den WR in einem passiven
   Wartezustand statt echter Eigenverbrauchs-Automatik.** Dietmars Frage

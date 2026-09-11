@@ -995,6 +995,10 @@
                     "caption": "Einspeisevergütung (EUR/kWh)"
                 },
                 {
+                    "type": "Label",
+                    "caption": "Leer = Platzhalter 0,1836 EUR/kWh wird verwendet -- für die eigene Anlage anpassen, sonst kann die Preis-Arbitrage-Einschätzung falsch liegen."
+                },
+                {
                     "type": "SelectVariable",
                     "name": "VAR_TIB_PT15M_Today",
                     "caption": "15-Min-Preise Heute JSON (nur Fallback, siehe unten)"

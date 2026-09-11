@@ -3387,17 +3387,27 @@ class EMS extends IPSModule
             if ($minPrice === null || $p < $minPrice) { $minPrice = $p; }
         }
         if ($minPrice === null) { return false; }
-        // "Keine eigene Anlage als Norm": OHNE konfigurierte Einspeise-
-        // verguetung darf hier NICHT Dietmars eigener Wert (0,1836 EUR/kWh)
-        // als stiller Standard fuer jeden Nutzer einspringen -- ein anderer
-        // Nutzer mit z.B. 7ct Einspeiseverguetung wuerde sonst mit einer
-        // fast dreimal zu hohen Schwelle rechnen und die preisgesteuerten
-        // Zweige faelschlich abschalten. Ohne Konfiguration bleibt die
-        // Arbitrage-Chance deshalb bewusst IMMER "ja" (frueheres Verhalten
-        // vor 0.28.1, sicherer Fallback) statt einen falschen Wert zu raten.
+        // Live-Fund 11.09.2026 (Dietmar): die 0.29.4-Fassung dieser Stelle
+        // ("ohne Konfiguration IMMER Arbitrage-Chance") war selbst ein
+        // "keine eigene Anlage als Norm"-Fehler, nur umgekehrt -- sie hat
+        // bei Dietmar SELBST die Arbitrage-Pruefung wirkungslos gemacht,
+        // weil GENAU SEIN Setup sich bewusst auf den Programmier-Fallback
+        // (0,1836 EUR/kWh, zufaellig identisch mit seiner eigenen
+        // Einspeiseverguetung) verlaesst und NIE eine Variable verknuepft
+        // hat. Fix: der Fallback-Wert wird wieder fuer die Berechnung
+        // benutzt (wie vor 0.29.4), aber nicht mehr STILL -- ein Nutzer, der
+        // ihn nicht kennt, sieht ihn jetzt ueber emsLog()/GetStatus() im
+        // reason-Text, kann ihn also erkennen und bei Bedarf durch eine
+        // eigene Variable ersetzen, statt dass er unsichtbar falsch fuer ihn
+        // rechnet.
         $feedTariffVarId = $this->ReadPropertyInteger('VAR_TIB_Feed_Tariff');
-        if ($feedTariffVarId <= 0) { return true; }
         $feedTariff = (float)$this->readVar('VAR_TIB_Feed_Tariff', 0.1836);
+        if ($feedTariffVarId <= 0) {
+            $this->emsLog(EMS_LOG_VERBOSE, sprintf(
+                'hasArbitrageInPrices(): keine Einspeiseverguetung verknuepft (VAR_TIB_Feed_Tariff) -- rechne mit Platzhalter %.4f EUR/kWh',
+                $feedTariff
+            ));
+        }
         return $minPrice < $feedTariff;
     }
 
