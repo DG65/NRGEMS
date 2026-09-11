@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.30.0 (2026-09-11)
+- **Neu: Plausibilitätswächter (Soll-Ist-Abgleich).** Dietmars Frage nach
+  den beiden Vorfällen vom 10./11.09.2026: „Kannst Du solche Fehlschaltungen
+  in Zukunft ausschließen?" — ehrliche Antwort: nicht absolut, aber diese
+  *Klasse* von Fehlern lässt sich selbst erkennen und selbst korrigieren.
+  Beide Vorfälle (0.29.6 passiver WR-Wartezustand, 0.29.4 Arbitrage-
+  Regression) hatten trotz verschiedener Code-Ursachen dasselbe messbare
+  Symptom: Batterie ≈ 0 W, laufender Netzbezug fürs Haus, keine PV, SOC weit
+  über der Reserve — während EMS gleichzeitig „Hauslast aus Batterie"
+  behauptete. Neue `applyPlausibilityGuard()` (zwischen `optimize()` und
+  `applyDecision()`) prüft jeden Zyklus genau diesen Widerspruch. Hält er
+  länger als `PLAUSI_Minutes` (Standard 5) an, fällt EMS in die native
+  WR-Eigenregelung zurück (`enable=false`, Automatik, 0 W — der sicherste
+  Zustand, keine aktive Gegensteuerung), hält das `PLAUSI_Hold_Min`
+  (Standard 30) lang, damit die fehlerhafte Entscheidung nicht sofort wieder
+  greift und ein Pendeln entsteht, und meldet es sichtbar: neue Alert-
+  Variable `EMS_PlausiWarn` („⚠️ Plausibilitätswächter ausgelöst") +
+  emsLog BASIC mit allen Messwerten und der ursprünglichen Entscheidung.
+  Neues `force`-Feld in der Entscheidung umgeht den Moduswechsel-Cooldown
+  in `applyDecision()` (gleiche Sonderstellung wie Grid Rewards).
+- **Bewusste Grenzen, alle generisch (Dietmars Vorgabe: „ALLES muss bei
+  anderen mit dem nackten Modul ohne Dich und mich 100 % funktionieren"):**
+  nur bei Entscheidungen, in denen die Batterie das Haus tragen oder der WR
+  ernten müsste (AUTO/PV_SELFUSE/DISCHARGE) — Netzladen, Grid Rewards,
+  §14a-Netzbetreiber, Batterie-Boost und Grünste Ladezeit bleiben
+  unangetastet; Wallbox-Bezug wird herausgerechnet (nur der Hausanteil
+  zählt, Schwelle `PLAUSI_GridImport_W`, Standard 200 W); 5 % Abstand zur
+  SOC-Reserve, weil Stillstand dort legitim ist; ohne konfigurierte
+  Batterie inaktiv; keine festen Variablen-IDs, nur die ohnehin generisch
+  aus den Verbund-Verträgen gelesenen `readState()`-Werte (Vorzeichen gegen
+  den InverterHub-Vertrag verifiziert: Netz + = Einspeisung, Batterie + =
+  Entladen); standardmäßig aktiv (`PLAUSI_Enabled`), im Formular unter dem
+  Totmann-Abschnitt abschaltbar/einstellbar.
+- **Noch nicht live gegen einen echten Vorfall verifiziert** — nur die
+  beiden bekannten Muster gedanklich durchgespielt. Erste echte Bewährung
+  ist die nächste Nacht.
+
 ## 0.29.7 (2026-09-11)
 - **Regression aus 0.29.4 behoben — hätte Dietmars eigene Anlage
   dauerhaft falsch gerechnet.** 0.29.4 hatte `hasArbitrageInPrices()` bei

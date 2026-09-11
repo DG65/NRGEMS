@@ -37,6 +37,43 @@
                     ]
                 },
                 {
+                    "type": "Label",
+                    "caption": "── Plausibilitätswächter (Soll-Ist-Abgleich) ──────────────"
+                },
+                {
+                    "type": "Label",
+                    "caption": "Prüft jeden Zyklus, ob der Wechselrichter tut, was EMS erwartet: Bleibt die Batterie trotz ausreichendem Ladestand, fehlender PV und laufendem Netzbezug fürs Haus untätig, obwohl EMS sie fürs Haus vorgesehen hat, fällt EMS nach der eingestellten Zeit in die WR-Eigenregelung zurück (sicherster Zustand), hält das für die Haltezeit und meldet es sichtbar über die Variable „Plausibilitätswächter ausgelöst“."
+                },
+                {
+                    "type": "CheckBox",
+                    "name": "PLAUSI_Enabled",
+                    "caption": "Plausibilitätswächter aktiv (empfohlen)"
+                },
+                {
+                    "type": "NumberSpinner",
+                    "name": "PLAUSI_Minutes",
+                    "caption": "Auslösen nach durchgehender Abweichung von",
+                    "minimum": 1,
+                    "maximum": 60,
+                    "suffix": " min"
+                },
+                {
+                    "type": "NumberSpinner",
+                    "name": "PLAUSI_GridImport_W",
+                    "caption": "Mindest-Netzbezug fürs Haus (ohne Wallbox), ab dem geprüft wird",
+                    "minimum": 50,
+                    "maximum": 5000,
+                    "suffix": " W"
+                },
+                {
+                    "type": "NumberSpinner",
+                    "name": "PLAUSI_Hold_Min",
+                    "caption": "Rückfall in WR-Eigenregelung halten für",
+                    "minimum": 5,
+                    "maximum": 240,
+                    "suffix": " min"
+                },
+                {
                     "type": "NumberSpinner",
                     "name": "EMS_Interval",
                     "caption": "Aktualisierungsintervall (Sekunden)",

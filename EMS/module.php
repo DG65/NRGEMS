@@ -206,6 +206,16 @@ class EMS extends IPSModule
         // und daher als Ausgangswert gewaehlt -- keine automatische
         // Zusatzaktion ohne bewusste Nutzerentscheidung.
         $this->RegisterPropertyInteger('WATCHDOG_Deadman_Reaction', 0);
+
+        // Plausibilitaetswaechter (Soll-Ist-Abgleich, 11.09.2026, siehe
+        // applyPlausibilityGuard()). Standardmaessig AKTIV: Er greift nur in
+        // einen physikalisch widerspruechlichen Zustand ein und faellt dann
+        // in den sichersten Zustand (native WR-Eigenregelung) zurueck --
+        // ohne Nutzer- oder Entwicklerbeteiligung lauffaehig.
+        $this->RegisterPropertyBoolean('PLAUSI_Enabled',      true);
+        $this->RegisterPropertyInteger('PLAUSI_Minutes',      5);
+        $this->RegisterPropertyInteger('PLAUSI_GridImport_W', 200);
+        $this->RegisterPropertyInteger('PLAUSI_Hold_Min',     30);
         for ($i = 1; $i <= 2; $i++) {
             $this->RegisterPropertyInteger('VAR_BAT' . $i . '_SOC',            0);
             $this->RegisterPropertyInteger('VAR_BAT' . $i . '_Power',          0);
@@ -330,6 +340,7 @@ class EMS extends IPSModule
         // nach demselben Muster: echte Variablen + EnableAction).
         $this->RegisterVariableBoolean('WATCHDOG_Brake_Tripped', '⚠️ Totmann-Bremse ausgelöst (Reset nötig)', '~Alert', 150);
         $this->RegisterVariableBoolean('WATCHDOG_Reset_Brake',   'Totmann-Bremse zurücksetzen',              '~Switch', 151);
+        $this->RegisterVariableBoolean('EMS_PlausiWarn',         '⚠️ Plausibilitätswächter ausgelöst (Batterie untätig trotz Netzbezug)', '~Alert', 152);
 
         // EMS_GridRewards NICHT mehr per EnableAction schaltbar (0.29.5,
         // Dietmar 10.09.2026): wird jetzt automatisch von
@@ -363,6 +374,8 @@ class EMS extends IPSModule
         $this->RegisterAttributeString('LastDecisionSource', 'ems');
         $this->RegisterAttributeInteger('ConsecutiveErrors', 0);
         $this->RegisterAttributeInteger('BatteryBoostUntil', 0);
+        $this->RegisterAttributeInteger('PlausiSince',       0); // Beginn der durchgehenden Soll-Ist-Abweichung, 0 = keine
+        $this->RegisterAttributeInteger('PlausiHoldUntil',   0); // bis wann der erzwungene Automatik-Rueckfall gehalten wird
         $this->RegisterAttributeInteger('LastDiscoveryTs',   0);
 
         // ── Tagesplan (siehe BuildDayPlan()/ensureDayPlanEvent()) ────
@@ -910,6 +923,7 @@ class EMS extends IPSModule
             $state      = $this->readState();
             $this->updateStatusVars($state);
             $decision = $this->optimize($state);
+            $decision = $this->applyPlausibilityGuard($decision, $state);
             $this->applyDecision($decision, $state);
             $this->trackSpecialEvents($state);
             $this->WriteAttributeInteger('ConsecutiveErrors', 0);
@@ -3982,6 +3996,129 @@ class EMS extends IPSModule
         }
     }
 
+    /**
+     * Plausibilitaetswaechter (Soll-Ist-Abgleich), Dietmars Auftrag 11.09.2026
+     * nach zwei Vorfaellen mit identischem physikalischem Symptom, aber
+     * verschiedenen Code-Ursachen (0.29.6 passiver Wartezustand durch
+     * enable=true+Automatik, 0.29.4 Arbitrage-Regression): Batterie ~0 W,
+     * laufender Netzbezug fuers Haus, keine PV, SOC weit ueber der Reserve --
+     * und EMS glaubt gleichzeitig, die Batterie wuerde das Haus tragen. Statt
+     * jede kuenftige Code-Ursache einzeln vorhersehen zu muessen, prueft EMS
+     * hier jeden Zyklus seine eigene Behauptung gegen die Messwerte.
+     *
+     * Bewusste Grenzen (alle generisch, nichts Anlagen-spezifisches):
+     * - Nur bei Entscheidungen, in denen die Batterie das Haus tragen oder der
+     *   WR ernten MUESSTE (AUTO/PV_SELFUSE/DISCHARGE). Netzladen, Grid Rewards,
+     *   §14a-Netzbetreiber, Batterie-Boost, Gruenste Ladezeit bleiben
+     *   unangetastet -- dort ist Netzbezug bei ruhender Batterie gewollt oder
+     *   die Prioritaet liegt ausserhalb von EMS.
+     * - Reaktion ist ausschliesslich der Rueckfall in die native WR-
+     *   Eigenregelung (enable=false, Automatik, 0 W) -- der sicherste
+     *   Zustand, keine aktive Gegensteuerung, die selbst wieder falsch sein
+     *   koennte.
+     * - Der Rueckfall wird eine Haltezeit lang gehalten, damit die
+     *   fehlerhafte Entscheidung nicht sofort wieder greift und ein
+     *   Pendeln (5 min stillstehen / kurz laufen / 5 min stillstehen)
+     *   entsteht. Nach Ablauf wird normal weitergeprueft; loest es erneut
+     *   aus, steht das im Log.
+     * - Sichtbar ueber EMS_PlausiWarn (Alert-Variable) + emsLog BASIC, damit
+     *   ein Nutzer ohne Entwicklerkontakt erkennt, dass etwas nicht stimmt.
+     * Vorzeichen laut InverterHub-Vertrag (kanonisch): Netz + = Einspeisung,
+     * also negativ = Bezug; Batterie + = Entladen. Fuer die Batterie wird
+     * nur der Betrag benoetigt, das Netzvorzeichen entspricht dem, was
+     * readState()/house_pow_w ohnehin schon voraussetzen.
+     */
+    private function applyPlausibilityGuard($d, $s)
+    {
+        if (!$this->ReadPropertyBoolean('PLAUSI_Enabled')) { return $d; }
+
+        $checkedOps       = array(EMS_OP_AUTO, EMS_OP_PV_SELFUSE, EMS_OP_DISCHARGE);
+        $protectedSources = array('netzbetreiber', 'tibber', 'nutzer', 'stromgedacht');
+        $applicable = !empty($s['bat_active'])
+            && in_array($d['op_mode'], $checkedOps, true)
+            && !in_array($d['source'] ?? 'ems', $protectedSources, true);
+        if (!$applicable) {
+            // Zaehler zuruecksetzen, Haltephase aber NICHT anfassen: laeuft
+            // z.B. Grid Rewards mitten in der Haltephase an, hat das Vorrang,
+            // danach wird die Haltephase ganz normal zu Ende gefuehrt.
+            if ($this->ReadAttributeInteger('PlausiSince') > 0) {
+                $this->WriteAttributeInteger('PlausiSince', 0);
+            }
+            return $d;
+        }
+
+        $now       = time();
+        $holdUntil = $this->ReadAttributeInteger('PlausiHoldUntil');
+        if ($holdUntil > $now) {
+            return $this->plausiFallback($d, sprintf('Haltephase, noch %d min', (int)ceil(($holdUntil - $now) / 60)));
+        }
+
+        $socMin     = (float)$this->ReadPropertyInteger('BAT_SOC_Min');
+        $socReserve = (float)$this->ReadPropertyInteger('BAT_SOC_Reserve_Backup');
+        $socFloor   = $socMin + $socReserve + 5.0; // 5 % Sicherheitsabstand: nahe der Reserve ist Stillstand legitim
+        $importW    = -(float)$s['grid_total_w'];
+        $wbW        = max(0.0, ((float)$s['wb1_pow_kw'] + (float)$s['wb2_pow_kw']) * 1000.0);
+        $houseImportW = $importW - $wbW; // Wallbox-Bezug rausrechnen, nur der Hausanteil zaehlt
+        $minImportW = (float)$this->ReadPropertyInteger('PLAUSI_GridImport_W');
+
+        $anomaly = ((float)$s['bat_soc'] > $socFloor)
+            && ((float)$s['pv_total_w'] < 100.0)
+            && (abs((float)$s['bat_pow_w']) < 100.0)
+            && ($houseImportW > $minImportW);
+
+        if (!$anomaly) {
+            if ($this->ReadAttributeInteger('PlausiSince') > 0) {
+                $this->WriteAttributeInteger('PlausiSince', 0);
+                $this->emsLog(EMS_LOG_VERBOSE, 'Plausibilitaetswaechter: Abweichung beendet, Zaehler zurueckgesetzt');
+            }
+            if ($this->GetValue('EMS_PlausiWarn')) {
+                $this->SetValue('EMS_PlausiWarn', false);
+                $this->emsLog(EMS_LOG_BASIC, 'Plausibilitaetswaechter: Zustand wieder plausibel, Warnung aufgehoben');
+            }
+            return $d;
+        }
+
+        $since = $this->ReadAttributeInteger('PlausiSince');
+        if ($since <= 0) {
+            $this->WriteAttributeInteger('PlausiSince', $now);
+            $this->emsLog(EMS_LOG_VERBOSE, sprintf(
+                'Plausibilitaetswaechter: Abweichung erkannt (SOC %.0f%%, PV %.0fW, Batterie %.0fW, Haus-Netzbezug %.0fW, Entscheidung: %s) -- beobachte',
+                $s['bat_soc'], $s['pv_total_w'], $s['bat_pow_w'], $houseImportW, $d['reason']
+            ));
+            return $d;
+        }
+        $limitSec = max(1, (int)$this->ReadPropertyInteger('PLAUSI_Minutes')) * 60;
+        if (($now - $since) < $limitSec) {
+            return $d;
+        }
+
+        $holdMin = max(1, (int)$this->ReadPropertyInteger('PLAUSI_Hold_Min'));
+        $this->WriteAttributeInteger('PlausiHoldUntil', $now + $holdMin * 60);
+        $this->WriteAttributeInteger('PlausiSince', 0);
+        $this->emsLog(EMS_LOG_BASIC, sprintf(
+            '⚠️ Plausibilitaetswaechter AUSGELOEST: seit %d min Batterie %.0fW bei SOC %.0f%%, PV %.0fW, Haus-Netzbezug %.0fW -- EMS-Entscheidung war "%s" (%s). Rueckfall in WR-Eigenregelung fuer %d min.',
+            (int)round(($now - $since) / 60), $s['bat_pow_w'], $s['bat_soc'], $s['pv_total_w'], $houseImportW,
+            $d['reason'], $d['source'] ?? 'ems', $holdMin
+        ));
+        return $this->plausiFallback($d, sprintf('ausgeloest, Rueckfall fuer %d min', $holdMin));
+    }
+
+    private function plausiFallback($d, $note)
+    {
+        $original = $d['reason'] ?? '';
+        $d['op_mode']    = EMS_OP_AUTO;
+        $d['gw_mode']    = GW_MODE_AUTO;
+        $d['gw_power_w'] = 0;
+        $d['gw_enable']  = false;
+        $d['force']      = true;
+        $d['source']     = 'ems';
+        $d['reason']     = '⚠️ Plausibilitaetswaechter (' . $note . '): WR-Eigenregelung | urspruenglich: ' . $original;
+        if (!$this->GetValue('EMS_PlausiWarn')) {
+            $this->SetValue('EMS_PlausiWarn', true);
+        }
+        return $d;
+    }
+
     private function applyDecision($d, $s)
     {
         // §14a-Einspeisereduktion (SteuerboxHub) wird bereits in Update()
@@ -4007,7 +4144,10 @@ class EMS extends IPSModule
         // Thrashing zwischen Modi bei knapp schwankenden Schwellwerten) --
         // waehrend der Cooldown-Phase wird trotzdem der zuletzt aktive
         // Modus weiter reasserted, statt komplett zu pausieren.
-        $isGridRewards  = ($d['op_mode'] === EMS_OP_GRIDREWARDS);
+        // 'force' (Plausibilitaetswaechter, 11.09.2026): ein Sicherheits-
+        // Rueckfall darf nicht am Moduswechsel-Cooldown haengen bleiben --
+        // gleiche Sonderstellung wie Grid Rewards.
+        $isGridRewards  = ($d['op_mode'] === EMS_OP_GRIDREWARDS) || !empty($d['force']);
         $gwEnable       = $d['gw_enable'] ?? true;
         $modeChanging   = ($d['gw_mode'] !== $lastMode || $gwEnable !== $lastEnable);
 
