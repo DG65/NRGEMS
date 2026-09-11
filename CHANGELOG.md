@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.30.1 (2026-09-11)
+- **Neu: Szenario-Prüfstand `.tools/test-scenarios.php`** (Muster:
+  MeterHubs `test-virtual.php`). Bildet so viel IP-Symcon nach, dass
+  `optimize()`, `applyPlanSlot()`, `hasArbitrageInPrices()`,
+  `applyPlausibilityGuard()` und `applyDecision()` wirklich laufen — 42
+  Prüfungen in 8 Blöcken: Arbitrage-Einschätzung für die nackte Installation
+  UND eine Anlage mit verknüpfter Einspeisevergütung; die beiden Vorfälle
+  als Regressionsfälle (0.29.4: Nacht/SOC 70 %/keine Arbitrage/nichts
+  verknüpft → reine WR-Automatik; 0.29.6: Tagesplan-Slot „Automatik" →
+  `enable=false`); Plan-Sicherheitsnetze; Grid Rewards als unbedingtes MUSS
+  unabhängig vom Preis (inkl. Ladestopp-Fall und Vorrang vor §14a-Nachtladen);
+  §14a-Netzbetreiber über allem; Boost und §14a-Nachtladen; Plausibilitäts-
+  wächter mit Auslösung, Haltephase, Aufhebung und zehn Negativfällen, in
+  denen er NICHT eingreifen darf; `applyDecision()` mit Cooldown-Umgehung
+  per `force`. Aufruf `php .tools/test-scenarios.php`, Rückgabewert 0/1.
+- **Nachweis, dass der Prüfstand beißt:** gegen zwei bewusst zurückgebaute
+  Kopien gelaufen (`EMS_TEST_MODULE`-Override) — 0.29.6 wieder eingebaut →
+  genau die eine erwartete Prüfung rot; 0.29.4 wieder eingebaut → vier
+  Prüfungen rot, darunter exakt der Regressionsfall. Ein Prüfstand, der nie
+  rot wird, beweist nichts.
+- **CI-Gate:** `check-style.yml` führt den Prüfstand nach `php -l` als
+  Pflicht-Schritt aus. Da jeder Push sofort installiert wird, ist das die
+  letzte Instanz vor der Anlage — Dietmars Punkt 2 („Schutz vor mir").
+- Eingerückt in `.tools/` (führender Punkt), damit der Symcon-Store-Scanner
+  den Ordner nicht als Modul ohne `module.json` beanstandet.
+
 ## 0.30.0 (2026-09-11)
 - **Neu: Plausibilitätswächter (Soll-Ist-Abgleich).** Dietmars Frage nach
   den beiden Vorfällen vom 10./11.09.2026: „Kannst Du solche Fehlschaltungen

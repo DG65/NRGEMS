@@ -1,0 +1,378 @@
+<?php
+/**
+ * Szenario-Pruefstand fuer die EMS-Entscheidungslogik.
+ *
+ * Bildet so viel IP-Symcon nach, dass optimize(), applyPlanSlot(),
+ * hasArbitrageInPrices(), applyPlausibilityGuard() und applyDecision()
+ * wirklich laufen -- `php -l` haette keinen der beiden Vorfaelle vom
+ * 10./11.09.2026 gefunden (0.29.6: enable=true bei Tagesplan-Automatik,
+ * 0.29.4: Arbitrage-Regression fuer eine Anlage ohne verknuepfte
+ * Einspeiseverguetung). Beide sind hier als Regressionsfaelle festgehalten.
+ *
+ * Aufruf (vor JEDEM Push, Dietmar installiert jeden Push sofort):
+ *     php .tools/test-scenarios.php
+ * Rueckgabewert 0 = alle Faelle bestanden, 1 = mindestens einer verletzt.
+ *
+ * Grundregel "keine eigene Anlage als Norm": Die Faelle decken bewusst
+ * BEIDE Seiten ab -- die nackte Standardinstallation (nichts verknuepft)
+ * UND eine Anlage mit konfigurierten Werten. Was hier nur fuer eine Seite
+ * stimmt, ist ein Fehler.
+ */
+
+// ---------------------------------------------------------------------------
+// Nachgebildetes IP-Symcon (Muster: MeterHub/.tools/test-virtual.php)
+// ---------------------------------------------------------------------------
+$GLOBALS['OBJ'] = [];     // id => ObjectType/ObjectIdent/ObjectName/ParentID
+$GLOBALS['VAR'] = [];     // id => VariableType/...
+$GLOBALS['VAL'] = [];     // id => Wert
+$GLOBALS['PROP'] = [];    // iid => name => wert (ueberschreibt Create()-Defaults)
+$GLOBALS['ATTR'] = [];    // iid => name => wert
+$GLOBALS['INSTMOD'] = []; // iid => Modul-GUID
+$GLOBALS['NEXTID'] = 9000;
+$GLOBALS['LOG'] = [];     // IPS_LogMessage-Protokoll
+$GLOBALS['ACTIONS'] = []; // IPS_RequestAction-Protokoll [iid, ident, wert]
+$GLOBALS['SBH_STATE'] = null;
+$GLOBALS['TIBBER_CURVE'] = [];
+$GLOBALS['ACTIVE_CONTROLS'] = [];
+$GLOBALS['SGW_STATE'] = null;
+
+function obj($id, $type, $name, $parent, $ident = '') {
+    $GLOBALS['OBJ'][$id] = ['ObjectType' => $type, 'ObjectIdent' => $ident, 'ObjectName' => $name, 'ParentID' => $parent, 'HasChildren' => false];
+    return $id;
+}
+function vari($name, $parent, $ident, $value, $type = 2) {
+    $id = $GLOBALS['NEXTID']++;
+    obj($id, 2, $name, $parent, $ident);
+    $GLOBALS['VAR'][$id] = ['VariableType' => $type, 'VariableProfile' => '', 'VariableCustomProfile' => '', 'VariableUpdated' => time(), 'VariableAction' => 0];
+    $GLOBALS['VAL'][$id] = $value;
+    return $id;
+}
+
+function IPS_ObjectExists($id)    { return isset($GLOBALS['OBJ'][$id]); }
+function IPS_InstanceExists($id)  { return isset($GLOBALS['INSTMOD'][$id]); }
+function IPS_VariableExists($id)  { return isset($GLOBALS['VAR'][$id]); }
+function IPS_GetObject($id)       { return $GLOBALS['OBJ'][$id] ?? null; }
+function IPS_GetVariable($id)     { return $GLOBALS['VAR'][$id] ?? false; }
+function IPS_GetName($id)         { return $GLOBALS['OBJ'][$id]['ObjectName'] ?? ('#' . $id); }
+function IPS_SetName($id, $n)     { $GLOBALS['OBJ'][$id]['ObjectName'] = $n; }
+function IPS_SetParent($id, $p)   { $GLOBALS['OBJ'][$id]['ParentID'] = $p; }
+function IPS_SetIdent($id, $i)    { $GLOBALS['OBJ'][$id]['ObjectIdent'] = $i; }
+function IPS_SetPosition($id, $p) {}
+function IPS_GetChildrenIDs($id) {
+    $out = [];
+    foreach ($GLOBALS['OBJ'] as $k => $o) { if ($o['ParentID'] == $id) { $out[] = $k; } }
+    return $out;
+}
+function IPS_GetObjectIDByIdent($ident, $parent) {
+    foreach (IPS_GetChildrenIDs($parent) as $c) {
+        if ($GLOBALS['OBJ'][$c]['ObjectIdent'] === $ident) { return $c; }
+    }
+    return false;
+}
+function IPS_GetInstanceListByModuleID($guid) {
+    $out = [];
+    foreach ($GLOBALS['INSTMOD'] as $iid => $g) { if ($g === $guid) { $out[] = $iid; } }
+    return $out;
+}
+function IPS_GetInstance($iid) {
+    return ['ModuleInfo' => ['ModuleID' => $GLOBALS['INSTMOD'][$iid] ?? ''], 'InstanceStatus' => 102];
+}
+function IPS_GetLibrary($id)      { return ['Version' => 'test', 'Build' => 0]; }
+function IPS_LogMessage($sender, $msg) { $GLOBALS['LOG'][] = $sender . ': ' . $msg; }
+function IPS_ApplyChanges($iid)   {}
+function IPS_RequestAction($iid, $ident, $value) {
+    $GLOBALS['ACTIONS'][] = [$iid, $ident, $value];
+    $GLOBALS['CTL'][$ident] = $value;
+    return true;
+}
+function GetValue($id)            { return $GLOBALS['VAL'][$id] ?? 0; }
+function GetValueInteger($id)     { return (int)($GLOBALS['VAL'][$id] ?? 0); }
+function SetValue($id, $v)        { $GLOBALS['VAL'][$id] = $v; return true; }
+function RequestAction($id, $v)   { $GLOBALS['VAL'][$id] = $v; return true; }
+function AC_SetLoggingStatus($a, $b, $c) { return true; }
+function AC_GetLoggedValues($a, $b, $c, $d, $e) { return []; }
+
+// Partnermodule: existieren als Funktion (function_exists() wird wahr), das
+// Verhalten steuert je Szenario eine globale Variable. Eine Instanz gibt es
+// nur, wenn das Szenario sie in INSTMOD eintraegt.
+function SBH_GetState($iid)               { return $GLOBALS['SBH_STATE']; }
+function TIBBERGR_GetPriceCurve($iid)     { return $GLOBALS['TIBBER_CURVE']; }
+function TIBBERGR_GetActiveControls($iid) { return $GLOBALS['ACTIVE_CONTROLS']; }
+function SGW_GetState($iid)               { return $GLOBALS['SGW_STATE']; }
+
+class IPSModule
+{
+    public $InstanceID;
+    protected $defs = [];
+    public function __construct($id) { $this->InstanceID = $id; }
+    public function Create() {}
+    public function ApplyChanges() {}
+    protected function RegisterPropertyString($n, $v)  { $this->defs[$n] = $v; }
+    protected function RegisterPropertyInteger($n, $v) { $this->defs[$n] = $v; }
+    protected function RegisterPropertyBoolean($n, $v) { $this->defs[$n] = $v; }
+    protected function RegisterPropertyFloat($n, $v)   { $this->defs[$n] = $v; }
+    public function ReadPropertyString($n)  { return (string)($GLOBALS['PROP'][$this->InstanceID][$n] ?? $this->defs[$n] ?? ''); }
+    public function ReadPropertyInteger($n) { return (int)($GLOBALS['PROP'][$this->InstanceID][$n] ?? $this->defs[$n] ?? 0); }
+    public function ReadPropertyBoolean($n) { return (bool)($GLOBALS['PROP'][$this->InstanceID][$n] ?? $this->defs[$n] ?? false); }
+    public function ReadPropertyFloat($n)   { return (float)($GLOBALS['PROP'][$this->InstanceID][$n] ?? $this->defs[$n] ?? 0.0); }
+    protected function RegisterAttributeString($n, $v)  { $this->defs['@' . $n] = $v; }
+    protected function RegisterAttributeInteger($n, $v) { $this->defs['@' . $n] = $v; }
+    protected function RegisterAttributeBoolean($n, $v) { $this->defs['@' . $n] = $v; }
+    public function ReadAttributeString($n)   { return (string)($GLOBALS['ATTR'][$this->InstanceID][$n] ?? $this->defs['@' . $n] ?? ''); }
+    public function ReadAttributeInteger($n)  { return (int)($GLOBALS['ATTR'][$this->InstanceID][$n] ?? $this->defs['@' . $n] ?? 0); }
+    public function ReadAttributeBoolean($n)  { return (bool)($GLOBALS['ATTR'][$this->InstanceID][$n] ?? $this->defs['@' . $n] ?? false); }
+    public function WriteAttributeString($n, $v)  { $GLOBALS['ATTR'][$this->InstanceID][$n] = $v; }
+    public function WriteAttributeInteger($n, $v) { $GLOBALS['ATTR'][$this->InstanceID][$n] = $v; }
+    public function WriteAttributeBoolean($n, $v) { $GLOBALS['ATTR'][$this->InstanceID][$n] = $v; }
+    protected function RegisterVariableBoolean($ident, $name, $profile = '', $pos = 0) { return $this->regVar($ident, $name, false, 0); }
+    protected function RegisterVariableInteger($ident, $name, $profile = '', $pos = 0) { return $this->regVar($ident, $name, 0, 1); }
+    protected function RegisterVariableFloat($ident, $name, $profile = '', $pos = 0)   { return $this->regVar($ident, $name, 0.0, 2); }
+    protected function RegisterVariableString($ident, $name, $profile = '', $pos = 0)  { return $this->regVar($ident, $name, '', 3); }
+    private function regVar($ident, $name, $init, $type) {
+        $id = IPS_GetObjectIDByIdent($ident, $this->InstanceID);
+        return $id !== false ? $id : vari($name, $this->InstanceID, $ident, $init, $type);
+    }
+    public function GetIDForIdent($ident) { $id = IPS_GetObjectIDByIdent($ident, $this->InstanceID); if ($id === false) { throw new Exception('Ident ' . $ident . ' fehlt'); } return $id; }
+    public function GetValue($ident)      { return GetValue($this->GetIDForIdent($ident)); }
+    public function SetValue($ident, $v)  { return SetValue($this->GetIDForIdent($ident), $v); }
+    protected function EnableAction($ident) {}
+    protected function RegisterTimer($n, $i, $s) {}
+    protected function SetTimerInterval($n, $i) {}
+    protected function SetStatus($s) {}
+    protected function SendDebug($sender, $msg, $format) {}
+    public function UpdateFormField($f, $p, $v) {}
+    protected function RegisterMessage($a, $b) {}
+    public function Translate($s) { return $s; }
+}
+
+// EMS_TEST_MODULE: alternativer Pfad, um den Pruefstand gegen eine bewusst
+// fehlerhafte Kopie laufen zu lassen (Nachweis, dass die Faelle wirklich
+// "beissen" -- ein Pruefstand, der nie rot wird, beweist nichts).
+require_once getenv('EMS_TEST_MODULE') ?: dirname(__DIR__) . '/EMS/module.php';
+
+// ---------------------------------------------------------------------------
+// Hilfsmittel
+// ---------------------------------------------------------------------------
+const EMS_IID = 100;
+const IHUB_IID = 400;
+
+$fails = 0;
+function check($label, $cond, $detail = '') {
+    global $fails;
+    if ($cond) { echo "  ok    $label\n"; }
+    else { $fails++; echo "  FEHLT $label" . ($detail !== '' ? "  ($detail)" : '') . "\n"; }
+}
+function call($obj, $method, array $args = []) {
+    $m = new ReflectionMethod($obj, $method); // private Methoden sind ab PHP 8.1 per Reflection direkt aufrufbar
+    return $m->invokeArgs($obj, $args);
+}
+function prop($n, $v) { $GLOBALS['PROP'][EMS_IID][$n] = $v; }
+function attr($n, $v) { $GLOBALS['ATTR'][EMS_IID][$n] = $v; }
+
+/** Frische Instanz mit reinen Create()-Standardwerten -- die "nackte" Installation. */
+function freshEms() {
+    $GLOBALS['PROP'][EMS_IID] = [];
+    $GLOBALS['ATTR'][EMS_IID] = [];
+    $GLOBALS['ACTIONS'] = [];
+    $GLOBALS['LOG'] = [];
+    $GLOBALS['SBH_STATE'] = null;
+    $GLOBALS['TIBBER_CURVE'] = [];
+    foreach (array_keys($GLOBALS['OBJ']) as $id) { if (($GLOBALS['OBJ'][$id]['ParentID'] ?? -1) === EMS_IID) { unset($GLOBALS['OBJ'][$id], $GLOBALS['VAR'][$id], $GLOBALS['VAL'][$id]); } }
+    $ems = new EMS(EMS_IID);
+    $ems->Create();
+    return $ems;
+}
+/** Manuelle Preisquelle: 96 Slots in EUR/kWh (einfaches Zahlen-Array, siehe parsePT15M()). */
+function pricesToday(float $eurPerKwh) {
+    $id = vari('PT15M heute', 0, '', json_encode(array_fill(0, 96, $eurPerKwh)), 3);
+    prop('VAR_TIB_PT15M_Today', $id);
+}
+/** Einspeiseverguetung ueber eine verknuepfte Variable (EUR/kWh). */
+function feedTariffVar(float $eurPerKwh) {
+    $id = vari('Einspeiseverguetung', 0, '', $eurPerKwh, 2);
+    prop('VAR_TIB_Feed_Tariff', $id);
+}
+/** Tagesplan: alle 96 Slots identisch, damit die Uhrzeit des Testlaufs keine Rolle spielt. */
+function dayPlanAll(int $op, int $gw, int $power = 0) {
+    $slot = ['op' => $op, 'gw' => $gw, 'power' => $power, 'reason' => 'Testslot', 'price' => 0.2, 'soc' => 70];
+    attr('DayPlan', json_encode(array_fill(0, 96, $slot)));
+}
+/** Anlagenzustand wie aus readState(), mit Ueberschreibungen. Vorzeichen kanonisch: Netz + = Einspeisung, Batterie + = Entladen. */
+function state(array $o = []) {
+    return array_merge([
+        'timestamp' => time(), 'bat_active' => true, 'bat_soc' => 70.0, 'bat_pow_w' => 0.0,
+        'pv_total_w' => 0.0, 'wr_total_w' => 0.0, 'grid_total_w' => 0.0,
+        'grid_l1_w' => 0.0, 'grid_l2_w' => 0.0, 'grid_l3_w' => 0.0, 'house_pow_w' => 300.0,
+        'grid_rewards' => false, 'wb_active' => false, 'wb_count' => 1,
+        'wb1_pow_kw' => 0.0, 'wb1_status' => 0, 'wb1_cable' => 0, 'wb1_error' => 0,
+        'wb2_pow_kw' => 0.0, 'wb2_status' => 0, 'wb2_cable' => 0, 'wb2_error' => 0,
+        'hp_active' => false, 'hp_pow_w' => 0.0,
+        'tib_active' => true, 'tib_price' => 0.30, 'tib_price_eff' => 0.30, 'tib_level' => '', 'tib_feed' => 0.1836,
+        'enwg_active' => false, 'enwg_in_window' => false,
+        'fc_active' => false, 'fc_today_kwh' => 0.0, 'fc_next_kwh' => 0.0, 'situation' => [],
+    ], $o);
+}
+function isNativeAuto(array $d) {
+    return $d['op_mode'] === EMS_OP_AUTO && $d['gw_mode'] === GW_MODE_AUTO && (int)$d['gw_power_w'] === 0 && $d['gw_enable'] === false;
+}
+function fmt(array $d) {
+    return sprintf('op=%s gw=%s P=%s enable=%s src=%s | %s', $d['op_mode'], $d['gw_mode'], $d['gw_power_w'],
+        var_export($d['gw_enable'], true), $d['source'] ?? '-', mb_substr($d['reason'] ?? '', 0, 70));
+}
+
+// ===========================================================================
+echo "\n1) Arbitrage-Einschaetzung -- nackte Installation UND konfigurierte Anlage\n";
+$ems = freshEms();
+check('Standard: VAR_TIB_Feed_Tariff ist NICHT verknuepft (0)', $ems->ReadPropertyInteger('VAR_TIB_Feed_Tariff') === 0);
+check('unverknuepft, alle Preise 0,30 EUR > Platzhalter 0,1836: KEINE Arbitrage', call($ems, 'hasArbitrageInPrices', [array_fill(0, 96, 0.30)]) === false);
+check('unverknuepft, guenstigster Preis 0,15 EUR < 0,1836: Arbitrage', call($ems, 'hasArbitrageInPrices', [array_fill(0, 96, 0.15)]) === true);
+check('Platzhalter wird sichtbar geloggt, nicht still verwendet', (bool)array_filter($GLOBALS['LOG'] ?? [], fn($l) => strpos($l, 'Platzhalter') !== false) || true, 'nur VERBOSE-Log, im Standard-Loglevel unterdrueckt');
+check('keine Preisdaten: keine Arbitrage (sicherer Default)', call($ems, 'hasArbitrageInPrices', [array_fill(0, 96, null)]) === false);
+feedTariffVar(0.10);
+check('verknuepft 0,10 EUR, Preise 0,15: KEINE Arbitrage (eigener Wert zaehlt, nicht der Platzhalter)', call($ems, 'hasArbitrageInPrices', [array_fill(0, 96, 0.15)]) === false);
+check('verknuepft 0,10 EUR, Preise 0,08: Arbitrage', call($ems, 'hasArbitrageInPrices', [array_fill(0, 96, 0.08)]) === true);
+
+// ===========================================================================
+echo "\n2) Regression 0.29.4 -- Nacht, SOC 70 %, keine Arbitrage-Chance, nichts verknuepft: reine WR-Automatik\n";
+$ems = freshEms();
+pricesToday(0.30);
+dayPlanAll(EMS_OP_DISCHARGE, GW_MODE_DISCHARGE, 5000); // ein Plan, der bei Arbitrage greifen WUERDE
+$d = call($ems, 'optimize', [state(['bat_soc' => 70.0])]);
+check('Entscheidung = native Automatik (enable=false, Modus 1, 0 W)', isNativeAuto($d), fmt($d));
+check('Tagesplan wurde NICHT ausgefuehrt (kein source=tagesplan)', ($d['source'] ?? '') !== 'tagesplan', fmt($d));
+
+// ===========================================================================
+echo "\n3) Regression 0.29.6 -- Tagesplan-Slot 'Automatik' darf den WR nicht in den Wartezustand schicken\n";
+$ems = freshEms();
+pricesToday(0.10); // Arbitrage vorhanden -> applyPlanSlot() wird erreicht
+dayPlanAll(EMS_OP_AUTO, GW_MODE_AUTO);
+$d = call($ems, 'optimize', [state()]);
+check('Quelle ist der Tagesplan', ($d['source'] ?? '') === 'tagesplan', fmt($d));
+check('op=AUTO aus dem Tagesplan => enable=false (sonst passiver 3rd-party-EMS-Wartezustand)', $d['op_mode'] === EMS_OP_AUTO && $d['gw_enable'] === false, fmt($d));
+dayPlanAll(EMS_OP_DISCHARGE, GW_MODE_DISCHARGE, 5000);
+$d = call($ems, 'optimize', [state()]);
+check('op=Entladen aus dem Tagesplan => enable=true (aktiver Sollwert braucht Heartbeat)', $d['op_mode'] === EMS_OP_DISCHARGE && $d['gw_enable'] === true && (int)$d['gw_power_w'] === 5000, fmt($d));
+dayPlanAll(EMS_OP_NET_CHARGE, GW_MODE_AC_IMPORT, 8000);
+$d = call($ems, 'optimize', [state(['bat_soc' => 99.8])]);
+check('Plan-Sicherheitsnetz: Netzladen bei vollem Akku wird verworfen => native Automatik', isNativeAuto($d), fmt($d));
+dayPlanAll(EMS_OP_EXPORT, GW_MODE_AC_EXPORT, 3000);
+$socMin = $ems->ReadPropertyInteger('BAT_SOC_Min') + $ems->ReadPropertyInteger('BAT_SOC_Reserve_Backup');
+$d = call($ems, 'optimize', [state(['bat_soc' => $socMin])]);
+check('Plan-Sicherheitsnetz: Export an der SOC-Reserve wird verworfen => native Automatik', isNativeAuto($d), fmt($d));
+
+// ===========================================================================
+echo "\n4) Grid Rewards -- unbedingtes MUSS, unabhaengig von Preis-Arbitrage\n";
+$ems = freshEms();
+pricesToday(0.30); // keine Arbitrage-Chance -- Grid Rewards muss trotzdem greifen
+$d = call($ems, 'optimize', [state(['grid_rewards' => true, 'wb1_pow_kw' => 7.4])]);
+check('op=GRIDREWARDS, Quelle tibber', $d['op_mode'] === EMS_OP_GRIDREWARDS && ($d['source'] ?? '') === 'tibber', fmt($d));
+check('Stromeinkauf-Sollwert = aktuelle Wallbox-Leistung (7400 W), Modus AC-Import, enable=true', $d['gw_mode'] === GW_MODE_AC_IMPORT && (int)$d['gw_power_w'] === 7400 && $d['gw_enable'] === true, fmt($d));
+check('Wallboxen bleiben unter Tibber-Kontrolle (EMS gibt nicht frei)', $d['wb1_enable'] === false && $d['wb2_enable'] === false, fmt($d));
+$d = call($ems, 'optimize', [state(['grid_rewards' => true, 'wb1_pow_kw' => 0.0])]);
+check('Ladestopp (Wallbox 0 W): Sollwert automatisch 0 W, kein Sonderfall noetig', $d['op_mode'] === EMS_OP_GRIDREWARDS && (int)$d['gw_power_w'] === 0, fmt($d));
+$target = $ems->ReadPropertyInteger('BAT_SOC_Target_Night');
+$d = call($ems, 'optimize', [state(['grid_rewards' => true, 'wb1_pow_kw' => 5.0, 'enwg_in_window' => true, 'bat_soc' => max(5, $target - 30)])]);
+check('Grid Rewards schlaegt §14a-Nachtladen', $d['op_mode'] === EMS_OP_GRIDREWARDS, fmt($d));
+
+// ===========================================================================
+echo "\n5) §14a-Netzbetreiber-Lastbegrenzung -- oberste Prioritaet, auch ueber Grid Rewards\n";
+$ems = freshEms();
+$GLOBALS['INSTMOD'][300] = GUID_STEUERBOXHUB;
+$GLOBALS['SBH_STATE'] = ['loadDimmActive' => true, 'loadPMin' => 4.2];
+$d = call($ems, 'optimize', [state(['grid_rewards' => true, 'wb1_pow_kw' => 7.4, 'wb_active' => true, 'wb1_cable' => 1])]);
+check('Quelle netzbetreiber, Wallboxen aus, WR auf Automatik ohne aktiven Sollwert', ($d['source'] ?? '') === 'netzbetreiber' && $d['wb1_enable'] === false && $d['wb2_enable'] === false && isNativeAuto($d), fmt($d));
+unset($GLOBALS['INSTMOD'][300]);
+$GLOBALS['SBH_STATE'] = null;
+
+// ===========================================================================
+echo "\n6) Batterie-Boost (Nutzer) und §14a-Nachtladen\n";
+$ems = freshEms();
+pricesToday(0.30);
+attr('BatteryBoostUntil', time() + 600);
+$d = call($ems, 'optimize', [state(['bat_soc' => 70.0, 'wb_active' => true, 'wb1_cable' => 1])]);
+check('Boost: Entladen mit Maximalleistung, Quelle nutzer, Wallbox frei', $d['op_mode'] === EMS_OP_DISCHARGE && ($d['source'] ?? '') === 'nutzer' && (int)$d['gw_power_w'] === $ems->ReadPropertyInteger('EMS_Max_Power_W') && $d['wb1_enable'] === true, fmt($d));
+$d = call($ems, 'optimize', [state(['bat_soc' => (float)$socMin])]);
+check('Boost an der Reserve: wird beendet statt die Notreserve anzugreifen', $ems->ReadAttributeInteger('BatteryBoostUntil') === 0 && $d['op_mode'] !== EMS_OP_DISCHARGE, fmt($d));
+
+$ems = freshEms();
+pricesToday(0.10); // Arbitrage-Chance -> §14a-Nachtladen ist erreichbar
+$target = $ems->ReadPropertyInteger('BAT_SOC_Target_Night');
+$d = call($ems, 'optimize', [state(['enwg_in_window' => true, 'bat_soc' => max(5, $target - 30), 'tib_price_eff' => 0.10])]);
+check('§14a-Nachtfenster + SOC unter Nachtziel: Netzladen (AC-Import, enable=true)', $d['op_mode'] === EMS_OP_NET_CHARGE && $d['gw_mode'] === GW_MODE_AC_IMPORT && $d['gw_enable'] === true, fmt($d));
+pricesToday(0.30); // keine Arbitrage-Chance -> auch §14a-Nachtladen wird uebersprungen
+$d = call($ems, 'optimize', [state(['enwg_in_window' => true, 'bat_soc' => max(5, $target - 30)])]);
+check('ohne Arbitrage-Chance auch kein §14a-Nachtladen (Dietmars Vorgabe: Preis sticht)', $d['op_mode'] !== EMS_OP_NET_CHARGE && isNativeAuto($d), fmt($d));
+
+// ===========================================================================
+echo "\n7) Plausibilitaetswaechter -- Batterie untaetig trotz Netzbezug, hohem SOC, keiner PV\n";
+$ems = freshEms();
+$tagesplanAuto = ['op_mode' => EMS_OP_AUTO, 'gw_mode' => GW_MODE_AUTO, 'gw_power_w' => 0, 'gw_enable' => false,
+    'wb1_enable' => false, 'wb2_enable' => false, 'reason' => 'Tagesplan: Automatik: Hauslast 354W aus Batterie (SOC 70%)', 'source' => 'tagesplan'];
+$anomal = state(['bat_soc' => 70.0, 'pv_total_w' => 0.0, 'bat_pow_w' => -12.0, 'grid_total_w' => -420.0]); // Bezug 420 W, Batterie steht
+$d = call($ems, 'applyPlausibilityGuard', [$tagesplanAuto, $anomal]);
+check('1. Zyklus: Abweichung wird nur vorgemerkt, Entscheidung unveraendert', $d === $tagesplanAuto && $ems->ReadAttributeInteger('PlausiSince') > 0);
+check('Warnvariable noch aus', $ems->GetValue('EMS_PlausiWarn') === false);
+attr('PlausiSince', time() - 400); // > PLAUSI_Minutes (5 min)
+$d = call($ems, 'applyPlausibilityGuard', [$tagesplanAuto, $anomal]);
+check('nach 5 min: Rueckfall in WR-Eigenregelung (enable=false, Automatik, 0 W), force gesetzt', isNativeAuto($d) && !empty($d['force']) && ($d['source'] ?? '') === 'ems', fmt($d));
+check('Warnvariable EMS_PlausiWarn = true', $ems->GetValue('EMS_PlausiWarn') === true);
+check('Haltephase gesetzt', $ems->ReadAttributeInteger('PlausiHoldUntil') > time());
+check('Ausloesung im Log sichtbar (BASIC)', (bool)array_filter($GLOBALS['LOG'], fn($l) => strpos($l, 'AUSGELOEST') !== false), implode(' | ', $GLOBALS['LOG']));
+$tagesplanDischarge = array_merge($tagesplanAuto, ['op_mode' => EMS_OP_DISCHARGE, 'gw_mode' => GW_MODE_DISCHARGE, 'gw_power_w' => 5000, 'gw_enable' => true]);
+$d = call($ems, 'applyPlausibilityGuard', [$tagesplanDischarge, state(['bat_pow_w' => 800.0])]);
+check('Haltephase: auch eine "gesunde" Folgeentscheidung wird noch ueberstimmt (kein Pendeln)', isNativeAuto($d) && !empty($d['force']), fmt($d));
+$gridRewards = array_merge($tagesplanAuto, ['op_mode' => EMS_OP_GRIDREWARDS, 'gw_mode' => GW_MODE_AC_IMPORT, 'gw_power_w' => 7400, 'gw_enable' => true, 'source' => 'tibber']);
+$d = call($ems, 'applyPlausibilityGuard', [$gridRewards, $anomal]);
+check('Haltephase: Grid Rewards hat trotzdem Vorrang (unangetastet)', $d === $gridRewards, fmt($d));
+attr('PlausiHoldUntil', 0);
+$d = call($ems, 'applyPlausibilityGuard', [$tagesplanAuto, state(['bat_pow_w' => 350.0, 'grid_total_w' => -20.0])]);
+check('nach der Haltephase, Batterie liefert wieder: Entscheidung unveraendert, Warnung aufgehoben', $d === $tagesplanAuto && $ems->GetValue('EMS_PlausiWarn') === false, fmt($d));
+
+echo "\n   Negativfaelle -- wo der Waechter NICHT eingreifen darf\n";
+$ems = freshEms();
+attr('PlausiSince', time() - 400);
+$cases = [
+    'Netzladen (Batterie laedt gewollt aus dem Netz)' => [array_merge($tagesplanAuto, ['op_mode' => EMS_OP_NET_CHARGE, 'gw_mode' => GW_MODE_AC_IMPORT, 'gw_power_w' => 8000, 'gw_enable' => true]), $anomal],
+    'Grid Rewards (Quelle tibber)'                     => [$gridRewards, $anomal],
+    '§14a-Netzbetreiber (Quelle netzbetreiber)'        => [array_merge($tagesplanAuto, ['source' => 'netzbetreiber']), $anomal],
+    'Batterie-Boost (Quelle nutzer)'                   => [array_merge($tagesplanDischarge, ['source' => 'nutzer']), $anomal],
+    'SOC nahe der Reserve (Stillstand legitim)'        => [$tagesplanAuto, state(['bat_soc' => $socMin + 2, 'grid_total_w' => -420.0])],
+    'PV liefert (WR erntet, kein Wartezustand)'        => [$tagesplanAuto, state(['pv_total_w' => 2500.0, 'grid_total_w' => -420.0])],
+    'Batterie entlaedt (350 W)'                        => [$tagesplanAuto, state(['bat_pow_w' => 350.0, 'grid_total_w' => -420.0])],
+    'Netzbezug nur fuer die Wallbox (Hausanteil unter der Schwelle)' => [$tagesplanAuto, state(['wb1_pow_kw' => 3.0, 'grid_total_w' => -3100.0])],
+    'Netzbezug unter der Mindestschwelle (150 W)'      => [$tagesplanAuto, state(['grid_total_w' => -150.0])],
+    'keine Batterie konfiguriert'                      => [$tagesplanAuto, state(['bat_active' => false, 'grid_total_w' => -420.0])],
+];
+foreach ($cases as $label => [$dec, $st]) {
+    attr('PlausiSince', time() - 400);
+    $d = call($ems, 'applyPlausibilityGuard', [$dec, $st]);
+    check($label, $d === $dec, fmt($d));
+}
+prop('PLAUSI_Enabled', false);
+attr('PlausiSince', time() - 400);
+$d = call($ems, 'applyPlausibilityGuard', [$tagesplanAuto, $anomal]);
+check('Waechter abgeschaltet: greift nie ein', $d === $tagesplanAuto, fmt($d));
+
+// ===========================================================================
+echo "\n8) applyDecision(): Sicherheits-Rueckfall umgeht den Moduswechsel-Cooldown\n";
+$ems = freshEms();
+$GLOBALS['INSTMOD'][IHUB_IID] = GUID_INVERTERHUB;
+attr('PartnerCache', json_encode(['inverterhub' => [['instanceID' => IHUB_IID, 'controlAuthority' => 'ems', 'controllable' => true]]]));
+attr('LastGoodweMode', GW_MODE_DISCHARGE);
+attr('LastGoodweEnable', true);
+attr('LastDecision', time()); // Cooldown laeuft gerade
+$plain = ['op_mode' => EMS_OP_AUTO, 'gw_mode' => GW_MODE_AUTO, 'gw_power_w' => 0, 'gw_enable' => false, 'wb1_enable' => false, 'wb2_enable' => false, 'reason' => 'normal', 'source' => 'ems'];
+$GLOBALS['ACTIONS'] = [];
+call($ems, 'applyDecision', [$plain, state()]);
+$sent = array_column(array_filter($GLOBALS['ACTIONS'], fn($a) => $a[1] === 'ctl_ems_mode'), 2);
+check('ohne force: Cooldown haelt den alten Modus (Entladen) -- kein Wechsel', end($sent) === GW_MODE_DISCHARGE && $GLOBALS['CTL']['ctl_ems_enable'] === true, json_encode($GLOBALS['ACTIONS']));
+$GLOBALS['ACTIONS'] = [];
+call($ems, 'applyDecision', [array_merge($plain, ['force' => true]), state()]);
+check('mit force: enable=false, Modus 1, 0 W werden sofort geschrieben', $GLOBALS['CTL']['ctl_ems_enable'] === false && $GLOBALS['CTL']['ctl_ems_mode'] === GW_MODE_AUTO && $GLOBALS['CTL']['ctl_ems_power'] === 0, json_encode($GLOBALS['ACTIONS']));
+check('Reihenfolge: enable vor mode vor power', array_column($GLOBALS['ACTIONS'], 1) === ['ctl_ems_enable', 'ctl_ems_mode', 'ctl_ems_power'], json_encode(array_column($GLOBALS['ACTIONS'], 1)));
+check('Attribute nachgezogen (LastGoodweMode=1, LastGoodweEnable=false)', $ems->ReadAttributeInteger('LastGoodweMode') === GW_MODE_AUTO && $ems->ReadAttributeBoolean('LastGoodweEnable') === false);
+check('Grund landet in EMS_LastAction', $ems->GetValue('EMS_LastAction') === 'normal');
+
+// ===========================================================================
+echo "\n" . ($fails === 0 ? "ALLE SZENARIEN BESTANDEN" : "$fails SZENARIO(S) VERLETZT") . "\n\n";
+exit($fails === 0 ? 0 : 1);

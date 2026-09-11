@@ -14,3 +14,10 @@ jobs:
           php-version: '8.1'
       - name: PHP Syntax-Check
         run: find . -name "*.php" -print0 | xargs -0 -n1 php -l
+      # Szenario-Pruefstand (seit 0.30.1): fuehrt optimize()/applyPlanSlot()/
+      # Plausibilitaetswaechter/applyDecision() gegen ein nachgebildetes IPS
+      # aus -- inkl. der Regressionsfaelle 0.29.4 und 0.29.6. Ein Push, der
+      # einen dieser Faelle bricht, wird hier rot, BEVOR er auf einer Anlage
+      # landet (Beta wird ohne Puffer sofort installiert).
+      - name: Szenario-Pruefstand (Entscheidungslogik)
+        run: php .tools/test-scenarios.php
