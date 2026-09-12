@@ -1565,6 +1565,61 @@ class EMS extends IPSModule
         return $result;
     }
 
+    /**
+     * Ladeleistung von Wallbox $n (1/2) in kW. Vorrang hat eine manuell
+     * verknuepfte Variable (VAR_WBn_Power, Einheit kW wie bisher), sonst
+     * der n-te per Discovery gefundene ChargerHub-Ladepunkt (Vertrag
+     * `powerID`, Einheit W). Befund 12.09.2026: bei Dietmar waren die
+     * Properties leer, EMS rechnete deshalb dauerhaft mit 0 kW -- Grid
+     * Rewards bestellte 0 W Stromeinkauf, Autoladung lief als Hauslast.
+     */
+    private function readChargerPowerKw(int $n): float
+    {
+        if ($this->ReadPropertyInteger('VAR_WB' . $n . '_Power') > 0) {
+            return (float)$this->readVar('VAR_WB' . $n . '_Power', 0);
+        }
+        $chg = $this->getChargerEntry($n);
+        $id = (int)($chg['powerID'] ?? 0);
+        if ($id <= 0 || !$this->isFreshVar($id, 'Wallbox ' . $n . ' Ladeleistung')) { return 0.0; }
+        return max(0.0, (float)GetValue($id) / 1000.0);
+    }
+
+    /** Fahrzeug angesteckt (1/0) -- manuelle Variable vor ChargerHub-`plugStateID`. */
+    private function readChargerCable(int $n): int
+    {
+        if ($this->ReadPropertyInteger('VAR_WB' . $n . '_Cable') > 0) {
+            return (int)$this->readVar('VAR_WB' . $n . '_Cable', 0);
+        }
+        $id = (int)($this->getChargerEntry($n)['plugStateID'] ?? 0);
+        return ($id > 0 && IPS_VariableExists($id)) ? (int)(bool)GetValue($id) : 0;
+    }
+
+    /** n-ter ChargerHub-Ladepunkt (1-basiert, Reihenfolge der Discovery) oder leeres Array. */
+    private function getChargerEntry(int $n): array
+    {
+        $list = array_values((array)($this->GetPartners()['chargerhub'] ?? array()));
+        return (array)($list[$n - 1] ?? array());
+    }
+
+    /**
+     * Messwert nur verwenden, wenn die Quelle ihn in den letzten 10 min
+     * geschrieben hat -- ein haengendes Partnermodul soll nicht als "0 W,
+     * alles ruhig" durchgehen. Hinweis: ein Modul, das bei jedem Abruf
+     * dieselbe (falsche) 0 neu schreibt, faellt hier NICHT auf; das kann
+     * nur die Quelle selbst erkennen.
+     */
+    private function isFreshVar(int $id, string $label): bool
+    {
+        if (!IPS_VariableExists($id)) { return false; }
+        $age = time() - (int)(IPS_GetVariable($id)['VariableUpdated'] ?? 0);
+        if ($age > 600) {
+            // VERBOSE: wuerde sonst jeden 30-s-Zyklus ins Symcon-Log schreiben
+            $this->emsLog(EMS_LOG_VERBOSE, sprintf('%s (#%d) seit %d min nicht aktualisiert -- Wert wird ignoriert', $label, $id, intdiv($age, 60)));
+            return false;
+        }
+        return true;
+    }
+
     private function getWritableChargers()
     {
         $partners = $this->GetPartners();
@@ -3676,13 +3731,13 @@ class EMS extends IPSModule
         // wird aber jetzt von EMS selbst gesetzt statt vom Nutzer.
         $s['grid_rewards']  = $this->detectGridRewardsActive();
         $this->SetValue('EMS_GridRewards', $s['grid_rewards']);
-        $s['wb1_pow_kw']    = (float)$this->readVar('VAR_WB1_Power',  0);
+        $s['wb1_pow_kw']    = $this->readChargerPowerKw(1);
         $s['wb1_status']    = (int)  $this->readVar('VAR_WB1_Status', 0);
-        $s['wb1_cable']     = (int)  $this->readVar('VAR_WB1_Cable',  0);
+        $s['wb1_cable']     = $this->readChargerCable(1);
         $s['wb1_error']     = (int)  $this->readVar('VAR_WB1_Error',  0);
-        $s['wb2_pow_kw']    = (float)$this->readVar('VAR_WB2_Power',  0);
+        $s['wb2_pow_kw']    = $this->readChargerPowerKw(2);
         $s['wb2_status']    = (int)  $this->readVar('VAR_WB2_Status', 0);
-        $s['wb2_cable']     = (int)  $this->readVar('VAR_WB2_Cable',  0);
+        $s['wb2_cable']     = $this->readChargerCable(2);
         $s['wb2_error']     = (int)  $this->readVar('VAR_WB2_Error',  0);
 
         // Waermepumpe (nur Monitoring)

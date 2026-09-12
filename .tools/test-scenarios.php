@@ -468,5 +468,29 @@ check('Plan-Signatur aendert sich mit dem Slot (Neuausrichtung am echten SOC je 
 check('Plan-Signatur im selben Slot stabil (keine Neuberechnung je 30-s-Takt)', call($ems, 'dayPlanSignature', [$p, [], 0.0, 68]) === call($ems, 'dayPlanSignature', [$p, [], 0.0, 68]));
 
 // ===========================================================================
+echo "\n12) Wallbox-Leistung per ChargerHub-Discovery (Befund 12.09.2026: Properties leer -> immer 0 kW)\n";
+$ems = freshEms();
+check('nackt: keine Wallbox, keine Variable -> 0 kW, kein Fehler', call($ems, 'readChargerPowerKw', [1]) === 0.0 && call($ems, 'readChargerCable', [2]) === 0);
+$p1 = vari('WB1 Ladeleistung', 600, 'power', 7400.0);
+$c1 = vari('WB1 angesteckt', 600, 'vehicle_plugged', true, 0);
+$p2 = vari('WB2 Ladeleistung', 601, 'power', 11000.0);
+attr('PartnerCache', json_encode(['chargerhub' => [
+    ['instanceID' => 600, 'powerID' => $p1, 'plugStateID' => $c1, 'managedBy' => 'none'],
+    ['instanceID' => 601, 'powerID' => $p2, 'plugStateID' => 0, 'managedBy' => 'other'],
+]]));
+check('Discovery: WB1 7400 W -> 7,4 kW', call($ems, 'readChargerPowerKw', [1]) === 7.4);
+check('Discovery: WB2 11000 W -> 11 kW (auch fremdgesteuerte Wallbox wird gemessen)', call($ems, 'readChargerPowerKw', [2]) === 11.0);
+check('Discovery: WB1 angesteckt = 1, WB2 ohne plugStateID = 0', call($ems, 'readChargerCable', [1]) === 1 && call($ems, 'readChargerCable', [2]) === 0);
+$st = call($ems, 'optimize', [state(['grid_rewards' => true, 'wb1_pow_kw' => call($ems, 'readChargerPowerKw', [1])])]);
+check('Grid Rewards bestellt jetzt die echte Wallbox-Leistung (7400 W statt 0 W)', (int)$st['gw_power_w'] === 7400, fmt($st));
+$man = vari('manuell kW', 0, '', 3.7);
+prop('VAR_WB1_Power', $man);
+check('manuell verknuepfte Variable hat Vorrang (kW wie bisher): 3,7 kW', call($ems, 'readChargerPowerKw', [1]) === 3.7);
+prop('VAR_WB1_Power', 0);
+$GLOBALS['VAR'][$p2]['VariableUpdated'] = time() - 3600;
+$GLOBALS['LOG'] = [];
+check('Quelle seit 60 min nicht aktualisiert: Wert wird ignoriert (0 kW)', call($ems, 'readChargerPowerKw', [2]) === 0.0);
+
+// ===========================================================================
 echo "\n" . ($fails === 0 ? "ALLE SZENARIEN BESTANDEN" : "$fails SZENARIO(S) VERLETZT") . "\n\n";
 exit($fails === 0 ? 0 : 1);

@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.31.3 (2026-09-12)
+- **Wallbox-Leistung per Discovery.** EMS las Ladeleistung und „Fahrzeug
+  angesteckt“ bisher nur über manuell verknüpfte Variablen (`VAR_WB*_Power`/
+  `_Cable`). Waren die leer, wie bei einer normalen Installation mit
+  ChargerHub, rechnete EMS dauerhaft mit 0 kW. Grid Rewards bestellte dann
+  0 W Stromeinkauf, und Autoladen lief als Hauslast. Jetzt nimmt EMS
+  `powerID`/`plugStateID` aus dem ChargerHub-Vertrag (Wallbox 1/2 = erste/
+  zweite gefundene Instanz, Einheit W). Eine manuell verknüpfte Variable hat
+  weiter Vorrang (Einheit kW wie bisher).
+- **Veraltete Messwerte:** Eine Leistungsvariable, die länger als 10 min nicht
+  geschrieben wurde, zählt nicht und wird geloggt. Ein Modul, das bei jedem
+  Abruf eine falsche 0 neu schreibt, erkennt das nicht, das muss die Quelle
+  selbst melden.
+- **Prüfstand:** Block 12 (nackt, Discovery, Vorrang manuell, Grid-Rewards-
+  Sollwert, veralteter Wert).
+
 ## 0.31.2 (2026-09-12)
 Tagesplan-Rückschau und SOC-Verlauf (Vergleich Plan gegen Archiv):
 - **Hauslast (`EMS_HousePower`) war beim Entladen falsch.** Die Formel zog die
