@@ -490,6 +490,15 @@ prop('VAR_WB1_Power', 0);
 $GLOBALS['VAR'][$p2]['VariableUpdated'] = time() - 3600;
 $GLOBALS['LOG'] = [];
 check('Quelle seit 60 min nicht aktualisiert: Wert wird ignoriert (0 kW)', call($ems, 'readChargerPowerKw', [2]) === 0.0);
+$GLOBALS['VAR'][$p2]['VariableUpdated'] = time();
+$withSeen = function ($ts) use ($p1, $c1) { attr('PartnerCache', json_encode(['chargerhub' => [
+    ['instanceID' => 600, 'powerID' => $p1, 'plugStateID' => $c1, 'managedBy' => 'none', 'contractVersion' => '1.3', 'lastSeenAt' => $ts]]])); };
+$withSeen(time() - 30);
+check('Vertrag 1.3, Geraet antwortet (lastSeenAt vor 30 s): 7,4 kW', call($ems, 'readChargerPowerKw', [1]) === 7.4);
+$withSeen(time() - 3600);
+check('Vertrag 1.3, letzte Geraeteantwort vor 60 min, Variable aber frisch geschrieben: Leistung unbekannt (0)', call($ems, 'readChargerPowerKw', [1]) === 0.0);
+$withSeen(0);
+check('Vertrag 1.3, lastSeenAt = 0 (noch nie geantwortet): Leistung unbekannt (0)', call($ems, 'readChargerPowerKw', [1]) === 0.0);
 
 // ===========================================================================
 echo "\n" . ($fails === 0 ? "ALLE SZENARIEN BESTANDEN" : "$fails SZENARIO(S) VERLETZT") . "\n\n";

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.31.4 (2026-09-12)
+- **Wallbox-Leistung nur bei antwortendem Gerät.** ChargerHub-Vertrag 1.3
+  (0.9.60-beta.1) meldet `lastSeenAt`, den Zeitpunkt der letzten erfolgreichen
+  Geräteantwort. Ist die älter als 10 min oder 0 (noch nie), gilt die Leistung
+  als unbekannt. Damit fällt jetzt auch ein Modul auf, das bei jedem Zyklus
+  dieselbe 0 neu schreibt. Fehlt das Feld (ältere ChargerHub-Version), bleibt
+  es beim Verhalten von 0.31.3.
+- **Prüfstand:** Block 12 um drei Fälle erweitert (Gerät antwortet, Antwort
+  veraltet trotz frischer Variable, noch nie geantwortet).
+
 ## 0.31.3 (2026-09-12)
 - **Wallbox-Leistung per Discovery.** EMS las Ladeleistung und „Fahrzeug
   angesteckt“ bisher nur über manuell verknüpfte Variablen (`VAR_WB*_Power`/

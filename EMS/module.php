@@ -1581,6 +1581,15 @@ class EMS extends IPSModule
         $chg = $this->getChargerEntry($n);
         $id = (int)($chg['powerID'] ?? 0);
         if ($id <= 0 || !$this->isFreshVar($id, 'Wallbox ' . $n . ' Ladeleistung')) { return 0.0; }
+        // Vertrag 1.3: letzte erfolgreiche Geraeteantwort (0 = noch nie).
+        // Fehlt das Feld (aeltere ChargerHub-Version), gilt nur isFreshVar().
+        // Deckt den Fall ab, den der Variablen-Zeitstempel nicht zeigt: ein
+        // Modul, das bei jedem Zyklus dieselbe 0 neu schreibt.
+        if (array_key_exists('lastSeenAt', $chg) && (time() - (int)$chg['lastSeenAt']) > 600) {
+            $this->emsLog(EMS_LOG_VERBOSE, sprintf('Wallbox %d: letzte Geräteantwort %s -- Leistung unbekannt', $n,
+                (int)$chg['lastSeenAt'] > 0 ? date('d.m. H:i', (int)$chg['lastSeenAt']) : 'nie'));
+            return 0.0;
+        }
         return max(0.0, (float)GetValue($id) / 1000.0);
     }
 
