@@ -3980,8 +3980,8 @@ class EMS extends IPSModule
             $d['wb1_enable'] = ($s['wb1_cable'] > 0 && $s['wb1_error'] === 0);
             $d['wb2_enable'] = ($s['wb_count'] >= 2 && $s['wb2_cable'] > 0 && $s['wb2_error'] === 0);
             $d['reason']     = sprintf(
-                '14a Nacht-Laden: SOC=%.0f%% Ziel=%.0f%% Preis=%.2fct(eff)',
-                $soc, $socTargetNight, $price
+                '14a Nacht-Laden: SOC=%.0f%% Ziel=%.0f%% Preis=%.1fct(eff)',
+                $soc, $socTargetNight, $price * 100 // $price in EUR/kWh
             );
             return $d;
         }
@@ -4041,7 +4041,7 @@ class EMS extends IPSModule
         $d['gw_enable']  = false;
         $d['wb1_enable'] = $wb1En;
         $d['wb2_enable'] = $wb2En;
-        $d['reason']     = sprintf('Automatik (WR autonom, ctl_ems_enable=false, kein Tagesplan-Eintrag): SOC=%.0f%% Preis=%.2fct PV=%.0fW', $soc, $price, $pvW);
+        $d['reason']     = sprintf('Automatik (WR autonom, ctl_ems_enable=false, kein Tagesplan-Eintrag): SOC=%.0f%% Preis=%.1fct PV=%.0fW', $soc, $price * 100, $pvW); // $price in EUR/kWh
         return $d;
     }
 

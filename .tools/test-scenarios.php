@@ -258,6 +258,7 @@ dayPlanAll(EMS_OP_DISCHARGE, GW_MODE_DISCHARGE, 5000); // ein Plan, der bei Arbi
 $d = call($ems, 'optimize', [state(['bat_soc' => 70.0])]);
 check('Entscheidung = native Automatik (enable=false, Modus 1, 0 W)', isNativeAuto($d), fmt($d));
 check('Tagesplan wurde NICHT ausgefuehrt (kein source=tagesplan)', ($d['source'] ?? '') !== 'tagesplan', fmt($d));
+check('Preis im Grund in ct: 0,30 EUR/kWh -> "Preis=30.0ct" (nicht "0.30ct")', (bool)preg_match('/Preis=30[.,]0ct/', $d['reason']), $d['reason']);
 
 // ===========================================================================
 echo "\n3) Regression 0.29.6 -- Tagesplan-Slot 'Automatik' darf den WR nicht in den Wartezustand schicken\n";

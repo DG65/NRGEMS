@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.31.5 (2026-09-12)
+- **Preisanzeige im Entscheidungsgrund:** `EMS_LastAction` zeigte bei
+  „Automatik“ und „§14a Nacht-Laden“ den Preis in €/kWh mit „ct“ beschriftet
+  („Preis=0,40ct“ statt 40 ct). Jetzt wird in ct umgerechnet, mit einer
+  Nachkommastelle. Nur Anzeige, die Entscheidung selbst ist unverändert.
+- **Prüfstand:** Block 2 prüft die ct-Angabe.
+
 ## 0.31.4 (2026-09-12)
 - **Wallbox-Leistung nur bei antwortendem Gerät.** ChargerHub-Vertrag 1.3
   (0.9.60-beta.1) meldet `lastSeenAt`, den Zeitpunkt der letzten erfolgreichen
