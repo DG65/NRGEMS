@@ -4262,16 +4262,35 @@ class EMS extends IPSModule
                 // $enable-Wert er will -- die Fallback-Branch (siehe applyFallback())
                 // nutzt bereits enable=false MIT mode=GW_MODE_AUTO, war also schon vor
                 // dieser Korrektur richtig verdrahtet.
-                IPS_RequestAction($inv['instanceID'], 'ctl_ems_enable', (bool)$enable);
-                IPS_RequestAction($inv['instanceID'], 'ctl_ems_mode', $mode);
-                // IMMER schreiben, auch 0 -- ctl_ems_power (Register 47512) ist in
-                // GW_MODE_CHARGE_PV keine additive Zusatzleistung, sondern eine
-                // Netzbezugs-OBERGRENZE (Batterie-Ziel = ctl_ems_power(Netz) + PV,
-                // lt. GoodWe Modbus-Doku ARM205-HV Tab. 8-16). Ein "if ($powerW > 0)"
-                // liess hier frueher einen stehengebliebenen alten Wert unangetastet
-                // (live beobachtet 27.07.2026: 3000W Altwert fuehrte zu 3,4kW
-                // ungewolltem Netzbezug trotz $powerW=0 in der aktuellen Entscheidung).
-                IPS_RequestAction($inv['instanceID'], 'ctl_ems_power', (int)$powerW);
+                // Schreibreihenfolge (12.09.2026, Code-Review svc_* mit InverterHub):
+                // Jede Zwei-Schritt-Reihenfolge laesst fuer irgendeinen Uebergang
+                // kurz einen gefaehrlichen Zwischenzustand zu -- z. B. Modus 3
+                // ("Entladen+Solar", Xmax ist live bestaetigt ein SOLLWERT) mit
+                // einem alten hohen Leistungswert = Entladestoss ins Netz. Sicher
+                // ist der Uebergang ueber Null: Leistung 0 -> Modus -> Zielleistung
+                // -> enable zuletzt. Der Null-Schritt nur bei ECHTEM Moduswechsel
+                // (erkannt am vom Geraet zurueckgelesenen ctl_ems_mode), sonst
+                // wuerde der Reassert-Zyklus z. B. bei Grid Rewards alle 30 s kurz
+                // auf 0 W fallen. Unbekannter Ist-Modus (keine Rueckmeldung, 255)
+                // gilt als Wechsel -- sichere Richtung.
+                // Leistung wird IMMER geschrieben, auch 0: ctl_ems_power (47512) ist
+                // in GW_MODE_CHARGE_PV eine Netzbezugs-OBERGRENZE; ein stehen-
+                // gebliebener Altwert fuehrte am 27.07.2026 zu 3,4 kW ungewolltem
+                // Netzbezug.
+                $iid       = $inv['instanceID'];
+                $modeVarId = $this->findChildVariableIdByIdent($iid, 'ctl_ems_mode');
+                $istModus  = ($modeVarId > 0) ? (int)GetValue($modeVarId) : -1;
+                if ($istModus !== (int)$mode) {
+                    IPS_RequestAction($iid, 'ctl_ems_power', 0);
+                    IPS_RequestAction($iid, 'ctl_ems_mode', $mode);
+                    if ((int)$powerW > 0) {
+                        IPS_RequestAction($iid, 'ctl_ems_power', (int)$powerW);
+                    }
+                } else {
+                    IPS_RequestAction($iid, 'ctl_ems_mode', $mode);
+                    IPS_RequestAction($iid, 'ctl_ems_power', (int)$powerW);
+                }
+                IPS_RequestAction($iid, 'ctl_ems_enable', (bool)$enable);
                 return;
             }
             $this->emsLog(EMS_LOG_BASIC, sprintf(

@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.31.1 (2026-09-12)
+- **Sichere Schreibreihenfolge beim Moduswechsel (`setGoodweMode()`).**
+  Bisher schrieb EMS enable → Modus → Leistung. Beim Code-Review der neuen
+  InverterHub-`svc_*`-Befehle fiel auf: Jede Zwei-Schritt-Reihenfolge lässt
+  für irgendeinen Übergang kurz einen gefährlichen Zwischenzustand zu, z. B.
+  Modus 3 („Entladen+Solar", Xmax ist live bestätigt ein Sollwert) mit einem
+  alten hohen Leistungswert, also ein Entladestoß ins Netz, dasselbe Muster
+  wie am 12.09. um 00:02. Jetzt gilt bei ECHTEM Moduswechsel: Leistung 0 →
+  Modus → Zielleistung → enable zuletzt. Den Moduswechsel erkennt EMS am vom
+  Gerät zurückgelesenen `ctl_ems_mode`, ein unbekannter Ist-Modus (keine
+  Rückmeldung, 255) gilt als Wechsel. Bei gleichem Modus gibt es keinen
+  Null-Schritt, damit der 30-s-Reassert (z. B. Grid Rewards) nicht flackert.
+  InverterHub hat für `writeGridService()` dieselbe Regel umgesetzt
+  (0.76.0-beta.4), damit beide Pfade dasselbe sichere Muster haben.
+- **Prüfstand:** neuer Block 10 mit sechs Übergängen (3→4/7400, 4/7400→3/34500,
+  gleicher Modus ohne Null-Schritt, 4→Automatik, Ist-Modus 255, enable
+  zuletzt), Block 8 auf die neue Reihenfolge angepasst. Gegenprobe am alten
+  Stand: genau diese sieben Prüfungen werden rot.
+
 ## 0.31.0 (2026-09-12)
 Auslöser: Tagesplan für den 12.09. bestand aus 96 aktiven Slots und null
 Automatik (52 × „Entladen" Modus 3 mit 48 kW Sollwert, 44 × „Exportieren"

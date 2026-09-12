@@ -377,7 +377,7 @@ check('ohne force: Cooldown haelt den alten Modus (Entladen) -- kein Wechsel', e
 $GLOBALS['ACTIONS'] = [];
 call($ems, 'applyDecision', [array_merge($plain, ['force' => true]), state()]);
 check('mit force: enable=false, Modus 1, 0 W werden sofort geschrieben', $GLOBALS['CTL']['ctl_ems_enable'] === false && $GLOBALS['CTL']['ctl_ems_mode'] === GW_MODE_AUTO && $GLOBALS['CTL']['ctl_ems_power'] === 0, json_encode($GLOBALS['ACTIONS']));
-check('Reihenfolge: enable vor mode vor power', array_column($GLOBALS['ACTIONS'], 1) === ['ctl_ems_enable', 'ctl_ems_mode', 'ctl_ems_power'], json_encode(array_column($GLOBALS['ACTIONS'], 1)));
+check('Reihenfolge ohne Ist-Rueckmeldung: Leistung 0 -> Modus -> enable zuletzt (Wechsel angenommen)', array_column($GLOBALS['ACTIONS'], 1) === ['ctl_ems_power', 'ctl_ems_mode', 'ctl_ems_enable'], json_encode(array_column($GLOBALS['ACTIONS'], 1)));
 check('Attribute nachgezogen (LastGoodweMode=1, LastGoodweEnable=false)', $ems->ReadAttributeInteger('LastGoodweMode') === GW_MODE_AUTO && $ems->ReadAttributeBoolean('LastGoodweEnable') === false);
 check('Grund landet in EMS_LastAction', $ems->GetValue('EMS_LastAction') === 'normal');
 
@@ -397,6 +397,36 @@ $d = call($ems, 'optimize', [state(['pv_total_w' => 2000.0, 'house_pow_w' => 300
 check('Export-Sollwert auf den GEMESSENEN Ueberschuss begrenzt (2000-300 = 1700 W statt Prognose 5854 W)', $d['op_mode'] === EMS_OP_EXPORT && (int)$d['gw_power_w'] === 1700, fmt($d));
 $d = call($ems, 'optimize', [state(['pv_total_w' => 200.0, 'house_pow_w' => 300.0])]);
 check('Export ohne echten Ueberschuss: Sollwert 0 W (Batterie wird nicht angezapft)', (int)$d['gw_power_w'] === 0, fmt($d));
+
+// ===========================================================================
+echo "\n10) Regression 12.09.2026 -- Moduswechsel nur ueber 0 W, nie alter Modus mit neuer Leistung oder umgekehrt\n";
+$ems = freshEms();
+$GLOBALS['INSTMOD'][IHUB_IID] = GUID_INVERTERHUB;
+attr('PartnerCache', json_encode(['inverterhub' => [['instanceID' => IHUB_IID, 'controlAuthority' => 'ems', 'controllable' => true]]]));
+$rb = vari('EMS Leistungsmodus', IHUB_IID, 'ctl_ems_mode', GW_MODE_DISCHARGE, 1); // vom Geraet zurueckgelesener Ist-Modus
+$seq = function () { return array_map(fn($x) => $x[1] . '=' . var_export($x[2], true), $GLOBALS['ACTIONS']); };
+
+$GLOBALS['VAL'][$rb] = GW_MODE_DISCHARGE; $GLOBALS['ACTIONS'] = [];
+call($ems, 'setGoodweMode', [GW_MODE_AC_IMPORT, 7400, true]);   // Modus 3/500 -> Grid Rewards 4/7400
+check('3 -> 4/7400: Leistung 0, Modus 4, Leistung 7400, enable zuletzt', $seq() === ['ctl_ems_power=0', 'ctl_ems_mode=4', 'ctl_ems_power=7400', 'ctl_ems_enable=true'], json_encode($seq()));
+
+$GLOBALS['VAL'][$rb] = GW_MODE_AC_IMPORT; $GLOBALS['ACTIONS'] = [];
+call($ems, 'setGoodweMode', [GW_MODE_DISCHARGE, 34500, true]);  // Grid Rewards 4/7400 -> Boost 3/34500
+check('4/7400 -> 3/34500: nie Modus 3 mit altem 7400-W-Wert (erst 0 W)', $seq() === ['ctl_ems_power=0', 'ctl_ems_mode=3', 'ctl_ems_power=34500', 'ctl_ems_enable=true'], json_encode($seq()));
+
+$GLOBALS['VAL'][$rb] = GW_MODE_AC_IMPORT; $GLOBALS['ACTIONS'] = [];
+call($ems, 'setGoodweMode', [GW_MODE_AC_IMPORT, 5200, true]);   // gleicher Modus, Reassert mit neuer Leistung
+check('gleicher Modus 4 (Reassert/Nachfuehren): KEIN Null-Schritt, kein Flackern', $seq() === ['ctl_ems_mode=4', 'ctl_ems_power=5200', 'ctl_ems_enable=true'], json_encode($seq()));
+
+$GLOBALS['VAL'][$rb] = GW_MODE_AC_IMPORT; $GLOBALS['ACTIONS'] = [];
+call($ems, 'setGoodweMode', [GW_MODE_AUTO, 0, false]);          // Grid Rewards -> Automatik
+check('4/7400 -> Automatik: Leistung 0, Modus 1, enable=false (kein Leistungsschritt > 0)', $seq() === ['ctl_ems_power=0', 'ctl_ems_mode=1', 'ctl_ems_enable=false'], json_encode($seq()));
+
+$GLOBALS['VAL'][$rb] = 255; $GLOBALS['ACTIONS'] = [];
+call($ems, 'setGoodweMode', [GW_MODE_AUTO, 0, false]);          // Ist-Modus unbekannt (Totmann 255)
+check('Ist-Modus 255 (unbekannt): gilt als Wechsel -> Null-Schritt (sichere Richtung)', $seq()[0] === 'ctl_ems_power=0', json_encode($seq()));
+
+check('enable wird in jedem Fall als LETZTES geschrieben', end($GLOBALS['ACTIONS'])[1] === 'ctl_ems_enable', json_encode($seq()));
 
 // ===========================================================================
 echo "\n" . ($fails === 0 ? "ALLE SZENARIEN BESTANDEN" : "$fails SZENARIO(S) VERLETZT") . "\n\n";
