@@ -1766,15 +1766,24 @@ class EMS extends IPSModule
         if ($archiveId <= 0) { return $slots; }
         $dayStart = strtotime('today');
         $rows = @AC_GetLoggedValues($archiveId, $variableId, $dayStart, time(), 0);
-        if (!is_array($rows) || empty($rows)) { return $slots; }
+        if (!is_array($rows)) { $rows = array(); }
+        // Startwert vom Vortag (Plan/Archiv-Vergleich 12.09.2026): der erste
+        // Eintrag heute kommt erst, wenn sich der Wert aendert -- ohne den
+        // letzten Wert von gestern blieb Slot 0 (und alles bis zur ersten
+        // Aenderung) null bzw. falsch, obwohl der Wert laengst bekannt war.
+        $seed = @AC_GetLoggedValues($archiveId, $variableId, $dayStart - 86400, $dayStart - 1, 1);
+        $lastVal = (is_array($seed) && !empty($seed)) ? $seed[0]['Value'] : null;
+        if (empty($rows) && $lastVal === null) { return $slots; }
         // AC_GetLoggedValues liefert absteigend (neueste zuerst) -- fuer die
         // Slot-Zuordnung aufsteigend nach Zeit sortieren.
         usort($rows, function ($a, $b) { return $a['TimeStamp'] <=> $b['TimeStamp']; });
         $n = count($rows);
         $ri = 0;
-        $lastVal = null;
+        $nowTs = time();
         for ($slot = 0; $slot < 96; $slot++) {
-            $slotEnd = $dayStart + ($slot + 1) * 900;
+            $slotStart = $dayStart + $slot * 900;
+            if ($slotStart > $nowTs) { break; } // Zukunft bleibt null, auch mit Startwert
+            $slotEnd = $slotStart + 900;
             while ($ri < $n && $rows[$ri]['TimeStamp'] < $slotEnd) {
                 $lastVal = $rows[$ri]['Value'];
                 $ri++;
@@ -1782,6 +1791,34 @@ class EMS extends IPSModule
             $slots[$slot] = $lastVal;
         }
         return $slots;
+    }
+
+    /**
+     * Hauslast aus der Leistungsbilanz. Vorzeichen kanonisch: Netz + =
+     * Einspeisung, Batterie + = Entladen (liefert ins Haus).
+     * Plan/Archiv-Vergleich 12.09.2026: vorher stand hier
+     * pv - abs(bat) - netz - wb -- beim Entladen wurde die Batterieleistung
+     * ABGEZOGEN statt addiert, nachts ergab das rechnerisch ~0 W Hauslast
+     * (EMS_HousePower 20 Wh gegen 1210 Wh am Hauszaehler).
+     */
+    private function computeHousePowerW(float $pvW, float $batW, float $gridW, float $wbW): float
+    {
+        return max(0.0, $pvW + $batW - $gridW - $wbW);
+    }
+
+    /**
+     * Signatur fuer "Tagesplan neu rechnen?". Der aktuelle Viertelstunden-Slot
+     * gehoert dazu (Plan/Archiv-Vergleich 12.09.2026): vorher wurde nur bei
+     * neuen Preisen neu gerechnet, die SOC-Simulation lief dann stundenlang
+     * vom Morgen-SOC aus weiter und wich vom echten SOC ab (u.a. weil der
+     * BMS-SOC beim Entladen nicht linear zur Energie faellt). Jetzt richtet
+     * sich der Plan einmal je Slot neu am echten SOC aus, und die Ist-Werte
+     * links vom "jetzt" werden nachgezogen.
+     */
+    private function dayPlanSignature(array $prices, array $tomorrowPrices, float $vehicleReserveKwh, int $nowSlot): string
+    {
+        return date('Y-m-d') . '|' . md5(json_encode($prices) . '|' . json_encode($tomorrowPrices)
+            . '|veh=' . round($vehicleReserveKwh, 1) . '|slot=' . $nowSlot);
     }
 
     private function getTibberGridRewardInstance()
@@ -2824,8 +2861,8 @@ class EMS extends IPSModule
         // Neuberechnung aus. Auf 0,1kWh gerundet, damit GPS-Rauschen bei
         // distanceToHomeKm nicht bei jedem Tick eine Neuberechnung erzwingt.
         $vehicleReserveKwh = $this->computeVehicleReserveKwh();
-        $signature = date('Y-m-d') . '|' . md5(json_encode($prices) . '|' . json_encode($tomorrowPrices)
-            . '|veh=' . round($vehicleReserveKwh, 1));
+        $nowSlot   = (int)(((int)date('H') * 60 + (int)date('i')) / 15);
+        $signature = $this->dayPlanSignature($prices, $tomorrowPrices, $vehicleReserveKwh, $nowSlot);
 
         if (!$force && $this->ReadAttributeString('DayPlanSignature') === $signature) {
             return 'ℹ️ Tagesplan unverändert (gleiche Preisdaten wie beim letzten Lauf) — keine Neuberechnung nötig.';
@@ -2909,7 +2946,6 @@ class EMS extends IPSModule
         foreach ($ranked as $slotIdx => $p) { $cheapRank[$slotIdx] = $r++; }
 
         $soc = $this->getCurrentBatterySoc();
-        $nowSlot  = (int)(((int)date('H') * 60 + (int)date('i')) / 15);
 
         // Live-Fund 24.08.2026 (Dietmar: reale Be-/Entladeraten seiner Anlage
         // C0,6/C1 -- deutlich abweichend von der bisher pauschal angenommenen
@@ -3685,8 +3721,7 @@ class EMS extends IPSModule
 
         // Berechneter Hausverbrauch
         $wbW = ($s['wb1_pow_kw'] + $s['wb2_pow_kw']) * 1000;
-        $s['house_pow_w'] = $s['pv_total_w'] - abs($s['bat_pow_w']) - $s['grid_total_w'] - $wbW;
-        if ($s['house_pow_w'] < 0) { $s['house_pow_w'] = 0.0; }
+        $s['house_pow_w'] = $this->computeHousePowerW($s['pv_total_w'], $s['bat_pow_w'], $s['grid_total_w'], $wbW);
 
         // Effektiver Tibber-Preis nach §14a-Reduktion
         if ($s['enwg_in_window'] && $s['tib_active']) {

@@ -90,7 +90,17 @@ function GetValueInteger($id)     { return (int)($GLOBALS['VAL'][$id] ?? 0); }
 function SetValue($id, $v)        { $GLOBALS['VAL'][$id] = $v; return true; }
 function RequestAction($id, $v)   { $GLOBALS['VAL'][$id] = $v; return true; }
 function AC_SetLoggingStatus($a, $b, $c) { return true; }
-function AC_GetLoggedValues($a, $b, $c, $d, $e) { return []; }
+// Archiv: $GLOBALS['ARCHIVE'][varId] = [[ts, wert], ...]; Rueckgabe wie echtes
+// Archiv absteigend (neueste zuerst), Zeitraum inklusiv, Limit 0 = alle.
+$GLOBALS['ARCHIVE'] = [];
+function AC_GetLoggedValues($a, $var, $start, $end, $limit) {
+    $out = [];
+    foreach ($GLOBALS['ARCHIVE'][$var] ?? [] as [$ts, $v]) {
+        if ($ts >= $start && $ts <= $end) { $out[] = ['TimeStamp' => $ts, 'Value' => $v]; }
+    }
+    usort($out, fn($x, $y) => $y['TimeStamp'] <=> $x['TimeStamp']);
+    return $limit > 0 ? array_slice($out, 0, $limit) : $out;
+}
 
 // Partnermodule: existieren als Funktion (function_exists() wird wahr), das
 // Verhalten steuert je Szenario eine globale Variable. Eine Instanz gibt es
@@ -427,6 +437,35 @@ call($ems, 'setGoodweMode', [GW_MODE_AUTO, 0, false]);          // Ist-Modus unb
 check('Ist-Modus 255 (unbekannt): gilt als Wechsel -> Null-Schritt (sichere Richtung)', $seq()[0] === 'ctl_ems_power=0', json_encode($seq()));
 
 check('enable wird in jedem Fall als LETZTES geschrieben', end($GLOBALS['ACTIONS'])[1] === 'ctl_ems_enable', json_encode($seq()));
+
+// ===========================================================================
+echo "\n11) Regression 12.09.2026 -- Tagesplan-Rueckschau (Plan/Archiv-Vergleich)\n";
+$ems = freshEms();
+$GLOBALS['INSTMOD'][500] = GUID_ARCHIVECONTROL;
+$dayStart = strtotime('today');
+$nowSlot = (int)((time() - $dayStart) / 900);
+$socVar = vari('SOC', IHUB_IID, '', 0.0);
+$GLOBALS['ARCHIVE'][$socVar] = [[$dayStart - 1200, 96.0]]; // letzter Wert gestern 23:40, heute noch keine Aenderung
+$a = call($ems, 'getArchivedSlotsToday', [$socVar]);
+check('kein Eintrag heute: Slot 0 = letzter Wert von gestern (96), nicht null', $a[0] === 96.0, var_export($a[0], true));
+check('... und bis "jetzt" durchgehend 96', $a[$nowSlot] === 96.0, var_export($a[$nowSlot], true));
+check('Zukunft bleibt null (Startwert wird nicht nach vorn verlaengert)', $nowSlot >= 95 || $a[$nowSlot + 1] === null, var_export($a[min(95, $nowSlot + 1)], true));
+$GLOBALS['ARCHIVE'][$socVar][] = [$dayStart + 60, 95.0]; // 00:01 faellt auf 95
+$a = call($ems, 'getArchivedSlotsToday', [$socVar]);
+check('Aenderung im Slot 0 wird uebernommen (95), der Vortageswert ueberschreibt sie nicht', $a[0] === 95.0, var_export($a[0], true));
+$leer = vari('ohne Archiv', IHUB_IID, '', 0.0);
+check('ueberhaupt keine Archivdaten: ehrlich null', call($ems, 'getArchivedSlotsToday', [$leer])[0] === null);
+unset($GLOBALS['INSTMOD'][500]);
+
+check('Hauslast nachts, Batterie entlaedt 1200 W, Netz 0: 1200 W (vorher 0 W)', call($ems, 'computeHousePowerW', [0.0, 1200.0, 0.0, 0.0]) === 1200.0);
+check('Hauslast, Netzbezug 500 W, Batterie steht: 500 W', call($ems, 'computeHousePowerW', [0.0, 0.0, -500.0, 0.0]) === 500.0);
+check('Hauslast, PV 5000, Batterie laedt 3000, Einspeisung 1000: 1000 W', call($ems, 'computeHousePowerW', [5000.0, -3000.0, 1000.0, 0.0]) === 1000.0);
+check('Hauslast, Wallbox wird abgezogen (PV 0, Bezug 7700, WB 7400): 300 W', call($ems, 'computeHousePowerW', [0.0, 0.0, -7700.0, 7400.0]) === 300.0);
+check('Hauslast nie negativ (Messrauschen)', call($ems, 'computeHousePowerW', [0.0, 0.0, 50.0, 0.0]) === 0.0);
+
+$p = array_fill(0, 96, 0.30);
+check('Plan-Signatur aendert sich mit dem Slot (Neuausrichtung am echten SOC je Viertelstunde)', call($ems, 'dayPlanSignature', [$p, [], 0.0, 68]) !== call($ems, 'dayPlanSignature', [$p, [], 0.0, 69]));
+check('Plan-Signatur im selben Slot stabil (keine Neuberechnung je 30-s-Takt)', call($ems, 'dayPlanSignature', [$p, [], 0.0, 68]) === call($ems, 'dayPlanSignature', [$p, [], 0.0, 68]));
 
 // ===========================================================================
 echo "\n" . ($fails === 0 ? "ALLE SZENARIEN BESTANDEN" : "$fails SZENARIO(S) VERLETZT") . "\n\n";

@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.31.2 (2026-09-12)
+Tagesplan-Rückschau und SOC-Verlauf (Vergleich Plan gegen Archiv):
+- **Hauslast (`EMS_HousePower`) war beim Entladen falsch.** Die Formel zog die
+  Batterieleistung ab, statt sie beim Entladen zu addieren. Nachts ergab das
+  rechnerisch ~0 W (20 Wh gegen 1210 Wh am Hauszähler). Jetzt gilt
+  PV + Batterie − Netz − Wallbox (Batterie + = Entladen, Netz + = Einspeisung).
+- **Slot 00:00 in der Rückschau:** Der letzte Archivwert von gestern dient als
+  Startwert. Bisher blieb der erste Slot leer oder falsch, bis sich der Wert
+  heute das erste Mal änderte.
+- **Plan richtet sich je Viertelstunde am echten SOC neu aus.** Bisher wurde
+  nur bei neuen Preisen neu gerechnet, und die Simulation lief stundenlang vom
+  Morgen-SOC weiter. Gemessen: Der Batterie-SOC fällt beim Entladen im oberen
+  Bereich deutlich schneller als die entnommene Energie, deshalb weicht eine
+  lineare Simulation schnell ab. Jetzt ist der aktuelle Slot Teil der
+  Signatur. Neu gerechnet wird also einmal je Viertelstunde, nicht in jedem
+  30-s-Takt.
+- **Prüfstand:** neuer Block 11 (Startwert vom Vortag, Hauslast-Bilanz,
+  Signatur je Slot).
+
 ## 0.31.1 (2026-09-12)
 - **Sichere Schreibreihenfolge beim Moduswechsel (`setGoodweMode()`).**
   Bisher schrieb EMS enable → Modus → Leistung. Beim Code-Review der neuen
