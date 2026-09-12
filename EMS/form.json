@@ -74,6 +74,43 @@
                     "suffix": " min"
                 },
                 {
+                    "type": "Label",
+                    "caption": "── Einspeise-Überwachung (Batterie → Netz) ──────────────"
+                },
+                {
+                    "type": "Label",
+                    "caption": "Misst jeden Zyklus, ob die Batterie entlädt, während gleichzeitig ins Netz eingespeist wird. Das ist fast immer verschenkte Speicherenergie. Bei fester Einspeisevergütung zusammen mit Netzladung des Speichers kann es außerdem die Vergütung gefährden (Mischspeicher-Regeln der Bundesnetzagentur). Die Minuten und Wh je Tag stehen in eigenen Variablen und werden archiviert. Eingegriffen wird nur, wenn EMS selbst einen aktiven Sollwert fährt: Dann fällt EMS nach der eingestellten Zeit in die WR-Eigenregelung zurück und meldet es sichtbar. Die WR-Automatik selbst sowie Netzbetreiber-Vorgaben und Tibber Grid Rewards bleiben unangetastet."
+                },
+                {
+                    "type": "CheckBox",
+                    "name": "EXPOVL_Enabled",
+                    "caption": "Einspeise-Überwachung aktiv (empfohlen)"
+                },
+                {
+                    "type": "NumberSpinner",
+                    "name": "EXPOVL_Threshold_W",
+                    "caption": "Schwelle für Entladung und Einspeisung (gegen Messrauschen)",
+                    "minimum": 10,
+                    "maximum": 2000,
+                    "suffix": " W"
+                },
+                {
+                    "type": "NumberSpinner",
+                    "name": "EXPOVL_Seconds",
+                    "caption": "Eingreifen nach durchgehender Überschneidung von",
+                    "minimum": 10,
+                    "maximum": 900,
+                    "suffix": " s"
+                },
+                {
+                    "type": "NumberSpinner",
+                    "name": "EXPOVL_Hold_Min",
+                    "caption": "Rückfall in WR-Eigenregelung halten für",
+                    "minimum": 1,
+                    "maximum": 240,
+                    "suffix": " min"
+                },
+                {
                     "type": "NumberSpinner",
                     "name": "EMS_Interval",
                     "caption": "Aktualisierungsintervall (Sekunden)",

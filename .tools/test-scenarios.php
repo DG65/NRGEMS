@@ -491,6 +491,53 @@ prop('VAR_WB1_Power', 0);
 $GLOBALS['VAR'][$p2]['VariableUpdated'] = time() - 3600;
 $GLOBALS['LOG'] = [];
 check('Quelle seit 60 min nicht aktualisiert: Wert wird ignoriert (0 kW)', call($ems, 'readChargerPowerKw', [2]) === 0.0);
+
+// ===========================================================================
+echo "\n13) Einspeise-Ueberwachung -- Batterie entlaedt, waehrend eingespeist wird (MiSpeL-Bedingung)\n";
+$ems = freshEms();
+$aktiv = ['op_mode' => EMS_OP_DISCHARGE, 'gw_mode' => GW_MODE_DISCHARGE, 'gw_power_w' => 5000, 'gw_enable' => true,
+    'wb1_enable' => false, 'wb2_enable' => false, 'reason' => 'Tagesplan: Entladen', 'source' => 'tagesplan'];
+$auto = ['op_mode' => EMS_OP_AUTO, 'gw_mode' => GW_MODE_AUTO, 'gw_power_w' => 0, 'gw_enable' => false,
+    'wb1_enable' => false, 'wb2_enable' => false, 'reason' => 'Automatik', 'source' => 'ems'];
+$ueber = state(['bat_pow_w' => 4000.0, 'grid_total_w' => 3500.0]); // entlaedt 4 kW, speist 3,5 kW ein
+attr('ExpOvlLastTs', time() - 30);
+$d = call($ems, 'applyExportOverlapGuard', [$aktiv, $ueber]);
+check('1. Zyklus: nur vorgemerkt, Entscheidung unveraendert', $d === $aktiv && $ems->ReadAttributeInteger('ExpOvlSince') > 0);
+check('Tageszaehler: 30 s x 3500 W = ~29 Wh, 0,5 min', abs($ems->GetValue('EMS_ExportOverlapToday_Wh') - 29.2) < 0.2 && abs($ems->GetValue('EMS_ExportOverlapToday_Min') - 0.5) < 0.01,
+    $ems->GetValue('EMS_ExportOverlapToday_Wh') . ' Wh / ' . $ems->GetValue('EMS_ExportOverlapToday_Min') . ' min');
+attr('ExpOvlSince', time() - 120);
+$d = call($ems, 'applyExportOverlapGuard', [$aktiv, $ueber]);
+check('nach 90 s: Rueckfall in WR-Eigenregelung (enable=false, Automatik, 0 W), force', isNativeAuto($d) && !empty($d['force']), fmt($d));
+check('Warnvariable EMS_ExportOverlapWarn = true, Haltephase gesetzt', $ems->GetValue('EMS_ExportOverlapWarn') === true && $ems->ReadAttributeInteger('ExpOvlHoldUntil') > time());
+$d = call($ems, 'applyExportOverlapGuard', [$aktiv, state()]);
+check('Haltephase: aktiver Sollwert wird weiter ueberstimmt (kein Pendeln)', isNativeAuto($d), fmt($d));
+$gr = array_merge($aktiv, ['op_mode' => EMS_OP_GRIDREWARDS, 'gw_mode' => GW_MODE_AC_IMPORT, 'source' => 'tibber']);
+$d = call($ems, 'applyExportOverlapGuard', [$gr, $ueber]);
+check('Haltephase: Grid Rewards bleibt unangetastet', $d === $gr, fmt($d));
+attr('ExpOvlHoldUntil', 0);
+$d = call($ems, 'applyExportOverlapGuard', [$aktiv, state(['bat_pow_w' => 800.0, 'grid_total_w' => -300.0])]);
+check('nach der Haltephase, keine Einspeisung mehr: Entscheidung unveraendert, Warnung aufgehoben', $d === $aktiv && $ems->GetValue('EMS_ExportOverlapWarn') === false, fmt($d));
+
+echo "\n   Negativfaelle -- wo die Ueberwachung NICHT eingreifen darf\n";
+$ems = freshEms();
+$faelle = [
+    'WR-Automatik (EMS faehrt keinen Sollwert): nur messen'   => [$auto, $ueber],
+    'Grid Rewards (Quelle tibber)'                            => [$gr, $ueber],
+    '§14a-Netzbetreiber'                                      => [array_merge($aktiv, ['source' => 'netzbetreiber']), $ueber],
+    'unter der Schwelle (80 W Entladung, Messrauschen)'       => [$aktiv, state(['bat_pow_w' => 80.0, 'grid_total_w' => 3000.0])],
+    'Batterie laedt, PV speist ein (kein Batteriestrom im Netz)' => [$aktiv, state(['bat_pow_w' => -2000.0, 'grid_total_w' => 1500.0])],
+    'keine Batterie konfiguriert'                             => [$aktiv, state(['bat_active' => false, 'bat_pow_w' => 4000.0, 'grid_total_w' => 3500.0])],
+];
+foreach ($faelle as $label => [$dec, $st]) {
+    attr('ExpOvlSince', time() - 600);
+    $d = call($ems, 'applyExportOverlapGuard', [$dec, $st]);
+    check($label, $d === $dec, fmt($d));
+}
+check('Automatik mit Ueberschneidung wird trotzdem gezaehlt', $ems->GetValue('EMS_ExportOverlapToday_Min') > 0 || $ems->ReadAttributeInteger('ExpOvlLastTs') > 0);
+prop('EXPOVL_Enabled', false);
+attr('ExpOvlSince', time() - 600);
+$d = call($ems, 'applyExportOverlapGuard', [$aktiv, $ueber]);
+check('Ueberwachung abgeschaltet: greift nie ein', $d === $aktiv, fmt($d));
 $GLOBALS['VAR'][$p2]['VariableUpdated'] = time();
 $withSeen = function ($ts) use ($p1, $c1) { attr('PartnerCache', json_encode(['chargerhub' => [
     ['instanceID' => 600, 'powerID' => $p1, 'plugStateID' => $c1, 'managedBy' => 'none', 'contractVersion' => '1.3', 'lastSeenAt' => $ts]]])); };

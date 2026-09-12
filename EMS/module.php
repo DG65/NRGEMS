@@ -220,6 +220,16 @@ class EMS extends IPSModule
         $this->RegisterPropertyInteger('PLAUSI_Minutes',      5);
         $this->RegisterPropertyInteger('PLAUSI_GridImport_W', 200);
         $this->RegisterPropertyInteger('PLAUSI_Hold_Min',     30);
+        // Einspeise-Ueberwachung (13.09.2026, siehe applyExportOverlapGuard()):
+        // Batterie entlaedt, waehrend gleichzeitig ins Netz eingespeist wird.
+        // Bei fester Verguetung + Netzladung Rechtsbedingung (MiSpeL-
+        // Arbeitsstand, "Alternative zur Ausschliesslichkeitsoption"), sonst
+        // zumindest verschenkte Speicherenergie. Standard AKTIV: misst immer,
+        // greift nur in EMS' eigene aktive Sollwerte ein.
+        $this->RegisterPropertyBoolean('EXPOVL_Enabled',     true);
+        $this->RegisterPropertyInteger('EXPOVL_Threshold_W', 100);
+        $this->RegisterPropertyInteger('EXPOVL_Seconds',     90);
+        $this->RegisterPropertyInteger('EXPOVL_Hold_Min',    15);
         for ($i = 1; $i <= 2; $i++) {
             $this->RegisterPropertyInteger('VAR_BAT' . $i . '_SOC',            0);
             $this->RegisterPropertyInteger('VAR_BAT' . $i . '_Power',          0);
@@ -345,6 +355,9 @@ class EMS extends IPSModule
         $this->RegisterVariableBoolean('WATCHDOG_Brake_Tripped', '⚠️ Totmann-Bremse ausgelöst (Reset nötig)', '~Alert', 150);
         $this->RegisterVariableBoolean('WATCHDOG_Reset_Brake',   'Totmann-Bremse zurücksetzen',              '~Switch', 151);
         $this->RegisterVariableBoolean('EMS_PlausiWarn',         '⚠️ Plausibilitätswächter ausgelöst (Batterie untätig trotz Netzbezug)', '~Alert', 152);
+        $this->RegisterVariableBoolean('EMS_ExportOverlapWarn',  '⚠️ Einspeise-Überwachung ausgelöst (Batterie entlud ins Netz)', '~Alert', 153);
+        $this->RegisterVariableFloat('EMS_ExportOverlapToday_Wh', 'Batterie→Netz heute (Wh, Obergrenze)', '', 154);
+        $this->RegisterVariableFloat('EMS_ExportOverlapToday_Min', 'Batterie→Netz heute (min)', '', 155);
 
         // EMS_GridRewards NICHT mehr per EnableAction schaltbar (0.29.5,
         // Dietmar 10.09.2026): wird jetzt automatisch von
@@ -380,6 +393,10 @@ class EMS extends IPSModule
         $this->RegisterAttributeInteger('BatteryBoostUntil', 0);
         $this->RegisterAttributeInteger('PlausiSince',       0); // Beginn der durchgehenden Soll-Ist-Abweichung, 0 = keine
         $this->RegisterAttributeInteger('PlausiHoldUntil',   0); // bis wann der erzwungene Automatik-Rueckfall gehalten wird
+        $this->RegisterAttributeInteger('ExpOvlSince',       0); // Beginn der durchgehenden Ueberschneidung Entladen+Einspeisen, 0 = keine
+        $this->RegisterAttributeInteger('ExpOvlHoldUntil',   0);
+        $this->RegisterAttributeInteger('ExpOvlLastTs',      0); // letzter Messzeitpunkt fuer die Tageszaehler
+        $this->RegisterAttributeString('ExpOvlDay',          '');
         $this->RegisterAttributeInteger('LastDiscoveryTs',   0);
 
         // ── Tagesplan (siehe BuildDayPlan()/ensureDayPlanEvent()) ────
@@ -928,6 +945,7 @@ class EMS extends IPSModule
             $this->updateStatusVars($state);
             $decision = $this->optimize($state);
             $decision = $this->applyPlausibilityGuard($decision, $state);
+            $decision = $this->applyExportOverlapGuard($decision, $state);
             $this->applyDecision($decision, $state);
             $this->trackSpecialEvents($state);
             $this->WriteAttributeInteger('ConsecutiveErrors', 0);
@@ -3266,7 +3284,7 @@ class EMS extends IPSModule
         }
         // EMS_Mode (12.09.2026): Entscheidungs-Historie, sonst lassen sich
         // Vorfaelle wie 11.09. 05-07 Uhr im Nachhinein nicht zuordnen.
-        foreach (array('EMS_HousePower', 'EMS_GridRewards', 'EMS_Mode') as $ident) {
+        foreach (array('EMS_HousePower', 'EMS_GridRewards', 'EMS_Mode', 'EMS_ExportOverlapToday_Wh', 'EMS_ExportOverlapToday_Min') as $ident) {
             $varId = @$this->GetIDForIdent($ident);
             if ($varId > 0) {
                 @AC_SetLoggingStatus($archiveId, $varId, true);
@@ -4227,6 +4245,107 @@ class EMS extends IPSModule
             $d['reason'], $d['source'] ?? 'ems', $holdMin
         ));
         return $this->plausiFallback($d, sprintf('ausgeloest, Rueckfall fuer %d min', $holdMin));
+    }
+
+    /**
+     * Einspeise-Ueberwachung (13.09.2026): Batterie entlaedt, waehrend
+     * gleichzeitig ins Netz eingespeist wird.
+     *
+     * Hintergrund: Bei fester EEG-Verguetung und Netzladung des Speichers
+     * haengt die Verguetung des direkten PV-Stroms daran, dass der Speicher
+     * NICHT entlaedt, solange gleichzeitig eingespeist wird (BNetzA MiSpeL,
+     * Arbeitsstand 05.08.2026, "Alternative zur Ausschliesslichkeitsoption").
+     * Unabhaengig davon ist Speicherstrom im Netz fast immer verschenkt.
+     * Archiv-Auswertung Dietmar 01.08.-12.09.2026: 11,2 kWh, davon 6,2 kWh
+     * an einem Morgen durch einen EMS-Zwangsmodus -- die WR-Automatik selbst
+     * erzeugt nur kurzes Grundrauschen.
+     *
+     * Deshalb:
+     * - MESSEN immer (Tageszaehler Wh/min, archiviert) -- Beleg und Diagnose.
+     * - EINGREIFEN nur, wenn EMS selbst einen aktiven Sollwert faehrt
+     *   (gw_enable=true) und die Ueberschneidung EXPOVL_Seconds anhaelt:
+     *   Rueckfall in die native WR-Eigenregelung, EXPOVL_Hold_Min gehalten.
+     *   Die Automatik selbst wird nie uebersteuert (sicherster Zustand).
+     * - Nicht angetastet: §14a-Netzbetreiber und Tibber Grid Rewards
+     *   (Regelenergie, Prioritaet ausserhalb EMS).
+     * Vorzeichen kanonisch: Batterie + = Entladen, Netz + = Einspeisung.
+     */
+    private function applyExportOverlapGuard($d, $s)
+    {
+        if (!$this->ReadPropertyBoolean('EXPOVL_Enabled') || empty($s['bat_active'])) { return $d; }
+
+        $now = time();
+        $thW = (float)max(10, $this->ReadPropertyInteger('EXPOVL_Threshold_W'));
+        $overlapW = min((float)$s['bat_pow_w'], (float)$s['grid_total_w']);
+        $overlap  = $overlapW > $thW;
+
+        // Tageszaehler (Obergrenze: der kleinere der beiden Werte)
+        $today = date('Y-m-d', $now);
+        if ($this->ReadAttributeString('ExpOvlDay') !== $today) {
+            $this->WriteAttributeString('ExpOvlDay', $today);
+            $this->SetValue('EMS_ExportOverlapToday_Wh', 0.0);
+            $this->SetValue('EMS_ExportOverlapToday_Min', 0.0);
+        }
+        $last = $this->ReadAttributeInteger('ExpOvlLastTs');
+        $dt = ($last > 0) ? min(120, max(0, $now - $last)) : 0;
+        $this->WriteAttributeInteger('ExpOvlLastTs', $now);
+        if ($overlap && $dt > 0) {
+            $this->SetValue('EMS_ExportOverlapToday_Wh', round((float)$this->GetValue('EMS_ExportOverlapToday_Wh') + $overlapW * $dt / 3600.0, 1));
+            $this->SetValue('EMS_ExportOverlapToday_Min', round((float)$this->GetValue('EMS_ExportOverlapToday_Min') + $dt / 60.0, 2));
+        }
+
+        $protected  = in_array($d['source'] ?? 'ems', array('netzbetreiber', 'tibber'), true);
+        $emsActive  = !empty($d['gw_enable']);
+
+        $holdUntil = $this->ReadAttributeInteger('ExpOvlHoldUntil');
+        if ($holdUntil > $now) {
+            return ($emsActive && !$protected)
+                ? $this->expOvlFallback($d, sprintf('Haltephase, noch %d min', (int)ceil(($holdUntil - $now) / 60)))
+                : $d;
+        }
+
+        if (!$overlap || !$emsActive || $protected) {
+            if ($this->ReadAttributeInteger('ExpOvlSince') > 0) { $this->WriteAttributeInteger('ExpOvlSince', 0); }
+            if (!$overlap && $this->GetValue('EMS_ExportOverlapWarn')) {
+                $this->SetValue('EMS_ExportOverlapWarn', false);
+                $this->emsLog(EMS_LOG_BASIC, 'Einspeise-Ueberwachung: keine Batterie-Einspeisung mehr, Warnung aufgehoben');
+            }
+            return $d;
+        }
+
+        $since = $this->ReadAttributeInteger('ExpOvlSince');
+        if ($since <= 0) {
+            $this->WriteAttributeInteger('ExpOvlSince', $now);
+            return $d;
+        }
+        if (($now - $since) < max(10, (int)$this->ReadPropertyInteger('EXPOVL_Seconds'))) {
+            return $d;
+        }
+
+        $holdMin = max(1, (int)$this->ReadPropertyInteger('EXPOVL_Hold_Min'));
+        $this->WriteAttributeInteger('ExpOvlHoldUntil', $now + $holdMin * 60);
+        $this->WriteAttributeInteger('ExpOvlSince', 0);
+        $this->emsLog(EMS_LOG_BASIC, sprintf(
+            '⚠️ Einspeise-Ueberwachung AUSGELOEST: seit %d s entlaedt die Batterie %.0f W bei %.0f W Einspeisung -- EMS-Entscheidung war "%s" (%s). Rueckfall in WR-Eigenregelung fuer %d min.',
+            $now - $since, $s['bat_pow_w'], $s['grid_total_w'], $d['reason'] ?? '', $d['source'] ?? 'ems', $holdMin
+        ));
+        return $this->expOvlFallback($d, sprintf('ausgeloest, Rueckfall fuer %d min', $holdMin));
+    }
+
+    private function expOvlFallback($d, $note)
+    {
+        $original = $d['reason'] ?? '';
+        $d['op_mode']    = EMS_OP_AUTO;
+        $d['gw_mode']    = GW_MODE_AUTO;
+        $d['gw_power_w'] = 0;
+        $d['gw_enable']  = false;
+        $d['force']      = true;
+        $d['source']     = 'ems';
+        $d['reason']     = '⚠️ Einspeise-Ueberwachung (' . $note . '): WR-Eigenregelung | urspruenglich: ' . $original;
+        if (!$this->GetValue('EMS_ExportOverlapWarn')) {
+            $this->SetValue('EMS_ExportOverlapWarn', true);
+        }
+        return $d;
     }
 
     private function plausiFallback($d, $note)

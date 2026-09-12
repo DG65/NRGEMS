@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.32.0 (2026-09-13)
+- **Neu: Einspeise-Überwachung (Batterie → Netz).** EMS misst jeden Zyklus,
+  ob die Batterie entlädt, während gleichzeitig ins Netz eingespeist wird.
+  Das ist fast immer verschenkte Speicherenergie. Bei fester
+  Einspeisevergütung zusammen mit Netzladung kann es laut Arbeitsstand der
+  Mischspeicher-Festlegung der Bundesnetzagentur (05.08.2026) die Vergütung
+  des direkten PV-Stroms gefährden.
+  - Messen: Tageszähler `EMS_ExportOverlapToday_Wh`/`_Min`, archiviert.
+  - Eingreifen nur, wenn EMS selbst einen aktiven Sollwert fährt und die
+    Überschneidung 90 s anhält: Rückfall in die WR-Eigenregelung für 15 min,
+    Warnvariable `EMS_ExportOverlapWarn`, Logeintrag.
+  - Die WR-Automatik wird nie übersteuert. Netzbetreiber-Vorgaben und Tibber
+    Grid Rewards bleiben unangetastet.
+  - Einstellbar: Schwelle (Standard 100 W), Wartezeit, Haltezeit, abschaltbar.
+  - Anlass: Archiv-Auswertung 01.08.–12.09.2026 mit 11,2 kWh Batterie → Netz,
+    davon 6,2 kWh an einem Morgen durch einen inzwischen behobenen
+    EMS-Zwangsmodus.
+- **Prüfstand:** Block 13 (Auslösen, Haltephase, Grid Rewards, Tageszähler,
+  sechs Negativfälle, abgeschaltet).
+
 ## 0.31.5 (2026-09-12)
 - **Preisanzeige im Entscheidungsgrund:** `EMS_LastAction` zeigte bei
   „Automatik“ und „§14a Nacht-Laden“ den Preis in €/kWh mit „ct“ beschriftet
