@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.42.2 (2026-09-13)
+- **Ausgeschalteter OCPPHub wird nicht mehr als Wallbox-Quelle geführt.**
+  Ein vom Nutzer ausgeschalteter OCPPHub-Splitter liefert zwar noch seine
+  Ladepunkte, misst aber nicht mehr. EMS überspringt ihn jetzt. Die Warnung
+  „Wallbox-Quelle prüfen“ entfällt dann, und die Wallboxen laufen wieder
+  allein über ChargerHub.
+- **Prüfstand:** Block 22 um 1 Fall ergänzt.
+
 ## 0.42.1 (2026-09-13)
 - **Behoben (vorbeugend): lange Verläufe aus dem Archiv.** Bezugspreis- und
   Einstandspreis-Historie lesen das Archiv jetzt tageweise. Symcon bricht

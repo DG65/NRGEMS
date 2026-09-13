@@ -75,7 +75,7 @@ function IPS_GetInstanceListByModuleID($guid) {
     return $out;
 }
 function IPS_GetInstance($iid) {
-    return ['ModuleInfo' => ['ModuleID' => $GLOBALS['INSTMOD'][$iid] ?? ''], 'InstanceStatus' => 102];
+    return ['ModuleInfo' => ['ModuleID' => $GLOBALS['INSTMOD'][$iid] ?? ''], 'InstanceStatus' => $GLOBALS['INSTSTATUS'][$iid] ?? 102];
 }
 function IPS_GetLibrary($id)      { return ['Version' => 'test', 'Build' => 0]; }
 function IPS_LogMessage($sender, $msg) { $GLOBALS['LOG'][] = $sender . ': ' . $msg; }
@@ -1025,6 +1025,9 @@ $ohubEntry = ['contractVersion' => '1.3', 'instanceID' => 701, 'function' => 'ch
 $GLOBALS['INSTMOD'][700] = GUID_OCPPHUB_SPLITTER; $GLOBALS['OHUB_FUNCS'] = [$ohubEntry];
 $r = call($ems, 'discoverOcppHub');
 check('Discovery: Eintrag behält die Ladepunkt-ID (701), nicht die Splitter-ID (700)', ($r[0]['instanceID'] ?? 0) === 701 && $r[0]['splitterID'] === 700 && $r[0]['source'] === 'ocpphub', json_encode($r));
+$GLOBALS['INSTSTATUS'][700] = 104;
+check('ausgeschalteter Splitter (Status 104): keine OCPP-Ladepunkte', call($ems, 'discoverOcppHub') === []);
+unset($GLOBALS['INSTSTATUS'][700]);
 unset($GLOBALS['INSTMOD'][700]); $GLOBALS['OHUB_FUNCS'] = [];
 $chub = ['instanceID' => 600, 'powerID' => $p1, 'plugStateID' => 0, 'managedBy' => 'none'];
 attr('PartnerCache', json_encode(['ocpphub' => [array_merge($ohubEntry, ['source' => 'ocpphub'])]]));

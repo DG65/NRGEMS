@@ -1825,6 +1825,10 @@ class EMS extends IPSModule
         $results = array();
         if (!function_exists('OHUB_GetFunctions')) { return $results; }
         foreach (IPS_GetInstanceListByModuleID(GUID_OCPPHUB_SPLITTER) as $sid) {
+            // Vom Nutzer ausgeschalteter Splitter (IS_INACTIVE 104) liefert zwar
+            // noch Eintraege, misst aber nicht mehr -- nicht als Quelle fuehren
+            // (Dietmar 13.09.2026: Splitter aus, weil ein Ladepunkt nicht einzeln geht).
+            if ((int)(@IPS_GetInstance($sid)['InstanceStatus'] ?? 0) === 104) { continue; }
             try {
                 $data = OHUB_GetFunctions($sid);
             } catch (Throwable $e) {
