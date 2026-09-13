@@ -364,6 +364,42 @@
                     "type": "CheckBox",
                     "name": "ANL_Neues_Modell",
                     "caption": "Bestandsanlage freiwillig ins neue Modell gewechselt (keine Vergütung bei negativen Preisen, +0,6 ct)"
+                },
+                {
+                    "type": "Label",
+                    "caption": "Bezugstarif: Damit rechnen andere Module die tatsächlichen Stromkosten, z. B. das Dashboard die Kosten je Ladesitzung. Gemeint ist der Endpreis inkl. Netzentgelt und Steuern. Ändert sich ein Festpreis, behalten vergangene Zeiträume ihren damaligen Preis."
+                },
+                {
+                    "type": "Select",
+                    "name": "BEZ_Tarifart",
+                    "caption": "Bezugstarif",
+                    "options": [
+                        {"caption": "Automatisch (Tibber, falls gefunden, sonst Festpreis)", "value": 0},
+                        {"caption": "Festpreis", "value": 1},
+                        {"caption": "Tibber (dynamisch)", "value": 2},
+                        {"caption": "Eigene Preisvariable (anderer dynamischer Anbieter)", "value": 3}
+                    ]
+                },
+                {
+                    "type": "NumberSpinner",
+                    "name": "BEZ_Festpreis_ct",
+                    "caption": "Festpreis brutto (0 = nicht angegeben)",
+                    "digits": 2,
+                    "suffix": " ct/kWh"
+                },
+                {
+                    "type": "SelectVariable",
+                    "name": "BEZ_Preisvariable",
+                    "caption": "Eigene Preisvariable (muss archiviert werden)"
+                },
+                {
+                    "type": "Select",
+                    "name": "BEZ_Preisvariable_Einheit",
+                    "caption": "Einheit der Preisvariable",
+                    "options": [
+                        {"caption": "ct/kWh", "value": 0},
+                        {"caption": "€/kWh", "value": 1}
+                    ]
                 }
             ]
         },

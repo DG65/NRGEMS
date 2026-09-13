@@ -259,6 +259,12 @@ class EMS extends IPSModule
         $this->RegisterPropertyBoolean('ANL_Neues_Modell',      false); // freiwilliger Wechsel ins Solarspitzen-Modell
         $this->RegisterPropertyInteger('ANL_Verguetungsform',   0);    // 0 feste Einspeiseverguetung, 1 Direktvermarktung
         $this->RegisterPropertyInteger('ANL_Einspeisegrenze_Pct', -1); // -1 automatisch aus den Pflichten, 0..99 % der kWp, 100 = keine
+        // Bezugstarif (Dietmar 13.09.2026, Dashboard-Anfrage Ladesitzungskosten):
+        // tatsaechlicher Bezugspreis je Viertelstunde, auch rueckwirkend.
+        $this->RegisterPropertyInteger('BEZ_Tarifart',              0);   // 0 automatisch (Tibber, sonst Festpreis), 1 Festpreis, 2 Tibber, 3 eigene Preisvariable
+        $this->RegisterPropertyFloat('BEZ_Festpreis_ct',            0.0); // brutto ct/kWh, 0 = nicht angegeben
+        $this->RegisterPropertyInteger('BEZ_Preisvariable',         0);   // archivierte Variable mit dem aktuellen Bezugspreis
+        $this->RegisterPropertyInteger('BEZ_Preisvariable_Einheit', 0);   // 0 ct/kWh, 1 EUR/kWh
         $this->RegisterPropertyBoolean('NETZ_Aktiv',          true);
         $this->RegisterPropertyInteger('NETZ_B1_Margin_W',    300); // gemessene PV mindestens so weit ueber der Hauslast
         $this->RegisterPropertyInteger('NETZ_B1_Latest_Hour', 13);  // spaetester Freigabezeitpunkt (volle Stunde)
@@ -441,6 +447,7 @@ class EMS extends IPSModule
         $this->RegisterAttributeString('FcAccuracy',         '');    // PVF_GetAccuracy (Vertrag 1.x), leer = nicht verfuegbar
         $this->RegisterAttributeString('FcSpotCurve',        '[]');  // Boersenpreis-Kurve [start,end,price ct netto,aufloesung,quelle]
         $this->RegisterAttributeString('FeedInLimitState',   '');    // zuletzt gesetzte Einspeisegrenze "W|Grund" (nur fuer Aenderungs-Log)
+        $this->RegisterAttributeString('BezFestHistorie',    '[]');  // Festpreis-Aenderungen [[ab-Zeitpunkt, ct], ...] -- alte Sitzungen behalten ihren damaligen Preis
         $this->RegisterAttributeString('FeedInLimitPrev',    '');    // WR-Einspeisegrenze VOR dem ersten EMS-Eingriff (Installateur-Wert), zum Wiederherstellen
         $this->RegisterAttributeString('FcLoadToday',        '[]');  // Lastprognose heute, 96 Slots W (null = fehlt)
         $this->RegisterAttributeInteger('LastDiscoveryTs',   0);
@@ -494,6 +501,12 @@ class EMS extends IPSModule
             $this->ensureArchiving();
         } catch (Throwable $e) {
             $this->emsLog(EMS_LOG_BASIC, 'Archivierung fuer EMS-Variablen konnte nicht gesetzt werden: ' . $e->getMessage());
+        }
+
+        try {
+            $this->recordFixedPriceChange();
+        } catch (Throwable $e) {
+            $this->emsLog(EMS_LOG_BASIC, 'Festpreis-Historie konnte nicht fortgeschrieben werden: ' . $e->getMessage());
         }
 
         $active   = $this->ReadPropertyBoolean('EMS_Active');
@@ -4861,6 +4874,162 @@ class EMS extends IPSModule
             'pflichten'           => $this->plantObligations($ibn, $kwp, $o),
             'hinweis'             => 'Automatisch abgeleitet, keine Rechtsberatung.',
         );
+    }
+
+    /**
+     * Festpreis-Aenderung merken (ApplyChanges). Ohne Historie wuerde ein neuer
+     * Tarif rueckwirkend alle alten Ladesitzungen umbewerten.
+     */
+    private function recordFixedPriceChange(?int $now = null): void
+    {
+        $ct = round((float)$this->ReadPropertyFloat('BEZ_Festpreis_ct'), 4);
+        $h = json_decode($this->ReadAttributeString('BezFestHistorie'), true);
+        if (!is_array($h)) { $h = array(); }
+        $last = end($h);
+        if ($last === false && $ct <= 0.0) { return; }
+        if ($last !== false && abs((float)$last[1] - $ct) < 0.00005) { return; }
+        $h[] = array($now ?? time(), $ct);
+        $this->WriteAttributeString('BezFestHistorie', json_encode(array_slice($h, -200)));
+    }
+
+    /**
+     * Festpreis zum Zeitpunkt: der zuletzt davor eingetragene Wert. Vor der
+     * ersten Eintragung gilt der erste Wert als angenommen (Quelle
+     * 'fest-angenommen'), 0 ct heisst "nicht angegeben".
+     */
+    private function fixedPriceAt(array $h, int $ts): array
+    {
+        if (empty($h)) { return array(null, ''); }
+        $val = null;
+        foreach ($h as $e) {
+            if ((int)$e[0] <= $ts) { $val = (float)$e[1]; } else { break; }
+        }
+        $quelle = 'fest';
+        if ($val === null) { $val = (float)$h[0][1]; $quelle = 'fest-angenommen'; }
+        return $val > 0.0 ? array($val, $quelle) : array(null, '');
+    }
+
+    /** Wirksame Tarifart: 'tibber', 'fest', 'variable' oder 'keiner'. */
+    private function purchaseTariffMode(): string
+    {
+        switch ((int)$this->ReadPropertyInteger('BEZ_Tarifart')) {
+            case 1: return 'fest';
+            case 2: return 'tibber';
+            case 3: return 'variable';
+        }
+        if ($this->getTibberGridRewardInstance() > 0 || $this->tibberPriceVarId() > 0) { return 'tibber'; }
+        return ((float)$this->ReadPropertyFloat('BEZ_Festpreis_ct') > 0.0) ? 'fest' : 'keiner';
+    }
+
+    /**
+     * Archivierte Tibber-Preisvariable (EUR/kWh): die verknuepfte VAR_TIB_Price,
+     * sonst "Aktueller Preis" (Ident CurrentPrice) einer Tibber-Instanz -- bei
+     * mehreren die erste mit einem Wert (eine Demo-Instanz steht auf 0).
+     */
+    private function tibberPriceVarId(): int
+    {
+        $p = (int)$this->ReadPropertyInteger('VAR_TIB_Price');
+        if ($p > 0 && IPS_VariableExists($p)) { return $p; }
+        $first = 0;
+        foreach ((array)@IPS_GetInstanceListByModuleID(GUID_TIBBERGRIDREWARD) as $tid) {
+            $id = (int)@IPS_GetObjectIDByIdent('CurrentPrice', $tid);
+            if ($id <= 0 || !IPS_VariableExists($id)) { continue; }
+            if ((float)GetValue($id) != 0.0) { return $id; }
+            if ($first === 0) { $first = $id; }
+        }
+        return $first;
+    }
+
+    /** Archivverlauf aufsteigend [[ts, wert], ...] inkl. letztem Wert vor $from. */
+    private function archivedStepSeries(int $varId, int $from, int $to): array
+    {
+        $arch = $this->getArchiveInstanceId();
+        if ($varId <= 0 || $arch <= 0) { return array(); }
+        $out = array();
+        $seed = @AC_GetLoggedValues($arch, $varId, $from - 40 * 86400, $from - 1, 1);
+        if (is_array($seed) && !empty($seed)) { $out[] = array((int)$seed[0]['TimeStamp'], (float)$seed[0]['Value']); }
+        $rows = @AC_GetLoggedValues($arch, $varId, $from, $to, 0);
+        if (is_array($rows)) {
+            usort($rows, function ($a, $b) { return $a['TimeStamp'] <=> $b['TimeStamp']; });
+            foreach ($rows as $r) { $out[] = array((int)$r['TimeStamp'], (float)$r['Value']); }
+        }
+        return $out;
+    }
+
+    private function stepValueAt(array $series, int $ts): ?float
+    {
+        $v = null;
+        foreach ($series as $e) {
+            if ($e[0] <= $ts) { $v = $e[1]; } else { break; }
+        }
+        return $v;
+    }
+
+    /**
+     * Tatsaechlicher Bezugspreis je Viertelstunde (Vertrag 'purchaseprice'
+     * 1.0, rein lesend), Dietmar 13.09.2026 fuer die Ladesitzungskosten im
+     * Dashboard. ct/kWh brutto inkl. Netzentgelt, Steuern und Umlagen.
+     * Tibber: veroeffentlichte Kurve (heute/morgen), Vergangenes aus dem
+     * Archiv von "Aktueller Preis". Eigene Variable: nur Archiv, also nur
+     * bis jetzt. Festpreis: mit Aenderungshistorie. Nie der Boersenpreis.
+     * Fehlender Preis = null (nicht raten). Hoechstens 62 Tage je Abruf.
+     */
+    public function GetPurchasePriceHistory(int $from, int $to): array
+    {
+        $now  = time();
+        $from = intdiv($from, 900) * 900;
+        $to   = min($to, $from + 62 * 86400);
+        $mode = $this->purchaseTariffMode();
+        $res  = array(
+            'contractVersion' => '1.0',
+            'einheit'         => 'ct/kWh brutto',
+            'tarifart'        => $mode,
+            'von'             => $from,
+            'bis'             => $to,
+            'slots'           => array(),
+            'hinweis'         => 'Endkundenpreis inkl. Netzentgelt, Steuern und Umlagen; null = kein Preis bekannt.',
+        );
+        if ($to <= $from) { return $res; }
+
+        $curve = array(); $series = array(); $factor = 100.0; $festH = array();
+        if ($mode === 'tibber') {
+            $tid = $this->getTibberGridRewardInstance();
+            if ($tid > 0) {
+                $c = @TIBBERGR_GetPriceCurve($tid);
+                if (is_string($c)) { $c = json_decode($c, true); }
+                foreach ((array)$c as $e) {
+                    if (is_array($e) && isset($e['start'], $e['price']) && is_numeric($e['price'])) {
+                        $curve[(int)$e['start']] = (float)$e['price']; // ct/kWh brutto
+                    }
+                }
+            }
+            $series = $this->archivedStepSeries($this->tibberPriceVarId(), $from, min($to, $now));
+        } elseif ($mode === 'variable') {
+            $series = $this->archivedStepSeries((int)$this->ReadPropertyInteger('BEZ_Preisvariable'), $from, min($to, $now));
+            $factor = ((int)$this->ReadPropertyInteger('BEZ_Preisvariable_Einheit') === 1) ? 100.0 : 1.0;
+        } elseif ($mode === 'fest') {
+            $festH = json_decode($this->ReadAttributeString('BezFestHistorie'), true) ?: array();
+            if (empty($festH) && (float)$this->ReadPropertyFloat('BEZ_Festpreis_ct') > 0.0) {
+                $festH = array(array(0, (float)$this->ReadPropertyFloat('BEZ_Festpreis_ct')));
+            }
+        }
+
+        for ($s = $from; $s < $to; $s += 900) {
+            $price = null; $quelle = '';
+            if ($mode === 'fest') {
+                list($price, $quelle) = $this->fixedPriceAt($festH, $s);
+            } elseif ($mode === 'tibber' && isset($curve[$s])) {
+                $price = $curve[$s]; $quelle = 'tibber';
+            } elseif (($mode === 'tibber' || $mode === 'variable') && $s <= $now) {
+                // Slot-Mitte: die Preisvariable wird oft erst Sekunden nach
+                // der Viertelstundengrenze umgeschrieben.
+                $v = $this->stepValueAt($series, min($s + 450, $now));
+                if ($v !== null) { $price = $v * $factor; $quelle = ($mode === 'tibber') ? 'tibber-archiv' : 'variable'; }
+            }
+            $res['slots'][] = array('start' => $s, 'end' => $s + 900,
+                'priceCt' => $price === null ? null : round($price, 4), 'quelle' => $quelle);
+        }
+        return $res;
     }
 
     /**

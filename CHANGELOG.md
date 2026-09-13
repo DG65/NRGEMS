@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.37.0 (2026-09-13)
+- **Neu: Bezugstarif und Bezugspreis-Historie.** Andere Module können damit
+  die tatsächlichen Stromkosten rechnen, zuerst das Dashboard die Kosten je
+  Ladesitzung.
+  - Im Panel „🏠 Anlage“: Bezugstarif automatisch (Tibber, falls gefunden,
+    sonst Festpreis), Festpreis, Tibber oder eigene Preisvariable eines
+    anderen dynamischen Anbieters (ct/kWh oder €/kWh).
+  - `EMS_GetPurchasePriceHistory($von, $bis)` (Vertrag 1.0, rein lesend)
+    liefert je Viertelstunde den Endpreis in ct/kWh brutto mit Quelle,
+    höchstens 62 Tage je Abruf.
+  - Tibber: veröffentlichte Preiskurve für heute und morgen, vergangene Tage
+    aus dem Archiv von „Aktueller Preis“. Eigene Preisvariable: aus ihrem
+    Archiv, also nur bis jetzt.
+  - Ändert sich der Festpreis, merkt sich EMS das. Vergangene Zeiträume
+    behalten ihren damaligen Preis.
+  - Kein Preis bekannt heißt `null`, es wird nichts geschätzt. Der
+    Börsenpreis wird nie als Bezugspreis verwendet.
+- **Prüfstand:** Block 20 mit 11 Fällen (nackt, Festpreis mit Wechsel,
+  Tibber aus Kurve und Archiv, verspätete Preisaktualisierung, Zukunft ohne
+  Kurve, eigene Variable in ct und €, ausdrückliche Wahl, 62-Tage-Grenze).
+
 ## 0.36.0 (2026-09-13)
 - **Neu: Dauerhafte Einspeisegrenze am Netzanschluss.**
   - Automatisch aus den Anlagendaten: 60 % der kWp für Neuanlagen ab

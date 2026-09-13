@@ -915,5 +915,51 @@ check('Überschuss 2600 W deutlich unter der Grenze: B1 darf sperren', $spaet19 
 unset($GLOBALS['INSTMOD'][IHUB_IID]);
 
 // ===========================================================================
+echo "\n20) Bezugspreis-Historie (EMS_GetPurchasePriceHistory, Ladesitzungskosten)\n";
+$GLOBALS['INSTMOD'][500] = GUID_ARCHIVECONTROL;
+$d0 = strtotime('today');
+$ems = freshEms();
+$r = call($ems, 'GetPurchasePriceHistory', [$d0, $d0 + 3600]);
+check('nackt: Tarifart keiner, 4 Slots, alle Preise null', $r['tarifart'] === 'keiner' && count($r['slots']) === 4 && array_filter(array_column($r['slots'], 'priceCt')) === [], json_encode($r['tarifart']));
+check('Vertrag 1.0, Einheit ct/kWh brutto', $r['contractVersion'] === '1.0' && $r['einheit'] === 'ct/kWh brutto');
+
+$ems = freshEms(); prop('BEZ_Festpreis_ct', 32.5);
+$r = call($ems, 'GetPurchasePriceHistory', [$d0, $d0 + 900]);
+check('Festpreis ohne Historie (automatisch, kein Tibber): 32,5 ct', $r['tarifart'] === 'fest' && $r['slots'][0]['priceCt'] === 32.5, json_encode($r['slots'][0]));
+attr('BezFestHistorie', json_encode([[$d0 + 1800, 30.0], [$d0 + 3600, 35.0]]));
+$r = call($ems, 'GetPurchasePriceHistory', [$d0, $d0 + 5400]);
+$p = array_column($r['slots'], 'priceCt');
+check('Festpreis-Wechsel: vorher angenommen 30, ab 00:30 30, ab 01:00 35', $p === [30.0, 30.0, 30.0, 30.0, 35.0, 35.0] && $r['slots'][0]['quelle'] === 'fest-angenommen' && $r['slots'][2]['quelle'] === 'fest', json_encode($p));
+$ems = freshEms(); prop('BEZ_Festpreis_ct', 30.0);
+call($ems, 'recordFixedPriceChange', [$d0]); call($ems, 'recordFixedPriceChange', [$d0 + 60]);
+prop('BEZ_Festpreis_ct', 31.0); call($ems, 'recordFixedPriceChange', [$d0 + 120]);
+check('ApplyChanges merkt nur echte Änderungen (2 Einträge)', count(json_decode($ems->ReadAttributeString('BezFestHistorie'), true)) === 2, $ems->ReadAttributeString('BezFestHistorie'));
+
+$TIB20 = 510; $GLOBALS['INSTMOD'][$TIB20] = GUID_TIBBERGRIDREWARD;
+$cpV = vari('Aktueller Preis', $TIB20, 'CurrentPrice', 0.30, 2);
+$GLOBALS['ARCHIVE'][$cpV] = [[$d0 - 86400, 0.25], [$d0 + 905, 0.40], [$d0 + 1805, 0.20]];
+$GLOBALS['TIBBER_CURVE'] = [['start' => $d0 + 2700, 'end' => $d0 + 3600, 'price' => 28.5]];
+$ems = freshEms(); $GLOBALS['TIBBER_CURVE'] = [['start' => $d0 + 2700, 'end' => $d0 + 3600, 'price' => 28.5]];
+$r = call($ems, 'GetPurchasePriceHistory', [$d0, $d0 + 3600]);
+$p = array_column($r['slots'], 'priceCt');
+check('Tibber automatisch: Archiv €→ct inkl. Vortageswert, verspätetes Umschreiben (+5 s) richtig zugeordnet, Kurve hat Vorrang',
+    $r['tarifart'] === 'tibber' && $p === [25.0, 40.0, 20.0, 28.5] && $r['slots'][0]['quelle'] === 'tibber-archiv' && $r['slots'][3]['quelle'] === 'tibber', json_encode($r['slots']));
+$r = call($ems, 'GetPurchasePriceHistory', [time() + 86400 * 3, time() + 86400 * 3 + 900]);
+check('Tibber ohne Kurve in der Zukunft: null statt geraten', $r['slots'][0]['priceCt'] === null);
+
+$ems = freshEms(); prop('BEZ_Tarifart', 3); prop('BEZ_Preisvariable', $cpV); prop('BEZ_Preisvariable_Einheit', 1);
+$r = call($ems, 'GetPurchasePriceHistory', [$d0, $d0 + 1800]);
+check('eigene Preisvariable in €/kWh: 25 / 40 ct', array_column($r['slots'], 'priceCt') === [25.0, 40.0], json_encode($r['slots']));
+prop('BEZ_Preisvariable_Einheit', 0);
+$r = call($ems, 'GetPurchasePriceHistory', [$d0, $d0 + 900]);
+check('eigene Preisvariable in ct/kWh: unverändert', $r['slots'][0]['priceCt'] === 0.25);
+$ems = freshEms(); prop('BEZ_Tarifart', 1); prop('BEZ_Festpreis_ct', 29.0);
+$r = call($ems, 'GetPurchasePriceHistory', [$d0, $d0 + 900]);
+check('Festpreis ausdrücklich gewählt: Tibber wird ignoriert', $r['tarifart'] === 'fest' && $r['slots'][0]['priceCt'] === 29.0);
+$r = call($ems, 'GetPurchasePriceHistory', [$d0, $d0 + 100 * 86400]);
+check('Zeitraum auf 62 Tage begrenzt', count($r['slots']) === 62 * 96,(string)count($r['slots']));
+unset($GLOBALS['INSTMOD'][$TIB20], $GLOBALS['INSTMOD'][500]); $GLOBALS['TIBBER_CURVE'] = [];
+
+// ===========================================================================
 echo "\n" . ($fails === 0 ? "ALLE SZENARIEN BESTANDEN" : "$fails SZENARIO(S) VERLETZT") . "\n\n";
 exit($fails === 0 ? 0 : 1);
