@@ -1868,7 +1868,34 @@ class EMS extends IPSModule
         return array_values(array_filter($list, function ($e) { return empty($e['duplicateOf']); }));
     }
 
-    /** Gueltige Ladepunkte fuer Messen UND Schalten, ChargerHub vor OCPPHub. */
+    /**
+     * Eintrag, ueber den Wallbox $n geschaltet wird. Zaehlen und Steuern sind
+     * orthogonal (SUITE.md, duplicateOf): gemessen wird ueber den zaehlenden
+     * Eintrag; darf EMS dort nicht schreiben (managedBy), aber ueber eine als
+     * Dublette markierte zweite Anbindung desselben Geraets, dann ueber diese
+     * (Dietmars WB1: OCPP zaehlt, ChargerHub regelt). Sonst null.
+     */
+    private function getControlEntry(int $n): ?array
+    {
+        $count = $this->getChargerEntry($n);
+        if (empty($count)) { return null; }
+        $writable = function ($e) { return in_array($e['managedBy'] ?? 'none', array('none', 'ems'), true); };
+        if ($writable($count)) { return $count; }
+        $p = $this->GetPartners();
+        foreach (array('chargerhub', 'ocpphub') as $src) {
+            foreach ((array)($p[$src] ?? array()) as $e) {
+                $d = $e['duplicateOf'] ?? null;
+                if (is_array($d) && ($d['source'] ?? '') === ($count['source'] ?? '')
+                    && (int)($d['instanceID'] ?? 0) === (int)($count['instanceID'] ?? 0) && $writable($e)) {
+                    $e['source'] = $src;
+                    return $e;
+                }
+            }
+        }
+        return null;
+    }
+
+    /** Gueltige Ladepunkte fuer das Messen (zaehlende Eintraege), ChargerHub vor OCPPHub. */
     private function getChargerList(): array
     {
         $p   = $this->GetPartners();
@@ -2921,9 +2948,11 @@ class EMS extends IPSModule
         }
 
         // ChargerHub/OCPPHub: managedBy-Feld (none/ems = Situation A, alles andere = B)
-        foreach ($this->getChargerList() as $chg) {
-            $managedBy = $chg['managedBy'] ?? 'none';
-            $isEmsOwned = in_array($managedBy, array('none', 'ems'), true);
+        foreach (array_values($this->getChargerList()) as $i => $chg) {
+            // schaltbar auch ueber eine markierte zweite Anbindung (getControlEntry)
+            $ctl = $this->getControlEntry($i + 1);
+            $managedBy = $ctl !== null ? ($ctl['managedBy'] ?? 'none') : ($chg['managedBy'] ?? 'none');
+            $isEmsOwned = $ctl !== null;
             $situation[] = array(
                 'domain'     => 'wallbox',
                 'instanceID' => $chg['instanceID'] ?? 0,
@@ -5676,8 +5705,8 @@ class EMS extends IPSModule
                 break;
             }
         }
-        if ($entry === null && $configuredInstance <= 0 && isset($chargers[$num - 1])) {
-            $entry = $chargers[$num - 1];
+        if ($entry === null && $configuredInstance <= 0) {
+            $entry = $this->getControlEntry($num);
         }
 
         if ($entry !== null) {

@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.41.0 (2026-09-13)
+- **Zählen und Steuern getrennt.** Hat eine Wallbox zwei Anbindungen (z. B.
+  ChargerHub und OCPPHub), misst EMS über die zählende. Geschaltet wird über
+  die Anbindung, an der EMS schreiben darf (`managedBy` ohne fremden
+  Regler), auch wenn sie als Dublette markiert ist. Beispiel: Die
+  OCPP-Messung zählt, geregelt wird über ChargerHub. Vorher hätte EMS eine
+  solche Wallbox gar nicht mehr geschaltet.
+- `duplicateOf` betrifft damit nur das Zählen. Wer schreibt, entscheidet
+  weiter `managedBy`.
+- Die Situationsanzeige zeigt eine Wallbox als schaltbar, wenn eine ihrer
+  Anbindungen EMS das Schreiben erlaubt.
+- **Prüfstand:** Block 22 um 5 Fälle ergänzt (messen über OCPP, schalten
+  über ChargerHub, Befehl an die richtige Instanz, Situationsanzeige, beide
+  fremdgesteuert).
+
 ## 0.40.0 (2026-09-13)
 - **Neu: Doppelte Wallboxen am Quellmodul markieren.** ChargerHub und
   OCPPHub bekommen das Feld `duplicateOf` (Vertrag 1.4). Der Nutzer legt

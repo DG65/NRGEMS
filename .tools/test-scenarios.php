@@ -1061,6 +1061,21 @@ prop('WB_Quelle', 0);
 attr('PartnerCache', json_encode(['chargerhub' => [$chub], 'ocpphub' => [$o701]]));
 check('ohne Feld (ältere Module): Verhalten wie 0.39.0 (ChargerHub + Warnung)', array_column(call($ems, 'getChargerList'), 'instanceID') === [600] && call($ems, 'chargerSourceStatus')['warn']);
 
+echo "\n   Zählen und Steuern getrennt (Dietmars WB1: OCPP zählt, ChargerHub regelt)\n";
+$ems = freshEms();
+$cen = vari('CHUB WB1 Ladefreigabe', 600, 'ctl_enable', false, 0);
+$o701ext = array_merge($o701, ['managedBy' => 'other', 'externallyManaged' => true]);
+$dup600ctl = array_merge($chub, ['chargeEnableID' => $cen, 'maxCurrent' => 16, 'duplicateOf' => ['source' => 'ocpphub', 'instanceID' => 701]]);
+attr('PartnerCache', json_encode(['chargerhub' => [$dup600ctl], 'ocpphub' => [$o701ext]]));
+check('gemessen wird über OCPP 701 (3,8 kW)', call($ems, 'readChargerPowerKw', [1]) === 3.8);
+check('geschaltet wird über die markierte ChargerHub-Anbindung 600 (dort darf EMS schreiben)', (call($ems, 'getControlEntry', [1])['instanceID'] ?? 0) === 600);
+$GLOBALS['ACTIONS'] = []; call($ems, 'controlWallbox', [1, true]);
+check('Schaltbefehl geht an 600, nicht an 701', array_map(fn($a) => $a[0] . ':' . $a[1], $GLOBALS['ACTIONS']) === ['600:ctl_curr_limit', '600:ctl_enable'], json_encode($GLOBALS['ACTIONS']));
+$sit = array_values(array_filter(call($ems, 'GetSituation'), fn($x) => $x['domain'] === 'wallbox'));
+check('Situationsanzeige: Wallbox schaltbar (A), obwohl die zählende Quelle fremdgesteuert ist', count($sit) === 1 && $sit[0]['writable'] === true && $sit[0]['situation'] === 'A', json_encode($sit));
+attr('PartnerCache', json_encode(['chargerhub' => [array_merge($dup600ctl, ['managedBy' => 'other'])], 'ocpphub' => [$o701ext]]));
+check('beide fremdgesteuert: EMS schaltet nicht (kein Schreibrecht)', call($ems, 'getControlEntry', [1]) === null);
+
 // ===========================================================================
 echo "\n" . ($fails === 0 ? "ALLE SZENARIEN BESTANDEN" : "$fails SZENARIO(S) VERLETZT") . "\n\n";
 exit($fails === 0 ? 0 : 1);
