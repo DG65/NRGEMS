@@ -245,7 +245,8 @@ class EMS extends IPSModule
         $this->RegisterPropertyBoolean('NETZ_Aktiv',          true);
         $this->RegisterPropertyInteger('NETZ_B1_Margin_W',    300); // gemessene PV mindestens so weit ueber der Hauslast
         $this->RegisterPropertyInteger('NETZ_B1_Latest_Hour', 13);  // spaetester Freigabezeitpunkt (volle Stunde)
-        $this->RegisterPropertyInteger('NETZ_B1_Safety_Pct',  130); // Restueberschuss >= Platzbedarf x Faktor
+        $this->RegisterPropertyInteger('NETZ_B1_Safety_Pct',  130); // Restueberschuss >= Platzbedarf x Faktor (Median p50)
+        $this->RegisterPropertyInteger('NETZ_B1_Safety_P10_Pct', 110); // dasselbe, wenn die vorsichtige Prognose p10 vorliegt
         for ($i = 1; $i <= 2; $i++) {
             $this->RegisterPropertyInteger('VAR_BAT' . $i . '_SOC',            0);
             $this->RegisterPropertyInteger('VAR_BAT' . $i . '_Power',          0);
@@ -417,6 +418,7 @@ class EMS extends IPSModule
         $this->RegisterAttributeInteger('B1LastSwitch',      0);
         $this->RegisterAttributeString('FcCacheKey',         '');    // Datum|Slot der letzten Prognose-Auffrischung
         $this->RegisterAttributeString('FcPvToday',          '[]');  // PV-Prognose heute, 96 Slots W
+        $this->RegisterAttributeString('FcPv10Today',        '[]');  // vorsichtige PV-Prognose p10 heute (leer = nicht geliefert)
         $this->RegisterAttributeString('FcLoadToday',        '[]');  // Lastprognose heute, 96 Slots W (null = fehlt)
         $this->RegisterAttributeInteger('LastDiscoveryTs',   0);
 
@@ -4410,6 +4412,11 @@ class EMS extends IPSModule
         try {
             $pv = array_slice(array_values((array)$this->getPvfSlotsWatt()), 0, 96);
             $this->WriteAttributeString('FcPvToday', json_encode($pv));
+            // p10 (Prognose-Sitzung 13.09.2026: bereits residuen-korrigiert,
+            // reiner Cache-Read) -- vorsichtige Basis fuer B1
+            $pvfId = $this->getPvfInstance();
+            $p10 = ($pvfId > 0) ? (array)((PVF_GetForecast($pvfId, 0)['p10'] ?? array())) : array();
+            $this->WriteAttributeString('FcPv10Today', json_encode(count($p10) === 96 ? array_values($p10) : array()));
             $this->WriteAttributeString('FcLoadToday', json_encode($this->getLoadForecastSlots((int)$this->getLfcInstance(), 0)));
         } catch (Throwable $e) {
             $this->WriteAttributeString('FcPvToday', '[]');
@@ -4456,19 +4463,26 @@ class EMS extends IPSModule
                 'reason' => sprintf('PV %.0f W deckt die Hauslast %.0f W nicht sicher (Marge %.0f W)', $in['pvW'], $in['houseW'], $margin));
         }
         $needKwh = $capKwh * (100.0 - $soc) / 100.0;
+        // Vorsichtige Prognose p10 bevorzugen (unsichere Tage -> automatisch
+        // weniger Platz freihalten), sonst Median p50 mit groesserem Zuschlag.
+        $pv10 = array_values((array)($in['pv10'] ?? array()));
+        $useP10 = (count($pv10) >= 96 && array_sum(array_map('floatval', $pv10)) > 0.0);
+        $series = $useP10 ? $pv10 : $pv;
+        $safety = $useP10 ? (float)($in['safetyP10Pct'] ?? 110) : (float)$in['safetyPct'];
+        $basis  = $useP10 ? 'p10' : 'p50';
         $load = array_values((array)($in['load'] ?? array()));
         $restKwh = 0.0;
         for ($i = $nowSlot + 1; $i < 96; $i++) {
             $l = (isset($load[$i]) && $load[$i] !== null) ? (float)$load[$i] : (float)$in['avgHouseW'];
-            $restKwh += max(0.0, (float)$pv[$i] - $l) * 0.25 / 1000.0;
+            $restKwh += max(0.0, (float)$series[$i] - $l) * 0.25 / 1000.0;
         }
-        $reqKwh = $needKwh * (float)$in['safetyPct'] / 100.0;
+        $reqKwh = $needKwh * $safety / 100.0;
         if ($restKwh < $reqKwh) {
-            return array('active' => false,
-                'reason' => sprintf('Restueberschuss heute %.1f kWh reicht nicht fuer %.1f kWh Platz (+%d %% Sicherheit)', $restKwh, $needKwh, (int)$in['safetyPct'] - 100));
+            return array('active' => false, 'basis' => $basis,
+                'reason' => sprintf('Restueberschuss heute (%s) %.1f kWh reicht nicht fuer %.1f kWh Platz (+%d %% Sicherheit)', $basis, $restKwh, $needKwh, (int)$safety - 100));
         }
-        return array('active' => true,
-            'reason' => sprintf('Restueberschuss heute %.1f kWh >= %.1f kWh Platz (+%d %%), PV %.0f W > Haus %.0f W', $restKwh, $needKwh, (int)$in['safetyPct'] - 100, $in['pvW'], $in['houseW']));
+        return array('active' => true, 'basis' => $basis,
+            'reason' => sprintf('Restueberschuss heute (%s) %.1f kWh >= %.1f kWh Platz (+%d %%), PV %.0f W > Haus %.0f W', $basis, $restKwh, $needKwh, (int)$safety - 100, $in['pvW'], $in['houseW']));
     }
 
     /**
@@ -4498,6 +4512,8 @@ class EMS extends IPSModule
             'houseW'     => (float)$s['house_pow_w'],
             'marginW'    => (float)$this->ReadPropertyInteger('NETZ_B1_Margin_W'),
             'safetyPct'  => max(100, $this->ReadPropertyInteger('NETZ_B1_Safety_Pct')),
+            'pv10'       => json_decode($this->ReadAttributeString('FcPv10Today'), true) ?: array(),
+            'safetyP10Pct' => max(100, $this->ReadPropertyInteger('NETZ_B1_Safety_P10_Pct')),
             'wasActive'  => $was,
         ));
         // Wechselsperre gegen Pendeln (Wolken) -- nie beim Sicherheitsausstieg

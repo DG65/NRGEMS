@@ -146,7 +146,15 @@
                 {
                     "type": "NumberSpinner",
                     "name": "NETZ_B1_Safety_Pct",
-                    "caption": "Sicherheit: Restüberschuss mindestens Platzbedarf ×",
+                    "caption": "Sicherheit: Restüberschuss mindestens Platzbedarf × (Median-Prognose)",
+                    "minimum": 100,
+                    "maximum": 300,
+                    "suffix": " %"
+                },
+                {
+                    "type": "NumberSpinner",
+                    "name": "NETZ_B1_Safety_P10_Pct",
+                    "caption": "Sicherheit, wenn die vorsichtige Prognose (p10) vorliegt (automatisch erkannt)",
                     "minimum": 100,
                     "maximum": 300,
                     "suffix": " %"

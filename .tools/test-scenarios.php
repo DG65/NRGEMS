@@ -603,6 +603,16 @@ $trueb = array_fill(0, 96, 0.0); for ($i = 32; $i < 72; $i++) { $trueb[$i] = 250
 check('truebe Prognose, Rest 18 kWh < 26 kWh: nicht sperren (Batterie soll voll werden)', $b1(['pv' => $trueb])['active'] === false, $b1(['pv' => $trueb])['reason']);
 check('Lastprognose wird genutzt: 5,5 kW Last je Slot -> Rest nur 1,75 kWh, nicht sperren', $b1(['load' => array_fill(0, 96, 5500.0)])['active'] === false);
 check('Kapazitaet unbekannt (0 kWh): nicht sperren', $b1(['capKwh' => 0.0])['active'] === false);
+// p10 (vorsichtige Prognose): 20 kWh Platz x 1,1 = 22 kWh
+$p10gut = array_fill(0, 96, 0.0); for ($i = 32; $i < 72; $i++) { $p10gut[$i] = 5000.0; }   // Rest 35 x 4,6 x 0,25 = 40 kWh
+$p10mau = array_fill(0, 96, 0.0); for ($i = 32; $i < 72; $i++) { $p10mau[$i] = 2500.0; }   // Rest 35 x 2,1 x 0,25 = 18 kWh
+$r = $b1(['pv10' => $p10gut, 'safetyP10Pct' => 110]);
+check('p10 vorhanden und ausreichend (40 kWh >= 22 kWh): sperren, Basis p10', $r['active'] === true && ($r['basis'] ?? '') === 'p10', $r['reason']);
+$r = $b1(['pv10' => $p10mau, 'safetyP10Pct' => 110]);
+check('unsicherer Tag: Median reicht (49 kWh), p10 nicht (18 kWh < 22 kWh) -> NICHT sperren', $r['active'] === false && ($r['basis'] ?? '') === 'p10', $r['reason']);
+$r = $b1(['pv10' => [], 'safetyP10Pct' => 110]);
+check('p10 fehlt: Rueckfall auf Median mit 130 %, Basis p50', $r['active'] === true && ($r['basis'] ?? '') === 'p50', $r['reason']);
+check('p10 nur Nullen (nicht geliefert): Rueckfall auf Median', ($b1(['pv10' => array_fill(0, 96, 0.0)])['basis'] ?? '') === 'p50');
 
 echo "\n16) B1 im Zusammenspiel -- Vorrang, Faehigkeit, Steuerpfad svc_* statt ctl_*\n";
 $ems = freshEms();

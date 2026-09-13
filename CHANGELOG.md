@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.33.2 (2026-09-13)
+- **B1 rechnet mit der vorsichtigen Prognose (p10).** Liefert die
+  PV-Prognose den Wert p10 (in 10 % der Fälle unterschritten, bei Prognose
+  bereits anhand der Vergangenheit korrigiert), prüft B1 den Restüberschuss
+  daran statt am Median p50. Neue Einstellung „Sicherheit bei p10“, Standard
+  110 %. An unsicheren Tagen hält B1 damit von selbst weniger Platz frei, an
+  klaren Tagen liegen p10 und p50 nah beieinander.
+  - Fehlt p10, rechnet B1 wie bisher mit p50 und 130 %.
+  - Abruf weiter einmal je Viertelstunde, ohne Wetterabruf.
+  - Die Begründung im Entscheidungsgrund nennt die Basis (p10/p50).
+- **Prüfstand:** Block 15 um vier Fälle erweitert (p10 ausreichend,
+  unsicherer Tag mit knappem p10, p10 fehlt, p10 nur Nullen).
+
 ## 0.33.1 (2026-09-13)
 - **Lokale Hilfe als Frage statt „?“:** Die vier Hilfe-Knöpfe im Formular
   zeigen jetzt die Frage selbst, die sie beantworten, z. B. „Wann brauche ich
