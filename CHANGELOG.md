@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.38.0 (2026-09-13)
+- **Neu: Einstandspreis der Batterie.** Strom aus der Batterie ist nicht
+  gratis, wenn sie aus dem Netz geladen wurde. Das Dashboard kann damit die
+  Kosten je Ladesitzung auch für Batteriestrom richtig rechnen.
+  - EMS führt einen gleitenden Durchschnittspreis des gespeicherten Stroms.
+    Beim Laden zählt der Netzanteil zum aktuellen Bezugspreis, der PV-Anteil
+    mit 0 ct. Ein zweiter Wert rechnet den PV-Anteil mit der entgangenen
+    Einspeisevergütung. Die Aufteilung ist anteilig aus Bezug und PV, wie im
+    Dashboard.
+  - Wandlungsverluste sind im Preis enthalten. Beim Entladen bleibt der
+    Durchschnittspreis gleich, nur der Bestand sinkt.
+  - Der Bestand gleicht sich langsam an den gemessenen Ladestand an.
+  - Beim ersten Start gilt der vorhandene Inhalt als PV-Strom. Belastbar
+    („eingeschwungen“) ist der Wert, sobald die Batterie einmal voll
+    durchgeladen wurde.
+  - Läuft auch bei ausgeschaltetem EMS, weil es nur Buchhaltung ist.
+  - Neue archivierte Variablen „Batterie: Einstandspreis“ und „… inkl.
+    entgangener Vergütung“ (ct/kWh).
+  - `EMS_GetBatteryCost()` liefert den aktuellen Wert,
+    `EMS_GetBatteryCostHistory($von, $bis)` den Verlauf je Viertelstunde.
+    Vertrag 1.0, rein lesend.
+- Die Bezugspreis-Historie liest das Archiv nur noch, wenn eine
+  Viertelstunde es braucht. Sie wird jetzt jeden Zyklus abgefragt.
+- **Prüfstand:** Block 21 mit 12 Fällen (Netzladen nachts, langsames Laden aus leerer Batterie, PV-Überschuss,
+  entgangene Vergütung, Entladen, gemischt, Preis unbekannt, Anfangsbestand,
+  Angleich an den Ladestand, leere Batterie, Vertrag, Verlauf).
+
 ## 0.37.0 (2026-09-13)
 - **Neu: Bezugstarif und Bezugspreis-Historie.** Andere Module können damit
   die tatsächlichen Stromkosten rechnen, zuerst das Dashboard die Kosten je

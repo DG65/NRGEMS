@@ -400,6 +400,9 @@ class EMS extends IPSModule
         $this->RegisterVariableBoolean('EMS_ExportOverlapWarn',  '⚠️ Einspeise-Überwachung ausgelöst (Batterie entlud ins Netz)', '~Alert', 153);
         $this->RegisterVariableFloat('EMS_ExportOverlapToday_Wh', 'Batterie→Netz heute (Wh, Obergrenze)', '', 154);
         $this->RegisterVariableFloat('EMS_ExportOverlapToday_Min', 'Batterie→Netz heute (min)', '', 155);
+        // Einstandspreis des gespeicherten Stroms (0.38.0, Ladesitzungskosten)
+        $this->RegisterVariableFloat('EMS_BatCostCt',    'Batterie: Einstandspreis (ct/kWh)', '', 156);
+        $this->RegisterVariableFloat('EMS_BatCostOppCt', 'Batterie: Einstandspreis inkl. entgangener Vergütung (ct/kWh)', '', 157);
 
         // EMS_GridRewards NICHT mehr per EnableAction schaltbar (0.29.5,
         // Dietmar 10.09.2026): wird jetzt automatisch von
@@ -447,6 +450,7 @@ class EMS extends IPSModule
         $this->RegisterAttributeString('FcAccuracy',         '');    // PVF_GetAccuracy (Vertrag 1.x), leer = nicht verfuegbar
         $this->RegisterAttributeString('FcSpotCurve',        '[]');  // Boersenpreis-Kurve [start,end,price ct netto,aufloesung,quelle]
         $this->RegisterAttributeString('FeedInLimitState',   '');    // zuletzt gesetzte Einspeisegrenze "W|Grund" (nur fuer Aenderungs-Log)
+        $this->RegisterAttributeString('BatCostState',       '{}');  // Einstandspreis-Buchhaltung {ts, stock kWh, pool EUR, opp EUR, grid kWh, charged kWh, since}
         $this->RegisterAttributeString('BezFestHistorie',    '[]');  // Festpreis-Aenderungen [[ab-Zeitpunkt, ct], ...] -- alte Sitzungen behalten ihren damaligen Preis
         $this->RegisterAttributeString('FeedInLimitPrev',    '');    // WR-Einspeisegrenze VOR dem ersten EMS-Eingriff (Installateur-Wert), zum Wiederherstellen
         $this->RegisterAttributeString('FcLoadToday',        '[]');  // Lastprognose heute, 96 Slots W (null = fehlt)
@@ -962,6 +966,14 @@ class EMS extends IPSModule
             $this->handleGoodweDeadman();
         } catch (Throwable $e) {
             $this->emsLog(EMS_LOG_BASIC, 'Totmann-Erkennung-Fehler (Ausführung läuft unbeeinflusst weiter): ' . $e->getMessage());
+        }
+
+        // Einstandspreis der Batterie: reine Buchhaltung, laeuft auch bei EMS aus
+        // (sonst fehlen die Netzladungen, wenn jemand EMS kurz ausschaltet).
+        try {
+            $this->updateBatteryCost();
+        } catch (Throwable $e) {
+            $this->emsLog(EMS_LOG_BASIC, 'Einstandspreis-Fehler (Ausführung läuft unbeeinflusst weiter): ' . $e->getMessage());
         }
 
         if (!$this->ReadPropertyBoolean('EMS_Active')) {
@@ -3436,7 +3448,7 @@ class EMS extends IPSModule
         }
         // EMS_Mode (12.09.2026): Entscheidungs-Historie, sonst lassen sich
         // Vorfaelle wie 11.09. 05-07 Uhr im Nachhinein nicht zuordnen.
-        foreach (array('EMS_HousePower', 'EMS_GridRewards', 'EMS_Mode', 'EMS_ExportOverlapToday_Wh', 'EMS_ExportOverlapToday_Min') as $ident) {
+        foreach (array('EMS_HousePower', 'EMS_GridRewards', 'EMS_Mode', 'EMS_ExportOverlapToday_Wh', 'EMS_ExportOverlapToday_Min', 'EMS_BatCostCt', 'EMS_BatCostOppCt') as $ident) {
             $varId = @$this->GetIDForIdent($ident);
             if ($varId > 0) {
                 @AC_SetLoggingStatus($archiveId, $varId, true);
@@ -4991,7 +5003,8 @@ class EMS extends IPSModule
         );
         if ($to <= $from) { return $res; }
 
-        $curve = array(); $series = array(); $factor = 100.0; $festH = array();
+        // Archiv erst lesen, wenn ein Slot es braucht (laeuft jeden Zyklus fuer den Einstandspreis)
+        $curve = array(); $series = null; $seriesVar = 0; $factor = 100.0; $festH = array();
         if ($mode === 'tibber') {
             $tid = $this->getTibberGridRewardInstance();
             if ($tid > 0) {
@@ -5003,9 +5016,9 @@ class EMS extends IPSModule
                     }
                 }
             }
-            $series = $this->archivedStepSeries($this->tibberPriceVarId(), $from, min($to, $now));
+            $seriesVar = $this->tibberPriceVarId();
         } elseif ($mode === 'variable') {
-            $series = $this->archivedStepSeries((int)$this->ReadPropertyInteger('BEZ_Preisvariable'), $from, min($to, $now));
+            $seriesVar = (int)$this->ReadPropertyInteger('BEZ_Preisvariable');
             $factor = ((int)$this->ReadPropertyInteger('BEZ_Preisvariable_Einheit') === 1) ? 100.0 : 1.0;
         } elseif ($mode === 'fest') {
             $festH = json_decode($this->ReadAttributeString('BezFestHistorie'), true) ?: array();
@@ -5023,11 +5036,153 @@ class EMS extends IPSModule
             } elseif (($mode === 'tibber' || $mode === 'variable') && $s <= $now) {
                 // Slot-Mitte: die Preisvariable wird oft erst Sekunden nach
                 // der Viertelstundengrenze umgeschrieben.
+                if ($series === null) { $series = $this->archivedStepSeries($seriesVar, $from, min($to, $now)); }
                 $v = $this->stepValueAt($series, min($s + 450, $now));
                 if ($v !== null) { $price = $v * $factor; $quelle = ($mode === 'tibber') ? 'tibber-archiv' : 'variable'; }
             }
             $res['slots'][] = array('start' => $s, 'end' => $s + 900,
                 'priceCt' => $price === null ? null : round($price, 4), 'quelle' => $quelle);
+        }
+        return $res;
+    }
+
+    /** Bezugspreis der aktuellen Viertelstunde (ct/kWh brutto), null = unbekannt. */
+    private function currentPurchasePriceCt(int $now): ?float
+    {
+        $slot = intdiv($now, 900) * 900;
+        $r = $this->GetPurchasePriceHistory($slot, $slot + 900);
+        $p = $r['slots'][0]['priceCt'] ?? null;
+        return $p === null ? null : (float)$p;
+    }
+
+    /**
+     * Einstandspreis-Buchhaltung, ein Schritt (rein, Pruefstand). Gleitender
+     * Durchschnitt des gespeicherten Stroms:
+     * - Laden: Netzanteil anteilig Bezug / (Bezug + PV) -- dieselbe neutrale
+     *   Aufteilung wie das Dashboard. Netz zum Bezugspreis, PV 0 ct bzw. mit
+     *   entgangener Einspeiseverguetung ('opp'). Gespeichert wird die
+     *   Ladeenergie x Wirkungsgrad, dadurch sind Wandlungsverluste im Preis.
+     * - Entladen: Bestand und Wert schrumpfen im selben Verhaeltnis, der
+     *   Durchschnittspreis bleibt.
+     * - Bestand gleitet langsam (~25 min) zum gemessenen SOC x Kapazitaet,
+     *   ohne den Wert zu aendern -- groessere reale Verluste erhoehen den Preis.
+     * Anfangsbestand gilt als PV (0 ct), bis die Batterie einmal durchgeladen ist.
+     */
+    private function batteryCostStep(array $st, float $batW, float $gridW, float $pvW, float $soc, int $now, ?float $priceCt, float $feedCt, float $capKwh): array
+    {
+        $eta  = 0.95;
+        $meas = ($capKwh > 0.0) ? max(0.0, min(100.0, $soc)) / 100.0 * $capKwh : null;
+        if (empty($st['ts'])) {
+            $stock = $meas ?? 0.0;
+            return array('ts' => $now, 'stock' => $stock, 'pool' => 0.0, 'opp' => $stock * $feedCt / 100.0,
+                'grid' => 0.0, 'charged' => 0.0, 'since' => $now);
+        }
+        $dt = min(120, max(0, $now - (int)$st['ts']));
+        $st['ts'] = $now;
+        $stock = (float)$st['stock'];
+        if ($dt > 0 && $batW < -50.0) {
+            $inKwh = -$batW * $dt / 3600000.0;
+            $imp   = max(0.0, -$gridW);
+            $pv    = max(0.0, $pvW);
+            $share = ($imp + $pv) > 0.0 ? min(1.0, $imp / ($imp + $pv)) : 1.0;
+            $gridKwh = $inKwh * $share;
+            // Preis unbekannt: zum bisherigen Durchschnitt buchen statt raten. Der
+            // gilt je gespeicherter kWh, gebucht wird je geladener -- x eta,
+            // sonst kaemen die Verluste doppelt drauf.
+            $p = $priceCt ?? ($stock > 0.2 ? $st['pool'] / $stock * 100.0 * $eta : 0.0);
+            $st['pool']    += $gridKwh * $p / 100.0;
+            $st['opp']     += $gridKwh * $p / 100.0 + ($inKwh - $gridKwh) * $feedCt / 100.0;
+            $st['grid']    += $gridKwh * $eta;
+            $st['charged'] += $inKwh;
+            $stock         += $inKwh * $eta;
+        } elseif ($dt > 0 && $batW > 50.0 && $stock > 0.0) {
+            $f = max(0.0, $stock - $batW * $dt / 3600000.0 / $eta) / $stock;
+            $st['pool'] *= $f; $st['opp'] *= $f; $st['grid'] *= $f;
+            $stock *= $f;
+        }
+        if ($meas !== null && $dt > 0) {
+            $stock += ($meas - $stock) * min(1.0, $dt / 1500.0);
+            $stock  = min($stock, $capKwh);
+        }
+        // Leer: Restwert verwerfen -- nie waehrend des Ladens, sonst verschluckt
+        // ein langsames Laden aus leerer Batterie jeden kleinen 30-s-Schritt.
+        if ($stock < 0.05 && $batW >= -50.0) {
+            $stock = 0.0; $st['pool'] = 0.0; $st['opp'] = 0.0; $st['grid'] = 0.0;
+        }
+        $st['stock'] = $stock;
+        return $st;
+    }
+
+    private function batteryCostSummary(array $st, float $capKwh): array
+    {
+        $stock = (float)($st['stock'] ?? 0.0);
+        $ok = !empty($st['ts']) && $stock >= 0.2;
+        return array(
+            'einstandCt'               => $ok ? round($st['pool'] / $stock * 100.0, 2) : null,
+            'einstandMitVerguetungCt'  => $ok ? round($st['opp'] / $stock * 100.0, 2) : null,
+            'gespeichertKwh'           => round($stock, 2),
+            'netzAnteilPct'            => $ok ? round(max(0.0, min(100.0, $st['grid'] / $stock * 100.0)), 1) : null,
+            'eingeschwungen'           => $capKwh > 0.0 && (float)($st['charged'] ?? 0.0) >= $capKwh,
+        );
+    }
+
+    private function updateBatteryCost(): void
+    {
+        $s = $this->readState();
+        if (empty($s['bat_active'])) { return; }
+        $now = time();
+        $cap = (float)$this->getPlantStorageKwh()['kwh'];
+        $st  = json_decode($this->ReadAttributeString('BatCostState'), true);
+        $st  = $this->batteryCostStep(is_array($st) ? $st : array(), (float)$s['bat_pow_w'], (float)$s['grid_total_w'],
+            (float)$s['pv_total_w'], (float)$s['bat_soc'], $now, $this->currentPurchasePriceCt($now),
+            $this->getFeedTariffEur()['eur'] * 100.0, $cap);
+        $this->WriteAttributeString('BatCostState', json_encode($st));
+        $sum = $this->batteryCostSummary($st, $cap);
+        foreach (array('EMS_BatCostCt' => 'einstandCt', 'EMS_BatCostOppCt' => 'einstandMitVerguetungCt') as $ident => $k) {
+            if ($sum[$k] !== null && abs((float)$this->GetValue($ident) - $sum[$k]) >= 0.01) { $this->SetValue($ident, $sum[$k]); }
+        }
+    }
+
+    /**
+     * Einstandspreis des gespeicherten Stroms jetzt (Vertrag 'batterycost'
+     * 1.0, rein lesend). Fuer die Kosten von Strom, der gerade aus der
+     * Batterie kommt (Dashboard: Ladesitzungen).
+     */
+    public function GetBatteryCost(): array
+    {
+        $cap = (float)$this->getPlantStorageKwh()['kwh'];
+        $st  = json_decode($this->ReadAttributeString('BatCostState'), true);
+        $st  = is_array($st) ? $st : array();
+        $since = (int)($st['since'] ?? 0);
+        return array_merge(array('contractVersion' => '1.0', 'einheit' => 'ct/kWh brutto'), $this->batteryCostSummary($st, $cap), array(
+            'seit'     => $since,
+            'seitText' => $since > 0 ? date('d.m.Y H:i', $since) : '',
+            'hinweis'  => 'Durchschnittspreis des gespeicherten Stroms. Netzanteil zum Bezugspreis, PV-Anteil 0 ct '
+                . '(bzw. mit entgangener Einspeisevergütung). Wandlungsverluste enthalten. Anfangsbestand als PV angenommen, '
+                . 'bis die Batterie einmal durchgeladen ist (eingeschwungen).',
+        ));
+    }
+
+    /**
+     * Einstandspreis je Viertelstunde aus dem Archiv (rein lesend, Vertrag
+     * 'batterycost' 1.0): Wert zur Slot-Mitte, null ohne Archivdaten oder in
+     * der Zukunft. Hoechstens 62 Tage je Abruf.
+     */
+    public function GetBatteryCostHistory(int $from, int $to): array
+    {
+        $now  = time();
+        $from = intdiv($from, 900) * 900;
+        $to   = min($to, $from + 62 * 86400);
+        $res  = array('contractVersion' => '1.0', 'einheit' => 'ct/kWh brutto', 'von' => $from, 'bis' => $to, 'slots' => array());
+        if ($to <= $from) { return $res; }
+        $a = $this->archivedStepSeries((int)@$this->GetIDForIdent('EMS_BatCostCt'), $from, min($to, $now));
+        $b = $this->archivedStepSeries((int)@$this->GetIDForIdent('EMS_BatCostOppCt'), $from, min($to, $now));
+        for ($s = $from; $s < $to; $s += 900) {
+            $t = min($s + 450, $now);
+            $va = ($s <= $now) ? $this->stepValueAt($a, $t) : null;
+            $vb = ($s <= $now) ? $this->stepValueAt($b, $t) : null;
+            $res['slots'][] = array('start' => $s, 'end' => $s + 900,
+                'einstandCt' => $va === null ? null : round($va, 2), 'einstandMitVerguetungCt' => $vb === null ? null : round($vb, 2));
         }
         return $res;
     }

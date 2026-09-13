@@ -961,5 +961,58 @@ check('Zeitraum auf 62 Tage begrenzt', count($r['slots']) === 62 * 96,(string)co
 unset($GLOBALS['INSTMOD'][$TIB20], $GLOBALS['INSTMOD'][500]); $GLOBALS['TIBBER_CURVE'] = [];
 
 // ===========================================================================
+echo "\n21) Einstandspreis der Batterie (EMS_GetBatteryCost/-History)\n";
+$ems = freshEms();
+$t21 = 1000000;
+// $n Schritte à 60 s mit gleichbleibenden Werten
+$run21 = function ($st, $n, $bat, $grid, $pv, $price, $feed = 8.0, $cap = 0.0, $soc = 0.0) use ($ems, &$t21) {
+    for ($i = 0; $i < $n; $i++) { $t21 += 60; $st = call($ems, 'batteryCostStep', [$st, $bat, $grid, $pv, $soc, $t21, $price, $feed, $cap]); }
+    return $st;
+};
+$sum21 = fn($st, $cap = 0.0) => call($ems, 'batteryCostSummary', [$st, $cap]);
+$st = call($ems, 'batteryCostStep', [[], 0.0, 0.0, 0.0, 0.0, $t21, 20.0, 8.0, 0.0]);
+check('Start leer: noch kein Einstandspreis (Bestand 0)', $sum21($st)['einstandCt'] === null);
+$st = $run21($st, 60, -5000.0, -5000.0, 0.0, 20.0);
+check('Nachts 1 h aus dem Netz zu 20 ct: 21,05 ct (Wandlungsverluste enthalten), Netzanteil 100 %',
+    $sum21($st)['einstandCt'] === 21.05 && $sum21($st)['netzAnteilPct'] === 100.0, json_encode($sum21($st)));
+$st = $run21($st, 60, -5000.0, 2000.0, 7000.0, 30.0);
+check('Danach 1 h PV-Überschuss: Preis halbiert auf 10,53 ct, mit entgangener Vergütung (8 ct) 14,74 ct',
+    $sum21($st)['einstandCt'] === 10.53 && $sum21($st)['einstandMitVerguetungCt'] === 14.74, json_encode($sum21($st)));
+$vor = $sum21($st);
+$st = $run21($st, 30, 5000.0, 0.0, 0.0, 30.0);
+check('Entladen: Bestand sinkt, Durchschnittspreis bleibt', $sum21($st)['einstandCt'] === $vor['einstandCt'] && $sum21($st)['gespeichertKwh'] < $vor['gespeichertKwh'], json_encode($sum21($st)));
+$st = call($ems, 'batteryCostStep', [[], 0.0, 0.0, 0.0, 0.0, $t21, null, 8.0, 0.0]);
+$st = $run21($st, 60, -2000.0, -1000.0, 3000.0, 40.0);
+check('Gemischt: Bezug 1 kW + PV 3 kW → Netzanteil 25 %, 10 ct', $sum21($st)['netzAnteilPct'] === 25.0 && $sum21($st)['einstandCt'] === 10.53, json_encode($sum21($st)));
+$vor = $sum21($st)['einstandCt'];
+$st = $run21($st, 30, -2000.0, -2000.0, 0.0, null);
+check('Preis unbekannt: zum bisherigen Durchschnitt gebucht, kein Sprung', $vor !== null && $sum21($st)['einstandCt'] !== null && abs($sum21($st)['einstandCt'] - $vor) < 0.01, json_encode($sum21($st)));
+$st = call($ems, 'batteryCostStep', [[], 0.0, 0.0, 0.0, 0.0, $t21, null, 8.0, 0.0]);
+for ($i = 0; $i < 120; $i++) { $t21 += 30; $st = call($ems, 'batteryCostStep', [$st, -1500.0, -1500.0, 0.0, 0.0, $t21, 25.0, 8.0, 0.0]); }
+check('Leere Batterie lädt langsam im 30-s-Takt (1,5 kW, je 0,0125 kWh): Bestand wächst auf ~1,4 kWh, 26,32 ct',
+    abs($sum21($st)['gespeichertKwh'] - 1.43) < 0.02 && $sum21($st)['einstandCt'] === 26.32, json_encode($sum21($st)));
+$st = call($ems, 'batteryCostStep', [[], 0.0, 0.0, 0.0, 50.0, $t21, 20.0, 8.0, 40.0]);
+check('Start mit halbvoller 40-kWh-Batterie: Anfangsbestand als PV (0 ct), nicht eingeschwungen',
+    $sum21($st, 40.0)['einstandCt'] === 0.0 && $sum21($st, 40.0)['gespeichertKwh'] === 20.0 && $sum21($st, 40.0)['eingeschwungen'] === false);
+$st = $run21($st, 60, 0.0, 0.0, 0.0, 20.0, 8.0, 40.0, 40.0);
+check('Bestand gleitet zum gemessenen SOC (40 % = 16 kWh), Wert bleibt', abs($sum21($st, 40.0)['gespeichertKwh'] - 16.0) < 1.5, json_encode($sum21($st, 40.0)));
+$st = $run21($st, 200, 10000.0, 0.0, 0.0, 20.0);
+check('Batterie leer: Bestand und Wert auf 0, kein Preis', $sum21($st)['gespeichertKwh'] === 0.0 && $sum21($st)['einstandCt'] === null, json_encode($sum21($st)));
+
+$ems = freshEms();
+attr('BatCostState', json_encode(['ts' => time(), 'stock' => 10.0, 'pool' => 2.0, 'opp' => 2.5, 'grid' => 5.0, 'charged' => 50.0, 'since' => strtotime('2026-09-01 12:00')]));
+prop('BAT_Capacity_kWh', 40.0);
+$r = call($ems, 'GetBatteryCost');
+check('GetBatteryCost 1.0: 20 ct, 25 ct, 50 % Netz, eingeschwungen, Datum deutsch',
+    $r['contractVersion'] === '1.0' && $r['einstandCt'] === 20.0 && $r['einstandMitVerguetungCt'] === 25.0 && $r['netzAnteilPct'] === 50.0
+    && $r['eingeschwungen'] === true && $r['seitText'] === '01.09.2026 12:00', json_encode($r));
+$GLOBALS['INSTMOD'][500] = GUID_ARCHIVECONTROL;
+$d0 = strtotime('today');
+$GLOBALS['ARCHIVE'][call($ems, 'GetIDForIdent', ['EMS_BatCostCt'])] = [[$d0 - 3600, 12.0], [$d0 + 1000, 18.5]];
+$r = call($ems, 'GetBatteryCostHistory', [$d0, $d0 + 1800]);
+check('GetBatteryCostHistory: Archivwert je Slot-Mitte (12 → 18,5 ct)', array_column($r['slots'], 'einstandCt') === [12.0, 18.5], json_encode($r['slots']));
+unset($GLOBALS['INSTMOD'][500]);
+
+// ===========================================================================
 echo "\n" . ($fails === 0 ? "ALLE SZENARIEN BESTANDEN" : "$fails SZENARIO(S) VERLETZT") . "\n\n";
 exit($fails === 0 ? 0 : 1);
