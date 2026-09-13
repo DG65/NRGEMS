@@ -848,6 +848,21 @@
                     "maximum": 2
                 },
                 {
+                    "type": "Select",
+                    "name": "WB_Quelle",
+                    "caption": "Wallbox-Quelle (wenn Wallboxen über ChargerHub und OCPPHub erscheinen)",
+                    "options": [
+                        {"caption": "Automatisch (nur eine Quelle gefunden: diese; beide gefunden: ChargerHub und Warnhinweis)", "value": 0},
+                        {"caption": "ChargerHub", "value": 1},
+                        {"caption": "OCPPHub", "value": 2},
+                        {"caption": "Beide (es sind verschiedene Wallboxen)", "value": 3}
+                    ]
+                },
+                {
+                    "type": "Label",
+                    "caption": "Erscheint dieselbe Wallbox in beiden Modulen, wähle die Quelle, die zuverlässig misst. Sonst würde EMS die Ladeleistung doppelt zählen, und Grid Rewards bestellte doppelt so viel Netzstrom."
+                },
+                {
                     "type": "NumberSpinner",
                     "name": "VEH_Home_Radius_Km",
                     "caption": "Heimfahrt-Umkreis (km) — Fahrzeug-Ladebedarf bei Rückkehr",
@@ -1518,5 +1533,9 @@
             "caption": "🔄 Übernehmen erzwingen (ohne Formularänderung)",
             "onClick": "IPS_ApplyChanges($id); echo '✅ ApplyChanges() ausgeführt.';"
         }
+    ],
+    "status": [
+        {"code": 200, "icon": "error", "caption": "Rückfall: wiederholte Kommunikationsfehler, Wechselrichter läuft in seiner eigenen Regelung"},
+        {"code": 205, "icon": "error", "caption": "Wallbox-Quelle prüfen: Wallboxen über ChargerHub und OCPPHub gefunden. EMS zählt vorerst nur ChargerHub. Bitte im Panel „🚗 Wallboxen“ die Quelle wählen."}
     ]
 }

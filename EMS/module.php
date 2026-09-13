@@ -43,6 +43,7 @@ define('EMS_NEWS_VERSION', '0.6.0');
 
 // NRG-Stack Partnermodul-GUIDs (fuer automatische Discovery, siehe discoverPartners())
 define('GUID_CHARGERHUB',    '{9256C34E-5CFD-4F37-8BFE-E65390EBB37C}');
+define('GUID_OCPPHUB_SPLITTER', '{81D3E328-9E12-43A9-825A-F7888530868C}'); // OHUB_GetFunctions, feldgleich CHUB 1.3
 define('GUID_METERHUB',      '{BAB8E05C-9150-43B9-9F2B-E5215FA54F0A}');
 define('GUID_INVERTERHUB',   '{BBE2C593-1A91-426D-A714-29A9C7E87589}');
 define('GUID_HEISHAMON',     '{1919151A-3C0F-4C09-B906-291638EC1469}');
@@ -284,6 +285,9 @@ class EMS extends IPSModule
         // ── Wallboxen ───────────────────────────────────────────────
         $this->RegisterPropertyBoolean('WB_Active',            false);
         $this->RegisterPropertyInteger('WB_Count',             1);
+        // Dieselben Wallboxen koennen ueber ChargerHub UND OCPPHub erscheinen
+        // (Dietmar 13.09.2026) -- nie doppelt zaehlen.
+        $this->RegisterPropertyInteger('WB_Quelle',            0);   // 0 automatisch, 1 ChargerHub, 2 OCPPHub, 3 beide (verschiedene Geraete)
         $this->RegisterPropertyInteger('WB_Cooldown_Sec',      120);
         $this->RegisterPropertyInteger('WB_Min_Charge_Min',    5);
         $this->RegisterPropertyInteger('BOOST_Duration_Min',   30);
@@ -450,6 +454,7 @@ class EMS extends IPSModule
         $this->RegisterAttributeString('FcAccuracy',         '');    // PVF_GetAccuracy (Vertrag 1.x), leer = nicht verfuegbar
         $this->RegisterAttributeString('FcSpotCurve',        '[]');  // Boersenpreis-Kurve [start,end,price ct netto,aufloesung,quelle]
         $this->RegisterAttributeString('FeedInLimitState',   '');    // zuletzt gesetzte Einspeisegrenze "W|Grund" (nur fuer Aenderungs-Log)
+        $this->RegisterAttributeBoolean('WbSourceWarned',    false); // Hinweis "Wallbox-Quelle pruefen" nur einmal je Auftreten loggen
         $this->RegisterAttributeString('BatCostState',       '{}');  // Einstandspreis-Buchhaltung {ts, stock kWh, pool EUR, opp EUR, grid kWh, charged kWh, since}
         $this->RegisterAttributeString('BezFestHistorie',    '[]');  // Festpreis-Aenderungen [[ab-Zeitpunkt, ct], ...] -- alte Sitzungen behalten ihren damaligen Preis
         $this->RegisterAttributeString('FeedInLimitPrev',    '');    // WR-Einspeisegrenze VOR dem ersten EMS-Eingriff (Installateur-Wert), zum Wiederherstellen
@@ -1026,7 +1031,9 @@ class EMS extends IPSModule
             $this->applyDecision($decision, $state);
             $this->trackSpecialEvents($state);
             $this->WriteAttributeInteger('ConsecutiveErrors', 0);
-            $this->SetStatus(102);
+            // 205 statt 102, solange dieselben Wallboxen ueber ChargerHub und
+            // OCPPHub erscheinen und keine Quelle gewaehlt ist (Regel 9f)
+            $this->SetStatus($this->chargerSourceStatus()['warn'] ? 205 : 102);
 
         } catch (Exception $e) {
             $errors    = $this->ReadAttributeInteger('ConsecutiveErrors') + 1;
@@ -1060,6 +1067,7 @@ class EMS extends IPSModule
         $partners['inverterhub'] = $this->discoverContract(GUID_INVERTERHUB, 'IHUB_GetFunctions');
         $partners['meterhub']    = $this->discoverContract(GUID_METERHUB,    'MHUB_GetFunctions');
         $partners['chargerhub']  = $this->discoverContract(GUID_CHARGERHUB,  'CHUB_GetFunctions');
+        $partners['ocpphub']     = $this->discoverOcppHub();
         $partners['heishamon']   = $this->discoverContract(GUID_HEISHAMON,   'HEISHA_GetFunctions');
         $partners['tessie']      = $this->discoverContract(GUID_TESSIEVEHICLE, 'TESSIE_GetVehicleState');
 
@@ -1112,10 +1120,16 @@ class EMS extends IPSModule
         $this->WriteAttributeString('PartnerCache', json_encode($partners));
         $this->WriteAttributeInteger('LastDiscoveryTs', time());
 
+        $wbWarn = $this->chargerSourceStatus()['warn'];
+        if ($wbWarn && !$this->ReadAttributeBoolean('WbSourceWarned')) {
+            $this->emsLog(EMS_LOG_BASIC, '⚠️ Wallboxen über ChargerHub UND OCPPHub gefunden -- vermutlich dieselben Geräte. EMS zählt vorerst nur ChargerHub. Bitte im Panel „🚗 Wallboxen“ die Wallbox-Quelle wählen.');
+        }
+        $this->WriteAttributeBoolean('WbSourceWarned', $wbWarn);
+
         $summary = sprintf(
-            'InverterHub=%d MeterHub=%d ChargerHub=%d HeishaMon=%d Tessie=%d Tibber=%d',
+            'InverterHub=%d MeterHub=%d ChargerHub=%d OCPPHub=%d HeishaMon=%d Tessie=%d Tibber=%d',
             count($partners['inverterhub']), count($partners['meterhub']),
-            count($partners['chargerhub']),  count($partners['heishamon']),
+            count($partners['chargerhub']),  count($partners['ocpphub']), count($partners['heishamon']),
             count($partners['tessie']),      count($partners['tibber'])
         );
         $this->SetValue('EMS_Partners', $summary);
@@ -1785,11 +1799,76 @@ class EMS extends IPSModule
         return ($id > 0 && IPS_VariableExists($id)) ? (int)(bool)GetValue($id) : 0;
     }
 
-    /** n-ter ChargerHub-Ladepunkt (1-basiert, Reihenfolge der Discovery) oder leeres Array. */
+    /** n-ter gueltiger Ladepunkt (1-basiert, siehe getChargerList()) oder leeres Array. */
     private function getChargerEntry(int $n): array
     {
-        $list = array_values((array)($this->GetPartners()['chargerhub'] ?? array()));
+        $list = $this->getChargerList();
         return (array)($list[$n - 1] ?? array());
+    }
+
+    /**
+     * OCPPHub-Ladepunkte (OHUB_GetFunctions am Splitter, feldgleich CHUB 1.3).
+     * Anders als discoverContract(): die instanceID des Eintrags ist der
+     * Ladepunkt und bleibt erhalten -- Schaltbefehle (ctl_enable/
+     * ctl_curr_limit) gehen an ihn, nicht an den Splitter.
+     */
+    private function discoverOcppHub(): array
+    {
+        $results = array();
+        if (!function_exists('OHUB_GetFunctions')) { return $results; }
+        foreach (IPS_GetInstanceListByModuleID(GUID_OCPPHUB_SPLITTER) as $sid) {
+            try {
+                $data = OHUB_GetFunctions($sid);
+            } catch (Throwable $e) {
+                $this->emsLog(EMS_LOG_BASIC, 'OHUB_GetFunctions #' . $sid . ' fehlgeschlagen: ' . $e->getMessage());
+                continue;
+            }
+            if (is_string($data)) { $data = json_decode($data, true); }
+            if (!is_array($data)) { continue; }
+            foreach ($data as $entry) {
+                if (!is_array($entry)) { continue; }
+                $entry['instanceID'] = (int)($entry['instanceID'] ?? $sid);
+                $entry['splitterID'] = $sid;
+                $entry['source']     = 'ocpphub';
+                $results[] = $entry;
+            }
+        }
+        return $results;
+    }
+
+    /**
+     * Welche Wallbox-Quelle gilt. Automatisch: nur eine gefunden -> diese;
+     * beide gefunden -> vermutlich dieselben Geraete doppelt (Dietmars Anlage:
+     * go-e ueber ChargerHub und OCPP). Dann nicht doppelt zaehlen, bisheriges
+     * Verhalten (ChargerHub) behalten und warnen (Regel 9f), bis der Nutzer waehlt.
+     */
+    private function chargerSourceStatus(): array
+    {
+        $p = $this->GetPartners();
+        $hasC = !empty($p['chargerhub']);
+        $hasO = !empty($p['ocpphub']);
+        switch ((int)$this->ReadPropertyInteger('WB_Quelle')) {
+            case 1: return array('chargerhub' => true,  'ocpphub' => false, 'warn' => false);
+            case 2: return array('chargerhub' => false, 'ocpphub' => true,  'warn' => false);
+            case 3: return array('chargerhub' => true,  'ocpphub' => true,  'warn' => false);
+        }
+        if ($hasC && $hasO) { return array('chargerhub' => true, 'ocpphub' => false, 'warn' => true); }
+        return array('chargerhub' => $hasC, 'ocpphub' => $hasO, 'warn' => false);
+    }
+
+    /** Gueltige Ladepunkte fuer Messen UND Schalten, ChargerHub vor OCPPHub. */
+    private function getChargerList(): array
+    {
+        $p   = $this->GetPartners();
+        $use = $this->chargerSourceStatus();
+        $list = array();
+        if ($use['chargerhub']) {
+            foreach ((array)($p['chargerhub'] ?? array()) as $c) { $c['source'] = 'chargerhub'; $list[] = $c; }
+        }
+        if ($use['ocpphub']) {
+            foreach ((array)($p['ocpphub'] ?? array()) as $c) { $c['source'] = 'ocpphub'; $list[] = $c; }
+        }
+        return $list;
     }
 
     /**
@@ -1813,9 +1892,8 @@ class EMS extends IPSModule
 
     private function getWritableChargers()
     {
-        $partners = $this->GetPartners();
         $result = array();
-        foreach ((array)($partners['chargerhub'] ?? array()) as $chg) {
+        foreach ($this->getChargerList() as $chg) {
             $managedBy = $chg['managedBy'] ?? 'none';
             if (in_array($managedBy, array('none', 'ems'), true)) {
                 $result[] = $chg;
@@ -2830,8 +2908,8 @@ class EMS extends IPSModule
             );
         }
 
-        // ChargerHub: managedBy-Feld (none/ems = Situation A, alles andere = B)
-        foreach ((array)($partners['chargerhub'] ?? array()) as $chg) {
+        // ChargerHub/OCPPHub: managedBy-Feld (none/ems = Situation A, alles andere = B)
+        foreach ($this->getChargerList() as $chg) {
             $managedBy = $chg['managedBy'] ?? 'none';
             $isEmsOwned = in_array($managedBy, array('none', 'ems'), true);
             $situation[] = array(
@@ -5647,12 +5725,17 @@ class EMS extends IPSModule
             IPS_RequestAction($instance, 'ctl_curr_limit', $maxCurrentA);
             IPS_RequestAction($instance, 'ctl_enable', true);
             $this->WriteAttributeInteger('LastWB' . $num . 'Switch', time());
-            $this->emsLog(EMS_LOG_BASIC, 'WB' . $num . ' (ChargerHub #' . $instance . ') freigegeben (' . $maxCurrentA . ' A)');
+            $this->emsLog(EMS_LOG_BASIC, 'WB' . $num . ' (' . $this->chargerSourceLabel($entry) . ' #' . $instance . ') freigegeben (' . $maxCurrentA . ' A)');
         } elseif (!$enable && $isActive) {
             IPS_RequestAction($instance, 'ctl_enable', false);
             $this->WriteAttributeInteger('LastWB' . $num . 'Switch', time());
-            $this->emsLog(EMS_LOG_BASIC, 'WB' . $num . ' (ChargerHub #' . $instance . ') gesperrt');
+            $this->emsLog(EMS_LOG_BASIC, 'WB' . $num . ' (' . $this->chargerSourceLabel($entry) . ' #' . $instance . ') gesperrt');
         }
+    }
+
+    private function chargerSourceLabel(array $entry): string
+    {
+        return (($entry['source'] ?? '') === 'ocpphub') ? 'OCPPHub' : 'ChargerHub';
     }
 
     private function setAllWallboxes($enable)

@@ -109,6 +109,8 @@ function SBH_GetState($iid)               { return $GLOBALS['SBH_STATE']; }
 function TIBBERGR_GetPriceCurve($iid)     { return $GLOBALS['TIBBER_CURVE']; }
 function TIBBERGR_GetActiveControls($iid) { return $GLOBALS['ACTIVE_CONTROLS']; }
 function SGW_GetState($iid)               { return $GLOBALS['SGW_STATE']; }
+$GLOBALS['OHUB_FUNCS'] = [];
+function OHUB_GetFunctions($iid)          { return $GLOBALS['OHUB_FUNCS']; }
 
 class IPSModule
 {
@@ -1012,6 +1014,35 @@ $GLOBALS['ARCHIVE'][call($ems, 'GetIDForIdent', ['EMS_BatCostCt'])] = [[$d0 - 36
 $r = call($ems, 'GetBatteryCostHistory', [$d0, $d0 + 1800]);
 check('GetBatteryCostHistory: Archivwert je Slot-Mitte (12 → 18,5 ct)', array_column($r['slots'], 'einstandCt') === [12.0, 18.5], json_encode($r['slots']));
 unset($GLOBALS['INSTMOD'][500]);
+
+// ===========================================================================
+echo "\n22) Wallboxen über OCPPHub (dieselben Geräte wie ChargerHub nie doppelt zählen)\n";
+$ems = freshEms();
+$op2 = vari('OCPP WB2 Ladeleistung', 701, 'power', 3800.0);
+$oen = vari('OCPP WB2 Ladefreigabe', 701, 'ctl_enable', false, 0);
+$ohubEntry = ['contractVersion' => '1.3', 'instanceID' => 701, 'function' => 'charger', 'label' => 'WB2', 'powerID' => $op2,
+    'chargeEnableID' => $oen, 'plugStateID' => 0, 'maxCurrent' => 16, 'managedBy' => 'none', 'transport' => 'ocpp', 'lastSeenAt' => time() - 20];
+$GLOBALS['INSTMOD'][700] = GUID_OCPPHUB_SPLITTER; $GLOBALS['OHUB_FUNCS'] = [$ohubEntry];
+$r = call($ems, 'discoverOcppHub');
+check('Discovery: Eintrag behält die Ladepunkt-ID (701), nicht die Splitter-ID (700)', ($r[0]['instanceID'] ?? 0) === 701 && $r[0]['splitterID'] === 700 && $r[0]['source'] === 'ocpphub', json_encode($r));
+unset($GLOBALS['INSTMOD'][700]); $GLOBALS['OHUB_FUNCS'] = [];
+$chub = ['instanceID' => 600, 'powerID' => $p1, 'plugStateID' => 0, 'managedBy' => 'none'];
+attr('PartnerCache', json_encode(['ocpphub' => [array_merge($ohubEntry, ['source' => 'ocpphub'])]]));
+check('nur OCPPHub: Wallbox 1 = OCPP-Ladepunkt, 3,8 kW', call($ems, 'readChargerPowerKw', [1]) === 3.8 && !call($ems, 'chargerSourceStatus')['warn']);
+attr('PartnerCache', json_encode(['chargerhub' => [$chub], 'ocpphub' => [array_merge($ohubEntry, ['source' => 'ocpphub'])]]));
+$GLOBALS['VAR'][$p1]['VariableUpdated'] = time();
+check('beide gefunden, automatisch: nur ChargerHub zählt (keine Doppelzählung), Warnung', count(call($ems, 'getChargerList')) === 1
+    && call($ems, 'getChargerEntry', [1])['instanceID'] === 600 && call($ems, 'getChargerEntry', [2]) === [] && call($ems, 'chargerSourceStatus')['warn'] === true);
+prop('WB_Quelle', 2);
+check('Quelle OCPPHub gewählt: nur der OCPP-Ladepunkt, keine Warnung', call($ems, 'getChargerEntry', [1])['instanceID'] === 701 && count(call($ems, 'getChargerList')) === 1 && !call($ems, 'chargerSourceStatus')['warn']);
+$GLOBALS['ACTIONS'] = []; call($ems, 'controlWallbox', [1, true]);
+check('Schalten geht an den OCPP-Ladepunkt 701 (ctl_curr_limit + ctl_enable)', array_map(fn($a) => $a[0] . ':' . $a[1], $GLOBALS['ACTIONS']) === ['701:ctl_curr_limit', '701:ctl_enable'], json_encode($GLOBALS['ACTIONS']));
+prop('WB_Quelle', 3);
+check('Beide (verschiedene Geräte): ChargerHub = Wallbox 1, OCPP = Wallbox 2', call($ems, 'getChargerEntry', [1])['instanceID'] === 600 && call($ems, 'getChargerEntry', [2])['instanceID'] === 701);
+prop('WB_Quelle', 1);
+check('Quelle ChargerHub gewählt: OCPP bleibt außen vor, keine Warnung', count(call($ems, 'getChargerList')) === 1 && !call($ems, 'chargerSourceStatus')['warn']);
+$sit = array_values(array_filter(call($ems, 'GetSituation'), fn($x) => $x['domain'] === 'wallbox'));
+check('Situationsanzeige nutzt dieselbe Liste (1 Wallbox)', count($sit) === 1 && $sit[0]['instanceID'] === 600, json_encode($sit));
 
 // ===========================================================================
 echo "\n" . ($fails === 0 ? "ALLE SZENARIEN BESTANDEN" : "$fails SZENARIO(S) VERLETZT") . "\n\n";

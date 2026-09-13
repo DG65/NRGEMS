@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.39.0 (2026-09-13)
+- **Neu: Wallboxen über OCPPHub.** EMS liest OCPP-Ladepunkte
+  (`OHUB_GetFunctions`, Vertrag wie ChargerHub) genauso ein wie
+  ChargerHub, zum Messen der Ladeleistung und zum Schalten. Anlass: Eine
+  Autoladung am 08.09. hatte nur der OCPP-Ladepunkt gemessen. EMS hatte sie
+  als Hauslast gezählt, und die Batterie lud das Auto, ohne dass EMS davon
+  wusste.
+- **Neu: Wallbox-Quelle.** Im Panel „🚗 Wallboxen“: automatisch,
+  ChargerHub, OCPPHub oder beide.
+  - Dieselbe Wallbox kann in beiden Modulen erscheinen. EMS zählt sie nie
+    doppelt, sonst bestellte Grid Rewards doppelt so viel Netzstrom.
+  - Automatisch: Wird nur eine Quelle gefunden, gilt diese. Werden beide
+    gefunden, zählt EMS vorerst nur ChargerHub (wie bisher). Die Instanz
+    zeigt den Status „Wallbox-Quelle prüfen“, bis eine Quelle gewählt ist.
+  - Messen, Schalten und die Situationsanzeige nutzen dieselbe Liste.
+    Schaltbefehle gehen an den OCPP-Ladepunkt selbst, nicht an den Splitter.
+- Die Statusmeldung 200 (Rückfall nach Kommunikationsfehlern) hat jetzt
+  einen Text.
+- **Prüfstand:** Block 22 mit 8 Fällen (Ladepunkt-ID bleibt erhalten, nur
+  OCPPHub, beide automatisch ohne Doppelzählung, jede Wahl, Schalten am
+  Ladepunkt, Situationsanzeige).
+
 ## 0.38.0 (2026-09-13)
 - **Neu: Einstandspreis der Batterie.** Strom aus der Batterie ist nicht
   gratis, wenn sie aus dem Netz geladen wurde. Das Dashboard kann damit die
