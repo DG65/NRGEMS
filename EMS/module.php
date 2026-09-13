@@ -1845,15 +1845,27 @@ class EMS extends IPSModule
     private function chargerSourceStatus(): array
     {
         $p = $this->GetPartners();
-        $hasC = !empty($p['chargerhub']);
-        $hasO = !empty($p['ocpphub']);
+        $c = (array)($p['chargerhub'] ?? array());
+        $o = (array)($p['ocpphub'] ?? array());
         switch ((int)$this->ReadPropertyInteger('WB_Quelle')) {
             case 1: return array('chargerhub' => true,  'ocpphub' => false, 'warn' => false);
             case 2: return array('chargerhub' => false, 'ocpphub' => true,  'warn' => false);
             case 3: return array('chargerhub' => true,  'ocpphub' => true,  'warn' => false);
         }
-        if ($hasC && $hasO) { return array('chargerhub' => true, 'ocpphub' => false, 'warn' => true); }
+        // duplicateOf (CHUB/OHUB 1.4, Nutzerangabe am Quellmodul): markierte
+        // Eintraege zaehlen nie. Ist irgendwo markiert, hat der Nutzer die
+        // Zuordnung geprueft -- die uebrigen sind verschiedene Geraete.
+        $hasC = !empty($this->withoutDuplicates($c));
+        $hasO = !empty($this->withoutDuplicates($o));
+        $reviewed = count($this->withoutDuplicates(array_merge($c, $o))) < count($c) + count($o);
+        if ($hasC && $hasO && !$reviewed) { return array('chargerhub' => true, 'ocpphub' => false, 'warn' => true); }
         return array('chargerhub' => $hasC, 'ocpphub' => $hasO, 'warn' => false);
+    }
+
+    /** Eintraege ohne duplicateOf (= fuer dieses Geraet zaehlt eine andere Quelle). */
+    private function withoutDuplicates(array $list): array
+    {
+        return array_values(array_filter($list, function ($e) { return empty($e['duplicateOf']); }));
     }
 
     /** Gueltige Ladepunkte fuer Messen UND Schalten, ChargerHub vor OCPPHub. */
@@ -1863,10 +1875,10 @@ class EMS extends IPSModule
         $use = $this->chargerSourceStatus();
         $list = array();
         if ($use['chargerhub']) {
-            foreach ((array)($p['chargerhub'] ?? array()) as $c) { $c['source'] = 'chargerhub'; $list[] = $c; }
+            foreach ($this->withoutDuplicates((array)($p['chargerhub'] ?? array())) as $c) { $c['source'] = 'chargerhub'; $list[] = $c; }
         }
         if ($use['ocpphub']) {
-            foreach ((array)($p['ocpphub'] ?? array()) as $c) { $c['source'] = 'ocpphub'; $list[] = $c; }
+            foreach ($this->withoutDuplicates((array)($p['ocpphub'] ?? array())) as $c) { $c['source'] = 'ocpphub'; $list[] = $c; }
         }
         return $list;
     }

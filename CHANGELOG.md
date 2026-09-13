@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.40.0 (2026-09-13)
+- **Neu: Doppelte Wallboxen am Quellmodul markieren.** ChargerHub und
+  OCPPHub bekommen das Feld `duplicateOf` (Vertrag 1.4). Der Nutzer legt
+  dort einmal fest: „Diese Wallbox ist dasselbe Gerät wie …“. EMS
+  überspringt markierte Einträge immer, beim Messen wie beim Schalten.
+  - Ist irgendwo eine Dublette markiert, gilt die Zuordnung als geprüft.
+    Die übrigen Wallboxen aus beiden Modulen zählen dann, ohne Warnung.
+  - Ohne das Feld (ältere Modulversionen) bleibt alles wie in 0.39.0.
+- **Prüfstand:** Block 22 um 4 Fälle ergänzt (markierte Dublette, gemischt,
+  ausdrückliche Quellenwahl, ältere Module).
+
 ## 0.39.0 (2026-09-13)
 - **Neu: Wallboxen über OCPPHub.** EMS liest OCPP-Ladepunkte
   (`OHUB_GetFunctions`, Vertrag wie ChargerHub) genauso ein wie

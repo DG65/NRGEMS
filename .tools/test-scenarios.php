@@ -1044,6 +1044,23 @@ check('Quelle ChargerHub gewählt: OCPP bleibt außen vor, keine Warnung', count
 $sit = array_values(array_filter(call($ems, 'GetSituation'), fn($x) => $x['domain'] === 'wallbox'));
 check('Situationsanzeige nutzt dieselbe Liste (1 Wallbox)', count($sit) === 1 && $sit[0]['instanceID'] === 600, json_encode($sit));
 
+echo "\n   duplicateOf (Nutzerangabe am Quellmodul, CHUB/OHUB 1.4)\n";
+$ems = freshEms();
+$o701 = array_merge($ohubEntry, ['source' => 'ocpphub']);
+$dup600 = array_merge($chub, ['duplicateOf' => ['source' => 'ocpphub', 'instanceID' => 701]]);
+attr('PartnerCache', json_encode(['chargerhub' => [$dup600], 'ocpphub' => [$o701]]));
+check('Dietmars Fall: ChargerHub-Eintrag als Dublette markiert, automatisch → nur OCPP zählt, keine Warnung',
+    array_column(call($ems, 'getChargerList'), 'instanceID') === [701] && !call($ems, 'chargerSourceStatus')['warn'], json_encode(call($ems, 'getChargerList')));
+$c602 = ['instanceID' => 602, 'powerID' => $p2, 'plugStateID' => 0, 'managedBy' => 'none'];
+attr('PartnerCache', json_encode(['chargerhub' => [$dup600, $c602], 'ocpphub' => [$o701]]));
+check('gemischt: eine Dublette markiert, übrige sind verschiedene Geräte → 602 und 701 zählen, keine Warnung',
+    array_column(call($ems, 'getChargerList'), 'instanceID') === [602, 701] && !call($ems, 'chargerSourceStatus')['warn']);
+prop('WB_Quelle', 1);
+check('ChargerHub ausdrücklich gewählt: markierte Dublette 600 zählt trotzdem nicht', array_column(call($ems, 'getChargerList'), 'instanceID') === [602]);
+prop('WB_Quelle', 0);
+attr('PartnerCache', json_encode(['chargerhub' => [$chub], 'ocpphub' => [$o701]]));
+check('ohne Feld (ältere Module): Verhalten wie 0.39.0 (ChargerHub + Warnung)', array_column(call($ems, 'getChargerList'), 'instanceID') === [600] && call($ems, 'chargerSourceStatus')['warn']);
+
 // ===========================================================================
 echo "\n" . ($fails === 0 ? "ALLE SZENARIEN BESTANDEN" : "$fails SZENARIO(S) VERLETZT") . "\n\n";
 exit($fails === 0 ? 0 : 1);
