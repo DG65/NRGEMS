@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.36.0 (2026-09-13)
+- **Neu: Dauerhafte Einspeisegrenze am Netzanschluss.**
+  - Automatisch aus den Anlagendaten: 60 % der kWp für Neuanlagen ab
+    25.02.2025 ohne Smart Meter und Steuerbox (§ 9 EEG, Solarspitzengesetz),
+    70 % für Bestandsanlagen mit angegebener 70-%-Kappung.
+  - Im Panel „🏠 Anlage“ auch fest wählbar: 50 %, 60 %, 70 %,
+    Nulleinspeisung oder keine Grenze. Die 50 % sind für die geplante
+    EEG-Novelle 2027 vorgesehen.
+  - Als gesetzliche Pflicht gilt die Grenze wie die Netzbetreiber-Vorgabe
+    auch bei ausgeschaltetem EMS, sofern EMS die Steuerhoheit über den
+    Wechselrichter hat.
+  - Mit Netzbetreiber-Vorgabe und Negativpreis-Pflicht gilt der strengste
+    Wert. Nach einer negativen Viertelstunde geht EMS auf die dauerhafte
+    Grenze zurück, statt die Begrenzung aufzuheben.
+  - B1 („Mittagsspitze“) sperrt das Laden nicht, solange der gemessene
+    Überschuss an oder über der Grenze liegt. Die Batterie soll ihn
+    aufnehmen, statt dass der Wechselrichter PV abregelt.
+- **Behoben: Einspeisegrenze des Installateurs blieb nicht erhalten.** Seit
+  0.35.0 hat EMS nach einer vorübergehenden Grenze (Netzbetreiber,
+  negativer Preis) die Begrenzung im Wechselrichter einfach ausgeschaltet.
+  Eine vom Installateur gesetzte Grenze, etwa 60 % oder eine Nulleinspeisung
+  laut Netzanschluss, wäre damit verloren gegangen. Jetzt merkt sich EMS vor
+  dem ersten Eingriff den bisherigen Zustand und stellt genau diesen wieder
+  her.
+- **Prüfstand:** Block 19 mit 17 Fällen (60/70/50/0 %/keine,
+  Smart-Meter-Ausnahme, Bestand, ohne kWp, EMS aus, Negativpreis,
+  Rückkehr zur dauerhaften Grenze, fremde Steuerhoheit, Installateur-Wert
+  wiederhergestellt, B1 an der Grenze).
+
 ## 0.35.0 (2026-09-13)
 - **Neu: Negativpreis-Pflicht (§ 51 EEG, Solarspitzengesetz).** Meldet
   `GetPlantInfo` die Pflicht `negativpreis` (Inbetriebnahme ab 25.02.2025

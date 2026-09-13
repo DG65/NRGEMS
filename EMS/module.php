@@ -258,6 +258,7 @@ class EMS extends IPSModule
         $this->RegisterPropertyBoolean('ANL_Steuerbox',         false);
         $this->RegisterPropertyBoolean('ANL_Neues_Modell',      false); // freiwilliger Wechsel ins Solarspitzen-Modell
         $this->RegisterPropertyInteger('ANL_Verguetungsform',   0);    // 0 feste Einspeiseverguetung, 1 Direktvermarktung
+        $this->RegisterPropertyInteger('ANL_Einspeisegrenze_Pct', -1); // -1 automatisch aus den Pflichten, 0..99 % der kWp, 100 = keine
         $this->RegisterPropertyBoolean('NETZ_Aktiv',          true);
         $this->RegisterPropertyInteger('NETZ_B1_Margin_W',    300); // gemessene PV mindestens so weit ueber der Hauslast
         $this->RegisterPropertyInteger('NETZ_B1_Latest_Hour', 13);  // spaetester Freigabezeitpunkt (volle Stunde)
@@ -440,6 +441,7 @@ class EMS extends IPSModule
         $this->RegisterAttributeString('FcAccuracy',         '');    // PVF_GetAccuracy (Vertrag 1.x), leer = nicht verfuegbar
         $this->RegisterAttributeString('FcSpotCurve',        '[]');  // Boersenpreis-Kurve [start,end,price ct netto,aufloesung,quelle]
         $this->RegisterAttributeString('FeedInLimitState',   '');    // zuletzt gesetzte Einspeisegrenze "W|Grund" (nur fuer Aenderungs-Log)
+        $this->RegisterAttributeString('FeedInLimitPrev',    '');    // WR-Einspeisegrenze VOR dem ersten EMS-Eingriff (Installateur-Wert), zum Wiederherstellen
         $this->RegisterAttributeString('FcLoadToday',        '[]');  // Lastprognose heute, 96 Slots W (null = fehlt)
         $this->RegisterAttributeInteger('LastDiscoveryTs',   0);
 
@@ -1568,6 +1570,14 @@ class EMS extends IPSModule
             $limitW  = (int)round((float)$this->ReadPropertyInteger('EMS_Max_Power_W') * $percent / 100.0);
             $gruende[] = sprintf('§14a-Einspeisereduktion %.0f%%', $percent);
         }
+        // Dauerhafte Einspeisegrenze (§ 9 EEG 60 %, Bestands-70-%-Kappung oder
+        // eingetragen) -- gesetzliche Pflicht, gilt deshalb wie die
+        // Netzbetreiber-Vorgabe auch bei EMS aus; nur mit Steuerhoheit ems.
+        $perm = $this->permanentFeedInLimit();
+        if ($perm['w'] !== null && ($inv['controlAuthority'] ?? 'none') === 'ems') {
+            $limitW = ($limitW === null) ? $perm['w'] : min($limitW, $perm['w']);
+            $gruende[] = $perm['grund'];
+        }
         $neg = $this->negativePriceStatus();
         if ($neg['active'] && $this->ReadPropertyBoolean('EMS_Active') && ($inv['controlAuthority'] ?? 'none') === 'ems') {
             $limitW = 0;
@@ -1575,18 +1585,38 @@ class EMS extends IPSModule
         }
 
         if ($limitW === null) {
-            // Keine Vorgabe (mehr) aktiv -- Begrenzung aufheben, falls sie
-            // zuletzt von UNS gesetzt wurde (Attribut-Flag, damit wir nicht
-            // eine vom Nutzer manuell gesetzte Grenze grundlos wegnehmen).
+            // Keine Vorgabe (mehr) aktiv -- nur zuruecknehmen, was WIR gesetzt
+            // haben, und dann den Zustand VOR unserem ersten Eingriff
+            // wiederherstellen (13.09.2026): Viele Anlagen haben vom
+            // Installateur eine Grenze im WR (60 %, Nulleinspeisung laut
+            // Netzanschluss) -- einfaches Ausschalten wuerde sie zerstoeren.
             if ($this->ReadAttributeBoolean('SteuerboxFeedInLimitSetByUs')) {
-                @IPS_RequestAction($invId, 'ctl_export_enable', false);
+                $prev = json_decode($this->ReadAttributeString('FeedInLimitPrev'), true);
+                if (is_array($prev) && array_key_exists('enable', $prev)) {
+                    if (!empty($prev['enable']) && isset($prev['limit'])) {
+                        @IPS_RequestAction($invId, 'ctl_export_limit', (int)$prev['limit']);
+                    }
+                    @IPS_RequestAction($invId, 'ctl_export_enable', (bool)$prev['enable']);
+                    $txt = !empty($prev['enable']) ? sprintf('vorherige Grenze %d W wiederhergestellt', (int)$prev['limit']) : 'vorher unbegrenzt';
+                } else {
+                    @IPS_RequestAction($invId, 'ctl_export_enable', false);
+                    $txt = 'vorheriger Zustand unbekannt, Begrenzung aus';
+                }
                 $this->WriteAttributeBoolean('SteuerboxFeedInLimitSetByUs', false);
                 $this->WriteAttributeString('FeedInLimitState', '');
-                $this->emsLog(EMS_LOG_BASIC, '⚡ Einspeisebegrenzung aufgehoben');
+                $this->WriteAttributeString('FeedInLimitPrev', '');
+                $this->emsLog(EMS_LOG_BASIC, '⚡ Einspeisebegrenzung aufgehoben (' . $txt . ')');
             }
             return;
         }
 
+        if (!$this->ReadAttributeBoolean('SteuerboxFeedInLimitSetByUs')) {
+            // Installateur-/Nutzerzustand merken, bevor EMS ihn zum ersten Mal aendert
+            $ve = $this->findChildVariableIdByIdent($invId, 'ctl_export_enable');
+            $vl = $this->findChildVariableIdByIdent($invId, 'ctl_export_limit');
+            $this->WriteAttributeString('FeedInLimitPrev', ($ve > 0) ? json_encode(array(
+                'enable' => (bool)GetValue($ve), 'limit' => ($vl > 0) ? (int)GetValue($vl) : null)) : '');
+        }
         @IPS_RequestAction($invId, 'ctl_export_enable', true);
         @IPS_RequestAction($invId, 'ctl_export_limit', $limitW);
         $this->WriteAttributeBoolean('SteuerboxFeedInLimitSetByUs', true);
@@ -4689,6 +4719,32 @@ class EMS extends IPSModule
         );
     }
 
+    /**
+     * Dauerhafte Einspeisegrenze am Netzanschluss in W, bezogen auf die kWp.
+     * ANL_Einspeisegrenze_Pct: -1 = automatisch aus den Pflichten
+     * (einspeisung60 -> 60 %, einspeisung70 -> 70 %), 0..99 = eingetragen
+     * (z. B. 50 % fuer das geplante EEG 2027 oder 0 = Nulleinspeisung laut
+     * Netzanschluss), 100 = keine. Ohne kWp keine Grenze (nicht raten).
+     */
+    private function permanentFeedInLimit(): array
+    {
+        $none = array('w' => null, 'pct' => null, 'grund' => '');
+        $kwp = $this->getPlantKwp();
+        if ($kwp <= 0.0) { return $none; }
+        $pct = $this->ReadPropertyInteger('ANL_Einspeisegrenze_Pct');
+        if ($pct < 0) {
+            $codes = array_column($this->plantObligations($this->getPlantIbn(), $kwp, $this->plantOptions()), 'code');
+            if (in_array('einspeisung60', $codes, true))      { $pct = 60; $grund = 'Einspeisegrenze 60 % der kWp (§ 9 EEG, ohne Smart Meter + Steuerbox)'; }
+            elseif (in_array('einspeisung70', $codes, true))  { $pct = 70; $grund = 'Einspeisegrenze 70 % der kWp (Bestandsanlage mit 70-%-Kappung)'; }
+            else { return $none; }
+        } elseif ($pct >= 100) {
+            return $none;
+        } else {
+            $grund = ($pct === 0) ? 'Nulleinspeisung (eingetragen)' : sprintf('Einspeisegrenze %d %% der kWp (eingetragen)', $pct);
+        }
+        return array('w' => (int)round($kwp * 1000.0 * $pct / 100.0), 'pct' => $pct, 'grund' => $grund);
+    }
+
     /** Viertelstunden-Index eines Zeitpunkts ab Tagesbeginn (sommerzeitfest, 0..91/95/99). */
     private function slotIndexForTs(int $ts, int $dayStartTs): int
     {
@@ -4904,6 +4960,14 @@ class EMS extends IPSModule
         // nicht ins Netz -- B1 wuerde genau das Gegenteil tun.
         if ($this->negativePriceStatus()['active']) {
             $d['reason'] = ($d['reason'] ?? '') . ' | 🌞 Mittagsspitze pausiert: negativer Börsenpreis, Überschuss geht in die Batterie';
+            return $d;
+        }
+        // Dauerhafte Einspeisegrenze: liegt der Ueberschuss schon (fast) darueber,
+        // muss die Batterie ihn aufnehmen -- sonst regelt der WR PV ab.
+        $perm = $this->permanentFeedInLimit();
+        $ueberschussW = (float)$s['pv_total_w'] - (float)$s['house_pow_w'];
+        if ($perm['w'] !== null && $ueberschussW > $perm['w'] - (float)$this->ReadPropertyInteger('NETZ_B1_Margin_W')) {
+            $d['reason'] = ($d['reason'] ?? '') . sprintf(' | 🌞 Mittagsspitze pausiert: Überschuss %.0f W liegt an der Einspeisegrenze %d W, Batterie nimmt ihn auf', $ueberschussW, $perm['w']);
             return $d;
         }
 

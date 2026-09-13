@@ -800,7 +800,10 @@ $posKurve = [['start' => $now - 600, 'end' => $now + 300, 'price' => 4.2, 'auflo
 check('spotPriceAt: Eintrag zur aktuellen Viertelstunde', (call($ems, 'spotPriceAt', [$negKurve, $now])['price'] ?? null) === -1.5);
 check('spotPriceAt: keine Angabe -> null', call($ems, 'spotPriceAt', [[], $now]) === null);
 
-$neu = function () { prop('ANL_IBN_Datum', '01.06.2025'); prop('ANL_kWp_Manuell', 9.0); };
+// Neuanlage MIT Smart Meter + Steuerbox: Negativpreis-Pflicht gilt, die dauerhafte
+// 60-%-Grenze entfaellt -- so prueft Block 18 die Negativpreis-Pflicht allein
+// (Kombination beider Grenzen: Block 19).
+$neu = function () { prop('ANL_IBN_Datum', '01.06.2025'); prop('ANL_kWp_Manuell', 9.0); prop('ANL_iMSys', true); prop('ANL_Steuerbox', true); };
 $ems = freshEms(); $neu(); attr('FcSpotCurve', json_encode($negKurve));
 $st = call($ems, 'negativePriceStatus');
 check('Neuanlage 06/2025 + negativer Boersenpreis: Pflicht und aktiv', $st['pflicht'] === true && $st['active'] === true && $st['price'] === -1.5, json_encode($st));
@@ -849,6 +852,66 @@ attr('FcPvToday', json_encode(array_fill(0, 96, 50000.0))); prop('NETZ_B1_Latest
 $autoN = ['op_mode' => EMS_OP_AUTO, 'gw_mode' => GW_MODE_AUTO, 'gw_power_w' => 0, 'gw_enable' => false, 'wb1_enable' => false, 'wb2_enable' => false, 'reason' => 'Automatik', 'source' => 'ems'];
 $d = call($ems, 'applyGridServiceB1', [$autoN, state(['bat_soc' => 50.0, 'pv_total_w' => 5000.0, 'house_pow_w' => 400.0])]);
 check('negativer Preis + Pflicht: B1 sperrt NICHT (Ueberschuss soll in die Batterie), Grund sichtbar', empty($d['svc']) && strpos($d['reason'], 'Mittagsspitze pausiert') !== false, $d['reason']);
+unset($GLOBALS['INSTMOD'][IHUB_IID]);
+
+// ===========================================================================
+echo "\n19) Dauerhafte Einspeisegrenze (60 % Solarspitzengesetz, 70 % Bestand, eingetragen) + Installateur-Wert wiederherstellen\n";
+$GLOBALS['INSTMOD'][IHUB_IID] = GUID_INVERTERHUB;
+$wrEms19 = fn($auth = 'ems') => attr('PartnerCache', json_encode(['inverterhub' => [['instanceID' => IHUB_IID, 'contractVersion' => '1.3', 'controlAuthority' => $auth, 'controllable' => true]]]));
+$acts19 = fn() => array_map(fn($x) => $x[1] . '=' . var_export($x[2], true), $GLOBALS['ACTIONS']);
+$ems = freshEms(); prop('ANL_IBN_Datum', '01.06.2025'); prop('ANL_kWp_Manuell', 9.0);
+check('Neuanlage 06/2025, 9 kWp, ohne Smart Meter: 60 % = 5400 W', call($ems, 'permanentFeedInLimit')['w'] === 5400, json_encode(call($ems, 'permanentFeedInLimit')));
+prop('ANL_iMSys', true); prop('ANL_Steuerbox', true);
+check('mit Smart Meter UND Steuerbox: keine dauerhafte Grenze', call($ems, 'permanentFeedInLimit')['w'] === null);
+prop('ANL_iMSys', false); prop('ANL_Steuerbox', false); prop('ANL_Einspeisegrenze_Pct', 50);
+check('eingetragen 50 % (EEG 2027): 4500 W', call($ems, 'permanentFeedInLimit')['w'] === 4500);
+prop('ANL_Einspeisegrenze_Pct', 0);
+check('eingetragen Nulleinspeisung: 0 W', call($ems, 'permanentFeedInLimit')['w'] === 0);
+prop('ANL_Einspeisegrenze_Pct', 100);
+check('eingetragen „keine“: keine Grenze, auch wenn die Pflicht 60 % wäre', call($ems, 'permanentFeedInLimit')['w'] === null);
+$ems = freshEms(); prop('ANL_IBN_Datum', '24.10.2012'); prop('ANL_kWp_Manuell', 9.18); prop('ANL_Einspeisemanagement', 2);
+check('Dietmar (2012, Rundsteuerempfänger): keine dauerhafte Grenze', call($ems, 'permanentFeedInLimit')['w'] === null);
+prop('ANL_Einspeisemanagement', 1);
+check('Bestand 2012 mit 70-%-Kappung angegeben: 70 % = 6426 W', call($ems, 'permanentFeedInLimit')['w'] === 6426);
+$ems = freshEms(); prop('ANL_IBN_Datum', '01.06.2025');
+check('ohne kWp: keine Grenze (nicht raten)', call($ems, 'permanentFeedInLimit')['w'] === null);
+
+echo "\n   im Zusammenspiel mit dem Wechselrichter\n";
+$ems = freshEms(); prop('ANL_IBN_Datum', '01.06.2025'); prop('ANL_kWp_Manuell', 9.0); $wrEms19(); prop('EMS_Active', false);
+$GLOBALS['ACTIONS'] = []; call($ems, 'applySteuerboxFeedInLimit');
+check('Pflicht 60 % gilt auch bei EMS aus (gesetzlich): Grenze 5400 W', $acts19() === ['ctl_export_enable=true', 'ctl_export_limit=5400'], json_encode($acts19()));
+$now19 = time(); prop('EMS_Active', true);
+attr('FcSpotCurve', json_encode([['start' => $now19 - 600, 'end' => $now19 + 300, 'price' => -2.0, 'aufloesung' => 900, 'quelle' => 'boersenpreis']]));
+$GLOBALS['ACTIONS'] = []; call($ems, 'applySteuerboxFeedInLimit');
+check('60 % + negativer Preis: der strengere Wert 0 W', end($GLOBALS['ACTIONS'])[2] === 0, json_encode($acts19()));
+attr('FcSpotCurve', '[]'); $GLOBALS['ACTIONS'] = []; call($ems, 'applySteuerboxFeedInLimit');
+check('Preis wieder normal: zurück auf die dauerhaften 5400 W (nicht aufheben)', end($GLOBALS['ACTIONS'])[2] === 5400, json_encode($acts19()));
+$ems = freshEms(); prop('ANL_IBN_Datum', '01.06.2025'); prop('ANL_kWp_Manuell', 9.0); $wrEms19('external');
+$GLOBALS['ACTIONS'] = []; call($ems, 'applySteuerboxFeedInLimit');
+check('fremde Steuerhoheit: EMS setzt keine Grenze', $acts19() === [], json_encode($acts19()));
+
+echo "\n   Installateur-Wert im Wechselrichter bleibt erhalten\n";
+$ems = freshEms(); prop('ANL_IBN_Datum', '24.10.2012'); prop('ANL_kWp_Manuell', 9.18); prop('ANL_Einspeisemanagement', 2); $wrEms19(); prop('EMS_Active', true);
+$veV = vari('Einspeisebegrenzung aktiv', IHUB_IID, 'ctl_export_enable', true, 0);
+$vlV = vari('Einspeisegrenze', IHUB_IID, 'ctl_export_limit', 3000, 1);
+$GLOBALS['INSTMOD'][300] = GUID_STEUERBOXHUB; $GLOBALS['SBH_STATE'] = ['feedInDimmActive' => true, 'feedInLimitPercent' => 30];
+$GLOBALS['ACTIONS'] = []; call($ems, 'applySteuerboxFeedInLimit');
+check('Netzbetreiber-Vorgabe setzt Grenze, vorher gemerkt: Installateur 3000 W aktiv', strpos($ems->ReadAttributeString('FeedInLimitPrev'), '3000') !== false, $ems->ReadAttributeString('FeedInLimitPrev'));
+$GLOBALS['SBH_STATE'] = ['feedInDimmActive' => false]; $GLOBALS['ACTIONS'] = []; call($ems, 'applySteuerboxFeedInLimit');
+check('Vorgabe endet: Installateur-Grenze 3000 W wiederhergestellt statt ausgeschaltet', $acts19() === ['ctl_export_limit=3000', 'ctl_export_enable=true'], json_encode($acts19()));
+unset($GLOBALS['INSTMOD'][300]); $GLOBALS['SBH_STATE'] = null;
+
+echo "\n   B1 an der Einspeisegrenze\n";
+$ems = freshEms(); prop('ANL_IBN_Datum', '01.06.2025'); prop('ANL_kWp_Manuell', 9.0); prop('EMS_Active', true);
+attr('PartnerCache', json_encode(['inverterhub' => [['instanceID' => IHUB_IID, 'contractVersion' => '1.3', 'controlAuthority' => 'ems', 'controllable' => true,
+    'gridServiceCapabilities' => ['chargeInhibit', 'gridCharge', 'dischargeToGrid', 'release']]]]));
+attr('FcPvToday', json_encode(array_fill(0, 96, 50000.0))); prop('NETZ_B1_Latest_Hour', 24); prop('BAT_Capacity_kWh', 40.0);
+$auto19 = ['op_mode' => EMS_OP_AUTO, 'gw_mode' => GW_MODE_AUTO, 'gw_power_w' => 0, 'gw_enable' => false, 'wb1_enable' => false, 'wb2_enable' => false, 'reason' => 'Automatik', 'source' => 'ems'];
+$d = call($ems, 'applyGridServiceB1', [$auto19, state(['bat_soc' => 50.0, 'pv_total_w' => 7000.0, 'house_pow_w' => 400.0])]);
+check('Überschuss 6600 W über der Grenze 5400 W: B1 sperrt NICHT, Batterie nimmt auf', empty($d['svc']) && strpos($d['reason'], 'Einspeisegrenze') !== false, $d['reason']);
+$spaet19 = ((int)((time() - strtotime('today')) / 900)) >= 95;
+$d = call($ems, 'applyGridServiceB1', [$auto19, state(['bat_soc' => 50.0, 'pv_total_w' => 3000.0, 'house_pow_w' => 400.0])]);
+check('Überschuss 2600 W deutlich unter der Grenze: B1 darf sperren', $spaet19 || ($d['svc'] ?? '') === 'chargeInhibit', $d['reason']);
 unset($GLOBALS['INSTMOD'][IHUB_IID]);
 
 // ===========================================================================

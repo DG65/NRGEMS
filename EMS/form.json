@@ -338,6 +338,19 @@
                     ]
                 },
                 {
+                    "type": "Select",
+                    "name": "ANL_Einspeisegrenze_Pct",
+                    "caption": "Dauerhafte Einspeisegrenze am Netzanschluss",
+                    "options": [
+                        {"caption": "Automatisch aus Datum und Angaben (60 % Solarspitzengesetz, 70 % Bestand)", "value": -1},
+                        {"caption": "50 % der kWp", "value": 50},
+                        {"caption": "60 % der kWp", "value": 60},
+                        {"caption": "70 % der kWp", "value": 70},
+                        {"caption": "Nulleinspeisung (0 W)", "value": 0},
+                        {"caption": "Keine Grenze", "value": 100}
+                    ]
+                },
+                {
                     "type": "CheckBox",
                     "name": "ANL_iMSys",
                     "caption": "Intelligentes Messsystem (Smart Meter) eingebaut"
