@@ -4551,6 +4551,8 @@ class EMS extends IPSModule
             $r['reason'] .= ' (Wechselsperre 2 min)';
         }
         if (!$r['active']) {
+            // Sichtbar statt still (Konzept §2.6): warum B1 gerade nicht greift
+            $d['reason'] = ($d['reason'] ?? '') . ' | 🌞 Mittagsspitze nicht aktiv: ' . $r['reason'];
             return $d;
         }
         $d['svc']    = 'chargeInhibit';

@@ -658,7 +658,12 @@ prop('NETZ_Aktiv', false);
 check('netzdienliche Bausteine abgeschaltet: B1 greift nicht', call($ems, 'applyGridServiceB1', [$autoD, $sonnig]) === $autoD);
 prop('NETZ_Aktiv', true);
 attr('FcPvToday', '[]');
-check('keine PV-Prognose im Zwischenspeicher: B1 greift nicht', call($ems, 'applyGridServiceB1', [$autoD, $sonnig]) === $autoD);
+$d = call($ems, 'applyGridServiceB1', [$autoD, $sonnig]);
+check('keine PV-Prognose im Zwischenspeicher: B1 greift nicht, Grund sichtbar angehaengt',
+    empty($d['svc']) && $d['source'] === 'ems' && strpos($d['reason'], 'Automatik | 🌞 Mittagsspitze nicht aktiv: keine PV-Prognose') === 0, $d['reason']);
+$d = call($ems, 'applyGridServiceB1', [$autoD, state(['bat_soc' => 50.0, 'pv_total_w' => 500.0, 'house_pow_w' => 400.0])]);
+check('Wolke (PV kaum ueber Haus): Grund "deckt die Hauslast nicht sicher" sichtbar, Entscheidung sonst unveraendert',
+    empty($d['svc']) && $d['op_mode'] === EMS_OP_AUTO && $d['gw_enable'] === false && strpos($d['reason'], 'Mittagsspitze nicht aktiv') !== false, $d['reason']);
 attr('FcPvToday', json_encode(array_fill(0, 96, 50000.0)));
 
 echo "\n   Steuerpfad in applyDecision()\n";

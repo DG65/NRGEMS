@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.33.4 (2026-09-13)
+- **B1 zeigt, warum er gerade nicht greift.** Könnte B1 eingreifen (der
+  Wechselrichter kann es, die Bausteine sind an, EMS fährt die Automatik),
+  tut es aber nicht, hängt EMS den Grund an den Entscheidungsgrund an, z. B.
+  „… | 🌞 Mittagsspitze nicht aktiv: Restüberschuss heute (p10) 2,4 kWh
+  reicht nicht für 11,2 kWh Platz“. Ohne die nötigen Befehle am
+  Wechselrichter oder mit abgeschalteten Bausteinen bleibt der Text wie
+  bisher. Nur Anzeige.
+- **Prüfstand:** Block 16 prüft den sichtbaren Grund (keine Prognose, Wolke).
+
 ## 0.33.3 (2026-09-13)
 - **B1 berücksichtigt die Prognosegüte** (Prognose Build 98, `PVF_GetAccuracy`,
   Vertrag 1.0), als Sicherheitsprüfung:
