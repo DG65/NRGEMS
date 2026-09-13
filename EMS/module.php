@@ -75,6 +75,10 @@ define('GUID_ARCHIVECONTROL', '{43192F0B-135B-4CE7-A0A7-1475603F3060}');
 // SteuerboxHub (SBH_GetState-Vertrag: §14a-Netzbetreiber-Dimmung, oberste
 // Prioritaet -- siehe SUITE.md "§14a-Lastabwurf-Priorisierung")
 define('GUID_STEUERBOXHUB', '{B76BE0BA-DF99-4B81-81BD-636A610011EE}');
+// NRG-Stack Boersenpreis (NRGSpotPrice, SPOT_GetPriceCurve 1.0, 13.09.2026):
+// Day-Ahead-Boersenpreis netto -- NUR fuer § 51 EEG (negative Preise) und
+// netzdienliche Signale, NIE als Bezugspreis (Dietmar 13.09.2026).
+define('GUID_SPOTPRICE', '{11BBF147-16A1-4332-82A3-29BB31154D03}');
 
 // WebFront-Modul (Konfigurator) -- fuer WFC_PushNotification() Ziel-InstanceID.
 // Verwechslungsgefahr: Symcons Kern-GUID {B5B875BB-...} heisst "Tile
@@ -434,6 +438,8 @@ class EMS extends IPSModule
         $this->RegisterAttributeString('FcPvToday',          '[]');  // PV-Prognose heute, 96 Slots W
         $this->RegisterAttributeString('FcPv10Today',        '[]');  // vorsichtige PV-Prognose p10 heute (leer = nicht geliefert)
         $this->RegisterAttributeString('FcAccuracy',         '');    // PVF_GetAccuracy (Vertrag 1.x), leer = nicht verfuegbar
+        $this->RegisterAttributeString('FcSpotCurve',        '[]');  // Boersenpreis-Kurve [start,end,price ct netto,aufloesung,quelle]
+        $this->RegisterAttributeString('FeedInLimitState',   '');    // zuletzt gesetzte Einspeisegrenze "W|Grund" (nur fuer Aenderungs-Log)
         $this->RegisterAttributeString('FcLoadToday',        '[]');  // Lastprognose heute, 96 Slots W (null = fehlt)
         $this->RegisterAttributeInteger('LastDiscoveryTs',   0);
 
@@ -984,6 +990,10 @@ class EMS extends IPSModule
             $this->refreshForecastCache();
             $decision = $this->optimize($state);
             $decision = $this->applyGridServiceB1($decision, $state);
+            $neg = $this->negativePriceStatus();
+            if ($neg['active']) {
+                $decision['reason'] = ($decision['reason'] ?? '') . sprintf(' | ⚡ Negativer Börsenpreis %.2f ct/kWh: Einspeisung auf 0 W begrenzt (§ 51 EEG)', $neg['price']);
+            }
             $decision = $this->applyPlausibilityGuard($decision, $state);
             $decision = $this->applyExportOverlapGuard($decision, $state);
             $this->applyDecision($decision, $state);
@@ -1541,31 +1551,50 @@ class EMS extends IPSModule
      */
     private function applySteuerboxFeedInLimit()
     {
-        $steuerbox = $this->getSteuerboxState();
-        $active = ($steuerbox !== null) && ($steuerbox['feedInDimmActive'] ?? false);
+        // Gemeinsame Einspeisegrenze (13.09.2026): §14a-Netzbetreiber-Vorgabe
+        // (gilt immer, auch bei EMS aus) UND Negativpreis-Pflicht (§ 51 EEG,
+        // nur bei EMS aktiv und Steuerhoheit ems). Es gilt der strengere Wert.
+        // Die WR-Automatik laedt den Ueberschuss zuerst in die Batterie; die
+        // Grenze regelt nur den Rest ab.
         $inv = $this->getInverterEntry();
         if ($inv === null || ($inv['instanceID'] ?? 0) <= 0) { return; }
         $invId = $inv['instanceID'];
+        $limitW = null;
+        $gruende = array();
 
-        if (!$active) {
+        $steuerbox = $this->getSteuerboxState();
+        if (($steuerbox !== null) && ($steuerbox['feedInDimmActive'] ?? false)) {
+            $percent = max(0.0, min(100.0, (float)($steuerbox['feedInLimitPercent'] ?? 100)));
+            $limitW  = (int)round((float)$this->ReadPropertyInteger('EMS_Max_Power_W') * $percent / 100.0);
+            $gruende[] = sprintf('§14a-Einspeisereduktion %.0f%%', $percent);
+        }
+        $neg = $this->negativePriceStatus();
+        if ($neg['active'] && $this->ReadPropertyBoolean('EMS_Active') && ($inv['controlAuthority'] ?? 'none') === 'ems') {
+            $limitW = 0;
+            $gruende[] = sprintf('negativer Börsenpreis %.2f ct/kWh (§ 51 EEG)', $neg['price']);
+        }
+
+        if ($limitW === null) {
             // Keine Vorgabe (mehr) aktiv -- Begrenzung aufheben, falls sie
             // zuletzt von UNS gesetzt wurde (Attribut-Flag, damit wir nicht
             // eine vom Nutzer manuell gesetzte Grenze grundlos wegnehmen).
             if ($this->ReadAttributeBoolean('SteuerboxFeedInLimitSetByUs')) {
                 @IPS_RequestAction($invId, 'ctl_export_enable', false);
                 $this->WriteAttributeBoolean('SteuerboxFeedInLimitSetByUs', false);
-                $this->emsLog(EMS_LOG_BASIC, '⚡ §14a-Einspeisereduktion aufgehoben');
+                $this->WriteAttributeString('FeedInLimitState', '');
+                $this->emsLog(EMS_LOG_BASIC, '⚡ Einspeisebegrenzung aufgehoben');
             }
             return;
         }
 
-        $percent = max(0.0, min(100.0, (float)($steuerbox['feedInLimitPercent'] ?? 100)));
-        $maxW    = (float)$this->ReadPropertyInteger('EMS_Max_Power_W');
-        $limitW  = (int)round($maxW * $percent / 100.0);
         @IPS_RequestAction($invId, 'ctl_export_enable', true);
         @IPS_RequestAction($invId, 'ctl_export_limit', $limitW);
         $this->WriteAttributeBoolean('SteuerboxFeedInLimitSetByUs', true);
-        $this->emsLog(EMS_LOG_BASIC, sprintf('⚡ §14a-Einspeisereduktion aktiv: %.0f%% = %dW', $percent, $limitW));
+        $state = $limitW . '|' . implode(' + ', $gruende);
+        if ($this->ReadAttributeString('FeedInLimitState') !== $state) {
+            $this->WriteAttributeString('FeedInLimitState', $state);
+            $this->emsLog(EMS_LOG_BASIC, sprintf('⚡ Einspeisebegrenzung %d W: %s', $limitW, implode(' + ', $gruende)));
+        }
     }
 
     /**
@@ -3668,6 +3697,14 @@ class EMS extends IPSModule
         }
 
         $targetDate = date('Y-m-d', strtotime($dayOffset === 0 ? 'today' : "today +{$dayOffset} day"));
+        // Sommerzeit-fest (Fund der Boersenpreis-Sitzung 13.09.2026): Slot aus
+        // dem Zeitabstand zum Tagesbeginn statt aus date('H:i') -- sonst
+        // ueberschreibt am 25-Stunden-Tag die zweite 02:00-Stunde die erste.
+        // Gleiche Zaehlung wie nowSlot ((time() - today) / 900). Tageslaenge
+        // 92/96/100 Slots, das Array hat mindestens 96 Eintraege.
+        $dayStartTs = strtotime($targetDate . ' 00:00:00');
+        $dayEndTs   = strtotime('+1 day', $dayStartTs);
+        $prices     = array_fill(0, max(96, intdiv($dayEndTs - $dayStartTs, 900)), null);
         // Format: Objekt-Array mit Preis- + Zeitfeld. Unterstuetzt beide
         // bekannten Formen: Tibber Grid Reward liefert `start` als Unix-
         // Timestamp (int) + `price` (contractVersion 1.1, verifiziert
@@ -3701,9 +3738,9 @@ class EMS extends IPSModule
             }
 
             if ($ts !== null) {
-                if (date('Y-m-d', $ts) !== $targetDate) { continue; } // gehoert zu einem anderen Kalendertag
-                $slot = (int)floor(((int)date('H', $ts) * 60 + (int)date('i', $ts)) / 15);
-                if ($slot >= 0 && $slot < 96) {
+                if ($ts < $dayStartTs || $ts >= $dayEndTs) { continue; } // gehoert zu einem anderen Kalendertag
+                $slot = $this->slotIndexForTs($ts, $dayStartTs);
+                if ($slot >= 0 && $slot < count($prices)) {
                     $prices[$slot] = $price;
                 }
             } elseif ($i >= 0 && $i < 96) {
@@ -4436,6 +4473,7 @@ class EMS extends IPSModule
             $acc = ($pvfId > 0 && function_exists('PVF_GetAccuracy')) ? @PVF_GetAccuracy($pvfId) : null;
             if (is_string($acc)) { $acc = json_decode($acc, true); }
             $this->WriteAttributeString('FcAccuracy', is_array($acc) ? json_encode($acc) : '');
+            $this->WriteAttributeString('FcSpotCurve', json_encode($this->getSpotCurveLive()));
             $this->WriteAttributeString('FcLoadToday', json_encode($this->getLoadForecastSlots((int)$this->getLfcInstance(), 0)));
         } catch (Throwable $e) {
             $this->WriteAttributeString('FcPvToday', '[]');
@@ -4638,6 +4676,98 @@ class EMS extends IPSModule
         return $out;
     }
 
+    /** Anlagen-Angaben aus dem Panel "Anlage" (Grundlage fuer Pflichten und GetPlantInfo). */
+    private function plantOptions(): array
+    {
+        return array(
+            'einspeiseart'        => $this->ReadPropertyInteger('ANL_Einspeiseart') === 1 ? 'voll' : 'teil',
+            'verguetungsform'     => $this->ReadPropertyInteger('ANL_Verguetungsform'),
+            'einspeisemanagement' => $this->ReadPropertyInteger('ANL_Einspeisemanagement'),
+            'iMSys'               => $this->ReadPropertyBoolean('ANL_iMSys'),
+            'steuerbox'           => $this->ReadPropertyBoolean('ANL_Steuerbox'),
+            'neuesModell'         => $this->ReadPropertyBoolean('ANL_Neues_Modell'),
+        );
+    }
+
+    /** Viertelstunden-Index eines Zeitpunkts ab Tagesbeginn (sommerzeitfest, 0..91/95/99). */
+    private function slotIndexForTs(int $ts, int $dayStartTs): int
+    {
+        return intdiv($ts - $dayStartTs, 900);
+    }
+
+    /**
+     * Boersenpreis-Kurve fuer § 51 EEG: bevorzugt das Boersenpreis-Modul
+     * (SPOT_GetPriceCurve, echter Day-Ahead-Preis), sonst Tibbers aus dem
+     * Endpreis zurueckgerechneter Spot-Anteil (components.spot, nur mit
+     * aktiver Tarifzerlegung). Dietmar 13.09.2026: fuer § 51 IMMER zuerst das
+     * Boersenpreis-Modul, auch wenn Tibber da ist. Leer = kein Signal.
+     */
+    private function getSpotCurveLive(): array
+    {
+        if (function_exists('SPOT_GetPriceCurve')) {
+            $list = @IPS_GetInstanceListByModuleID(GUID_SPOTPRICE);
+            if (!empty($list)) {
+                $c = @SPOT_GetPriceCurve($list[0]);
+                if (is_string($c)) { $c = json_decode($c, true); }
+                $out = array();
+                foreach ((array)$c as $e) {
+                    if (!is_array($e) || !isset($e['start'], $e['end'], $e['price'])) { continue; }
+                    $out[] = array('start' => (int)$e['start'], 'end' => (int)$e['end'], 'price' => (float)$e['price'],
+                        'aufloesung' => (int)($e['aufloesung'] ?? 900), 'quelle' => 'boersenpreis');
+                }
+                if (!empty($out)) { return $out; }
+            }
+        }
+        $tid = $this->getTibberGridRewardInstance();
+        if ($tid > 0) {
+            $c = @TIBBERGR_GetPriceCurve($tid);
+            if (is_string($c)) { $c = json_decode($c, true); }
+            $out = array();
+            foreach ((array)$c as $e) {
+                if (!is_array($e) || !isset($e['start'], $e['end']) || !isset($e['components']['spot'])) { continue; }
+                $out[] = array('start' => (int)$e['start'], 'end' => (int)$e['end'], 'price' => (float)$e['components']['spot'],
+                    'aufloesung' => 900, 'quelle' => 'tibber-rueckgerechnet');
+            }
+            return $out;
+        }
+        return array();
+    }
+
+    /** Boersenpreis (ct/kWh netto) zum Zeitpunkt, null wenn keine Angabe. */
+    private function spotPriceAt(array $curve, int $ts): ?array
+    {
+        foreach ($curve as $e) {
+            if ((int)($e['start'] ?? 0) <= $ts && $ts < (int)($e['end'] ?? 0)) { return $e; }
+        }
+        return null;
+    }
+
+    /**
+     * Negativpreis-Pflicht jetzt aktiv? Pflicht 'negativpreis' aus den
+     * Anlagendaten (IBN ab 25.02.2025 oder freiwilliger Wechsel, >= 2 kW,
+     * feste Verguetung) UND negativer Boersenpreis in der aktuellen
+     * Viertelstunde. Bei Stundenwerten (aufloesung 3600) liefert das
+     * Boersenpreis-Modul die Stunde bereits als vier Viertelstunden -- eine
+     * negative Stunde gilt damit vorsichtshalber ganz.
+     */
+    private function negativePriceStatus(?int $now = null): array
+    {
+        $now = $now ?? time();
+        $res = array('active' => false, 'pflicht' => false, 'price' => null, 'quelle' => '', 'aufloesung' => 0);
+        if (!$this->ReadPropertyBoolean('NETZ_Aktiv')) { return $res; }
+        $ibn = $this->getPlantIbn();
+        $codes = array_column($this->plantObligations($ibn, $this->getPlantKwp(), $this->plantOptions()), 'code');
+        $res['pflicht'] = in_array('negativpreis', $codes, true);
+        if (!$res['pflicht']) { return $res; }
+        $e = $this->spotPriceAt(json_decode($this->ReadAttributeString('FcSpotCurve'), true) ?: array(), $now);
+        if ($e === null) { return $res; }
+        $res['price'] = (float)$e['price'];
+        $res['quelle'] = (string)($e['quelle'] ?? '');
+        $res['aufloesung'] = (int)($e['aufloesung'] ?? 900);
+        $res['active'] = ($res['price'] < 0.0);
+        return $res;
+    }
+
     /**
      * Anlagendaten fuer andere Module (Dashboard, Szenariorechner) -- rein
      * lesend, Vertrag 'plantinfo' 1.0. Kein Modul setzt EMS voraus; Konsumenten
@@ -4648,14 +4778,7 @@ class EMS extends IPSModule
         $ibn = $this->getPlantIbn();
         $kwp = $this->getPlantKwp();
         $tarif = $this->getFeedTariffEur();
-        $o = array(
-            'einspeiseart'        => $this->ReadPropertyInteger('ANL_Einspeiseart') === 1 ? 'voll' : 'teil',
-            'verguetungsform'     => $this->ReadPropertyInteger('ANL_Verguetungsform'),
-            'einspeisemanagement' => $this->ReadPropertyInteger('ANL_Einspeisemanagement'),
-            'iMSys'               => $this->ReadPropertyBoolean('ANL_iMSys'),
-            'steuerbox'           => $this->ReadPropertyBoolean('ANL_Steuerbox'),
-            'neuesModell'         => $this->ReadPropertyBoolean('ANL_Neues_Modell'),
-        );
+        $o = $this->plantOptions();
         $em = array(0 => 'unbekannt', 1 => '70prozent', 2 => 'rundsteuerempfaenger', 3 => 'steuerbox', 4 => 'keines');
         return array(
             'contractVersion'     => '1.1',           // 1.1: speicherKwh/speicherKwhQuelle (Szenariorechner, 13.09.2026)
@@ -4777,6 +4900,12 @@ class EMS extends IPSModule
         $isAuto = ($d['op_mode'] === EMS_OP_AUTO) && empty($d['gw_enable'])
             && in_array($d['source'] ?? 'ems', array('ems', 'tagesplan'), true);
         if (!$isAuto) { return $d; }
+        // Negativer Boersenpreis mit Pflicht: Ueberschuss soll in die Batterie,
+        // nicht ins Netz -- B1 wuerde genau das Gegenteil tun.
+        if ($this->negativePriceStatus()['active']) {
+            $d['reason'] = ($d['reason'] ?? '') . ' | 🌞 Mittagsspitze pausiert: negativer Börsenpreis, Überschuss geht in die Batterie';
+            return $d;
+        }
 
         $was = $this->ReadAttributeBoolean('B1Active');
         $r = $this->b1Evaluate(array(

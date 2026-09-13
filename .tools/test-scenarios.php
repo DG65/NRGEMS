@@ -782,5 +782,75 @@ check('nackt: Standardwert 10 kWh erscheint als "einstellung", nicht als eingetr
 check('GetPlantInfo nackt (nichts angegeben): kein Fehler, leere Felder', ($n = call(freshEms(), 'GetPlantInfo'))['inbetriebnahme'] === '' && $n['eegFassung'] === '' && $n['kwpQuelle'] === 'fehlt' && $n['pflichten'] === [], json_encode($n));
 
 // ===========================================================================
+echo "\n18) Boersenpreis -- Sommerzeit, Negativpreis-Pflicht (§ 51 EEG), Einspeisegrenze\n";
+$tzAlt = date_default_timezone_get(); date_default_timezone_set('Europe/Berlin');
+$ems = freshEms();
+$d25 = mktime(0, 0, 0, 10, 25, 2026); $d26 = mktime(0, 0, 0, 10, 26, 2026);
+check('25.10.2026 hat 25 Stunden = 100 Viertelstunden', intdiv($d26 - $d25, 900) === 100, (string)intdiv($d26 - $d25, 900));
+check('Zeitumstellung: erste 02:00 (Sommerzeit) -> Slot 8, zweite 02:00 (Winterzeit) -> Slot 12, kein Ueberschreiben',
+    call($ems, 'slotIndexForTs', [$d25 + 2 * 3600, $d25]) === 8 && call($ems, 'slotIndexForTs', [$d25 + 3 * 3600, $d25]) === 12);
+check('letzte Viertelstunde des 25-Stunden-Tags -> Slot 99', call($ems, 'slotIndexForTs', [$d26 - 900, $d25]) === 99);
+$d29m = mktime(0, 0, 0, 3, 29, 2026); $d30m = mktime(0, 0, 0, 3, 30, 2026);
+check('29.03.2026 hat 23 Stunden = 92 Viertelstunden, letzte -> Slot 91', intdiv($d30m - $d29m, 900) === 92 && call($ems, 'slotIndexForTs', [$d30m - 900, $d29m]) === 91);
+date_default_timezone_set($tzAlt);
+
+$now = time();
+$negKurve = [['start' => $now - 600, 'end' => $now + 300, 'price' => -1.5, 'aufloesung' => 900, 'quelle' => 'boersenpreis']];
+$posKurve = [['start' => $now - 600, 'end' => $now + 300, 'price' => 4.2, 'aufloesung' => 900, 'quelle' => 'boersenpreis']];
+check('spotPriceAt: Eintrag zur aktuellen Viertelstunde', (call($ems, 'spotPriceAt', [$negKurve, $now])['price'] ?? null) === -1.5);
+check('spotPriceAt: keine Angabe -> null', call($ems, 'spotPriceAt', [[], $now]) === null);
+
+$neu = function () { prop('ANL_IBN_Datum', '01.06.2025'); prop('ANL_kWp_Manuell', 9.0); };
+$ems = freshEms(); $neu(); attr('FcSpotCurve', json_encode($negKurve));
+$st = call($ems, 'negativePriceStatus');
+check('Neuanlage 06/2025 + negativer Boersenpreis: Pflicht und aktiv', $st['pflicht'] === true && $st['active'] === true && $st['price'] === -1.5, json_encode($st));
+attr('FcSpotCurve', json_encode($posKurve));
+check('Neuanlage, Preis positiv: nicht aktiv', call($ems, 'negativePriceStatus')['active'] === false);
+attr('FcSpotCurve', '[]');
+check('Neuanlage, keine Boersenpreise: nicht aktiv (kein Signal, kein Fehler)', call($ems, 'negativePriceStatus')['active'] === false);
+$ems = freshEms(); prop('ANL_IBN_Datum', '24.10.2012'); prop('ANL_kWp_Manuell', 9.18); attr('FcSpotCurve', json_encode($negKurve));
+check('Dietmars Bestandsanlage 2012 + negativer Preis: keine Pflicht, nicht aktiv', call($ems, 'negativePriceStatus')['pflicht'] === false && call($ems, 'negativePriceStatus')['active'] === false);
+$ems = freshEms(); $neu(); attr('FcSpotCurve', json_encode($negKurve)); prop('NETZ_Aktiv', false);
+check('netzdienliche Bausteine aus: nicht aktiv', call($ems, 'negativePriceStatus')['active'] === false);
+$ems = freshEms(); attr('FcSpotCurve', json_encode($negKurve));
+check('nackt (keine Anlagendaten): keine Pflicht', call($ems, 'negativePriceStatus')['pflicht'] === false);
+
+echo "\n   Einspeisegrenze (Netzbetreiber-Vorgabe + Negativpreis-Pflicht)\n";
+$GLOBALS['INSTMOD'][IHUB_IID] = GUID_INVERTERHUB;
+$wrEms = fn() => attr('PartnerCache', json_encode(['inverterhub' => [['instanceID' => IHUB_IID, 'contractVersion' => '1.3', 'controlAuthority' => 'ems', 'controllable' => true]]]));
+$acts = fn() => array_map(fn($x) => $x[1] . '=' . var_export($x[2], true), $GLOBALS['ACTIONS']);
+$ems = freshEms(); $neu(); $wrEms(); prop('EMS_Active', true); attr('FcSpotCurve', json_encode($negKurve));
+$GLOBALS['ACTIONS'] = []; call($ems, 'applySteuerboxFeedInLimit');
+check('negativer Preis + Pflicht + EMS aktiv: Einspeisegrenze 0 W', $acts() === ['ctl_export_enable=true', 'ctl_export_limit=0'], json_encode($acts()));
+attr('FcSpotCurve', json_encode($posKurve)); $GLOBALS['ACTIONS'] = []; call($ems, 'applySteuerboxFeedInLimit');
+check('Preis wieder positiv: Begrenzung aufgehoben', $acts() === ['ctl_export_enable=false'], json_encode($acts()));
+$GLOBALS['ACTIONS'] = []; call($ems, 'applySteuerboxFeedInLimit');
+check('danach nichts mehr schreiben (nicht von uns gesetzt)', $acts() === [], json_encode($acts()));
+$GLOBALS['INSTMOD'][300] = GUID_STEUERBOXHUB; $GLOBALS['SBH_STATE'] = ['feedInDimmActive' => true, 'feedInLimitPercent' => 60];
+attr('FcSpotCurve', json_encode($negKurve)); $GLOBALS['ACTIONS'] = []; call($ems, 'applySteuerboxFeedInLimit');
+check('Netzbetreiber 60 % UND negativer Preis: der strengere Wert (0 W) gilt', end($GLOBALS['ACTIONS'])[1] === 'ctl_export_limit' && end($GLOBALS['ACTIONS'])[2] === 0, json_encode($acts()));
+attr('FcSpotCurve', json_encode($posKurve)); $GLOBALS['ACTIONS'] = []; call($ems, 'applySteuerboxFeedInLimit');
+$soll = (int)round($ems->ReadPropertyInteger('EMS_Max_Power_W') * 0.6);
+check('nur Netzbetreiber 60 %: Grenze 60 % von EMS_Max_Power_W', end($GLOBALS['ACTIONS'])[2] === $soll, json_encode($acts()));
+unset($GLOBALS['INSTMOD'][300]); $GLOBALS['SBH_STATE'] = null;
+$ems = freshEms(); $neu(); $wrEms(); prop('EMS_Active', false); attr('FcSpotCurve', json_encode($negKurve));
+$GLOBALS['ACTIONS'] = []; call($ems, 'applySteuerboxFeedInLimit');
+check('EMS aus: Negativpreis-Pflicht setzt KEINE Grenze (nur Netzbetreiber gilt immer)', $acts() === [], json_encode($acts()));
+$ems = freshEms(); $neu(); prop('EMS_Active', true); attr('FcSpotCurve', json_encode($negKurve));
+attr('PartnerCache', json_encode(['inverterhub' => [['instanceID' => IHUB_IID, 'controlAuthority' => 'external', 'controllable' => true]]]));
+$GLOBALS['ACTIONS'] = []; call($ems, 'applySteuerboxFeedInLimit');
+check('fremde Steuerhoheit (z. B. Sunny Home Manager): keine Grenze von EMS', $acts() === [], json_encode($acts()));
+
+echo "\n   B1 bei negativem Preis\n";
+$ems = freshEms(); $neu(); prop('EMS_Active', true); attr('FcSpotCurve', json_encode($negKurve));
+attr('PartnerCache', json_encode(['inverterhub' => [['instanceID' => IHUB_IID, 'contractVersion' => '1.3', 'controlAuthority' => 'ems', 'controllable' => true,
+    'gridServiceCapabilities' => ['chargeInhibit', 'gridCharge', 'dischargeToGrid', 'release']]]]));
+attr('FcPvToday', json_encode(array_fill(0, 96, 50000.0))); prop('NETZ_B1_Latest_Hour', 24); prop('BAT_Capacity_kWh', 40.0);
+$autoN = ['op_mode' => EMS_OP_AUTO, 'gw_mode' => GW_MODE_AUTO, 'gw_power_w' => 0, 'gw_enable' => false, 'wb1_enable' => false, 'wb2_enable' => false, 'reason' => 'Automatik', 'source' => 'ems'];
+$d = call($ems, 'applyGridServiceB1', [$autoN, state(['bat_soc' => 50.0, 'pv_total_w' => 5000.0, 'house_pow_w' => 400.0])]);
+check('negativer Preis + Pflicht: B1 sperrt NICHT (Ueberschuss soll in die Batterie), Grund sichtbar', empty($d['svc']) && strpos($d['reason'], 'Mittagsspitze pausiert') !== false, $d['reason']);
+unset($GLOBALS['INSTMOD'][IHUB_IID]);
+
+// ===========================================================================
 echo "\n" . ($fails === 0 ? "ALLE SZENARIEN BESTANDEN" : "$fails SZENARIO(S) VERLETZT") . "\n\n";
 exit($fails === 0 ? 0 : 1);

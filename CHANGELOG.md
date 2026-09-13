@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.35.0 (2026-09-13)
+- **Neu: Negativpreis-Pflicht (§ 51 EEG, Solarspitzengesetz).** Meldet
+  `GetPlantInfo` die Pflicht `negativpreis` (Inbetriebnahme ab 25.02.2025
+  oder freiwilliger Wechsel, ab 2 kW, feste Vergütung) und ist der
+  Day-Ahead-Börsenpreis der aktuellen Viertelstunde negativ, setzt EMS die
+  Einspeisegrenze des Wechselrichters auf 0 W.
+  - Die WR-Automatik lädt den Überschuss zuerst in die Batterie, abgeregelt
+    wird nur der Rest.
+  - B1 („Mittagsspitze“) pausiert in diesen Viertelstunden, sonst würde er
+    das Laden sperren und genau diesen Überschuss ins Netz schicken.
+  - Nur bei aktivem EMS und Steuerhoheit `ems`. Grund und Preis stehen im
+    Entscheidungsgrund.
+- **Börsenpreis-Quelle:** das neue Modul „NRG-Stack Börsenpreis“
+  (`SPOT_GetPriceCurve` 1.0), einmal je Viertelstunde zwischengespeichert.
+  Fehlt es, dient Tibbers aus dem Endpreis zurückgerechneter Spot-Anteil als
+  Rückfall. Der Börsenpreis wird **nie** als Bezugspreis verwendet;
+  Arbitrage und Tagesplan vergleichen weiter nur den echten Endkundenpreis
+  (Dietmar 13.09.2026).
+- **Gemeinsame Einspeisegrenze:** Die Netzbetreiber-Vorgabe (SteuerboxHub)
+  und die Negativpreis-Pflicht nutzen dieselbe Einspeisegrenze, es gilt der
+  strengere Wert. Die Netzbetreiber-Vorgabe gilt wie bisher auch bei
+  ausgeschaltetem EMS. Die Grenze wird nur noch bei einer Änderung
+  protokolliert, nicht mehr in jedem Zyklus.
+- **Behoben: Sommerzeit in `parsePT15M()`** (Fund der Börsenpreis-Sitzung).
+  Die Viertelstunde wird jetzt aus dem Zeitabstand zum Tagesbeginn
+  berechnet statt aus der Uhrzeit. Am 25-Stunden-Tag (25.10.2026)
+  überschrieb bisher die zweite Stunde von 2 bis 3 Uhr die erste, am
+  23-Stunden-Tag fehlten Viertelstunden. Tageslänge 92/96/100 Slots.
+- **Prüfstand:** Block 18 mit 21 Fällen (Zeitumstellung im Herbst und
+  Frühjahr, Negativpreis-Pflicht Neuanlage/Bestand/aus/nackt,
+  Einspeisegrenze allein und mit Netzbetreiber, EMS aus, fremde
+  Steuerhoheit, B1-Pause).
+
 ## 0.34.2 (2026-09-13)
 - **`GetPlantInfo` Vertrag 1.1 (additiv):** neue Felder `speicherKwh` und
   `speicherKwhQuelle` (wechselrichter/einstellung/fehlt). Vorrang hat die vom
