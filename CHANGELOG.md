@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.33.1 (2026-09-13)
+- **Lokale Hilfe als Frage statt „?“:** Die vier Hilfe-Knöpfe im Formular
+  zeigen jetzt die Frage selbst, die sie beantworten, z. B. „Wann brauche ich
+  die Lastverteilung?“, statt eines einzelnen Fragezeichens. Breite 480 px.
+  Das entspricht der Verbund-Formularkonvention vom 01.09.2026, die EMS
+  bisher noch nicht umgesetzt hatte. Nur Anzeige.
+
 ## 0.33.0 (2026-09-13)
 - **Neu: Netzdienlicher Baustein B1 „Mittagsspitze aufnehmen“.** Reicht der
   vorhergesagte PV-Überschuss des restlichen Tages sicher (Standard +30 %),

@@ -184,10 +184,10 @@
                         },
                         {
                             "type": "PopupButton",
-                            "caption": "?",
-                            "width": "70px",
+                            "caption": "Wie funktioniert der Export bei vollem Akku?",
+                            "width": "480px",
                             "popup": {
-                                "caption": "Wie funktioniert das?",
+                                "caption": "Wie funktioniert der Export bei vollem Akku?",
                                 "items": [
                                     {
                                         "type": "Label",
@@ -268,10 +268,10 @@
                         },
                         {
                             "type": "PopupButton",
-                            "caption": "?",
-                            "width": "70px",
+                            "caption": "Wann brauche ich die Netzmesspunkte?",
+                            "width": "480px",
                             "popup": {
-                                "caption": "Netzmesspunkte -- wann brauche ich das?",
+                                "caption": "Wann brauche ich die Netzmesspunkte?",
                                 "items": [
                                     {
                                         "type": "Label",
@@ -753,10 +753,10 @@
                         },
                         {
                             "type": "PopupButton",
-                            "caption": "?",
-                            "width": "70px",
+                            "caption": "Wann brauche ich die Lastverteilung?",
+                            "width": "480px",
                             "popup": {
-                                "caption": "Lastverteilung -- wann brauche ich das?",
+                                "caption": "Wann brauche ich die Lastverteilung?",
                                 "items": [
                                     {
                                         "type": "Label",
@@ -1053,10 +1053,10 @@
                         },
                         {
                             "type": "PopupButton",
-                            "caption": "?",
-                            "width": "70px",
+                            "caption": "Was macht die grünste Ladezeit?",
+                            "width": "480px",
                             "popup": {
-                                "caption": "Grünste Ladezeit -- was macht das?",
+                                "caption": "Was macht die grünste Ladezeit?",
                                 "items": [
                                     {
                                         "type": "Label",
