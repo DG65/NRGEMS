@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.42.1 (2026-09-13)
+- **Behoben (vorbeugend): lange Verläufe aus dem Archiv.** Bezugspreis- und
+  Einstandspreis-Historie lesen das Archiv jetzt tageweise. Symcon bricht
+  eine Abfrage über mehr als etwa 50 000 Werte ab und liefert dann gar
+  nichts. Der Einstandspreis kann beim Laden alle 30 Sekunden schreiben,
+  deshalb hätte ein Abruf über viele Tage still leer bleiben können.
+  Gefunden hat das Muster das Dashboard an der Batterie-Leistung.
+
 ## 0.42.0 (2026-09-13)
 - **Neu: Sicherheitsnetz gegen zwei Regler an einer Wallbox.** Sind zwei
   Anbindungen desselben Geräts über `duplicateOf` verknüpft und dürfen

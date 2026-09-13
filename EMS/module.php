@@ -5113,8 +5113,12 @@ class EMS extends IPSModule
         $out = array();
         $seed = @AC_GetLoggedValues($arch, $varId, $from - 40 * 86400, $from - 1, 1);
         if (is_array($seed) && !empty($seed)) { $out[] = array((int)$seed[0]['TimeStamp'], (float)$seed[0]['Value']); }
-        $rows = @AC_GetLoggedValues($arch, $varId, $from, $to, 0);
-        if (is_array($rows)) {
+        // Tageweise: Symcon bricht Archivabfragen ueber ~50000 Werte ab und liefert
+        // dann false statt Daten (Dashboard-Befund 13.09.2026, Batterie-Leistung
+        // ueber 7 Tage). Der Einstandspreis kann beim Laden alle 30 s schreiben.
+        for ($d = $from; $d < $to; $d += 86400) {
+            $rows = @AC_GetLoggedValues($arch, $varId, $d, min($to, $d + 86399), 0);
+            if (!is_array($rows)) { continue; }
             usort($rows, function ($a, $b) { return $a['TimeStamp'] <=> $b['TimeStamp']; });
             foreach ($rows as $r) { $out[] = array((int)$r['TimeStamp'], (float)$r['Value']); }
         }
