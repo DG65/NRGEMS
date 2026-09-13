@@ -1076,6 +1076,16 @@ check('Situationsanzeige: Wallbox schaltbar (A), obwohl die zählende Quelle fre
 attr('PartnerCache', json_encode(['chargerhub' => [array_merge($dup600ctl, ['managedBy' => 'other'])], 'ocpphub' => [$o701ext]]));
 check('beide fremdgesteuert: EMS schaltet nicht (kein Schreibrecht)', call($ems, 'getControlEntry', [1]) === null);
 
+echo "\n   Sicherheitsnetz: zwei Regler an einer Wallbox\n";
+attr('PartnerCache', json_encode(['chargerhub' => [$dup600ctl], 'ocpphub' => [$o701ext]]));
+check('Dietmars WB1 (OCPP „Anderer“, ChargerHub regelt): kein Doppelregler', call($ems, 'doubleWriterPairs') === []);
+$o701both = array_merge($o701, ['managedBy' => 'none']);
+attr('PartnerCache', json_encode(['chargerhub' => [$dup600ctl], 'ocpphub' => [$o701both]]));
+check('beide Anbindungen „Niemand“: als Doppelregler erkannt', count(call($ems, 'doubleWriterPairs')) === 1, json_encode(call($ems, 'doubleWriterPairs')));
+$GLOBALS['ACTIONS'] = []; attr('LastWB1Switch', 0); call($ems, 'controlWallbox', [1, true]);
+$ziele = array_unique(array_map(fn($a) => $a[0], $GLOBALS['ACTIONS']));
+check('EMS schreibt trotzdem nur über EINE Anbindung (die zählende 701)', array_values($ziele) === [701], json_encode($GLOBALS['ACTIONS']));
+
 // ===========================================================================
 echo "\n" . ($fails === 0 ? "ALLE SZENARIEN BESTANDEN" : "$fails SZENARIO(S) VERLETZT") . "\n\n";
 exit($fails === 0 ? 0 : 1);

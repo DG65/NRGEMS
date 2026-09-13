@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.42.0 (2026-09-13)
+- **Neu: Sicherheitsnetz gegen zwei Regler an einer Wallbox.** Sind zwei
+  Anbindungen desselben Geräts über `duplicateOf` verknüpft und dürfen
+  beide schreiben („Wer regelt?“ jeweils „Niemand“ oder „EMS“), zeigt EMS
+  den Status „Zwei Regler an einer Wallbox“ (206). Außerdem schreibt EMS
+  einen einmaligen Hinweis ins Log. EMS selbst schaltet dann nur über eine
+  der beiden Anbindungen.
+- Hintergrund (mit Dietmar abgestimmt): Die Markierung als Dublette heißt
+  nur „zählt nicht mit“. Wer steuert, entscheidet allein „Wer regelt?“. Das
+  Sicherheitsnetz fängt den Fall ab, dass jemand markiert, aber nicht
+  umstellt.
+- **Prüfstand:** Block 22 um 3 Fälle ergänzt.
+
 ## 0.41.0 (2026-09-13)
 - **Zählen und Steuern getrennt.** Hat eine Wallbox zwei Anbindungen (z. B.
   ChargerHub und OCPPHub), misst EMS über die zählende. Geschaltet wird über

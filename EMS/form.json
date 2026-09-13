@@ -1536,6 +1536,7 @@
     ],
     "status": [
         {"code": 200, "icon": "error", "caption": "Rückfall: wiederholte Kommunikationsfehler, Wechselrichter läuft in seiner eigenen Regelung"},
-        {"code": 205, "icon": "error", "caption": "Wallbox-Quelle prüfen: Wallboxen über ChargerHub und OCPPHub gefunden. EMS zählt vorerst nur ChargerHub. Bitte im Panel „🚗 Wallboxen“ die Quelle wählen."}
+        {"code": 205, "icon": "error", "caption": "Wallbox-Quelle prüfen: Wallboxen über ChargerHub und OCPPHub gefunden. EMS zählt vorerst nur ChargerHub. Bitte im Panel „🚗 Wallboxen“ die Quelle wählen."},
+        {"code": 206, "icon": "error", "caption": "Zwei Regler an einer Wallbox: Zwei Anbindungen desselben Geräts dürfen beide schreiben. EMS schaltet nur über eine. Bitte bei einer der beiden „Wer regelt?“ auf „Anderer“ stellen."}
     ]
 }

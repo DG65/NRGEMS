@@ -454,6 +454,7 @@ class EMS extends IPSModule
         $this->RegisterAttributeString('FcAccuracy',         '');    // PVF_GetAccuracy (Vertrag 1.x), leer = nicht verfuegbar
         $this->RegisterAttributeString('FcSpotCurve',        '[]');  // Boersenpreis-Kurve [start,end,price ct netto,aufloesung,quelle]
         $this->RegisterAttributeString('FeedInLimitState',   '');    // zuletzt gesetzte Einspeisegrenze "W|Grund" (nur fuer Aenderungs-Log)
+        $this->RegisterAttributeBoolean('WbDoubleWriterWarned', false); // Hinweis "zwei Regler an einer Wallbox" nur einmal je Auftreten
         $this->RegisterAttributeBoolean('WbSourceWarned',    false); // Hinweis "Wallbox-Quelle pruefen" nur einmal je Auftreten loggen
         $this->RegisterAttributeString('BatCostState',       '{}');  // Einstandspreis-Buchhaltung {ts, stock kWh, pool EUR, opp EUR, grid kWh, charged kWh, since}
         $this->RegisterAttributeString('BezFestHistorie',    '[]');  // Festpreis-Aenderungen [[ab-Zeitpunkt, ct], ...] -- alte Sitzungen behalten ihren damaligen Preis
@@ -1033,7 +1034,8 @@ class EMS extends IPSModule
             $this->WriteAttributeInteger('ConsecutiveErrors', 0);
             // 205 statt 102, solange dieselben Wallboxen ueber ChargerHub und
             // OCPPHub erscheinen und keine Quelle gewaehlt ist (Regel 9f)
-            $this->SetStatus($this->chargerSourceStatus()['warn'] ? 205 : 102);
+            // 206 vor 205: zwei Regler an einer Wallbox ist das groessere Risiko
+            $this->SetStatus(!empty($this->doubleWriterPairs()) ? 206 : ($this->chargerSourceStatus()['warn'] ? 205 : 102));
 
         } catch (Exception $e) {
             $errors    = $this->ReadAttributeInteger('ConsecutiveErrors') + 1;
@@ -1125,6 +1127,12 @@ class EMS extends IPSModule
             $this->emsLog(EMS_LOG_BASIC, '⚠️ Wallboxen über ChargerHub UND OCPPHub gefunden -- vermutlich dieselben Geräte. EMS zählt vorerst nur ChargerHub. Bitte im Panel „🚗 Wallboxen“ die Wallbox-Quelle wählen.');
         }
         $this->WriteAttributeBoolean('WbSourceWarned', $wbWarn);
+        $pairs = $this->doubleWriterPairs();
+        if (!empty($pairs) && !$this->ReadAttributeBoolean('WbDoubleWriterWarned')) {
+            $this->emsLog(EMS_LOG_BASIC, '⚠️ Zwei Regler an einer Wallbox: ' . implode(', ', $pairs)
+                . ' -- beide Anbindungen dürfen schreiben. EMS schaltet nur über eine. Bitte bei einer „Wer regelt?“ auf „Anderer“ stellen.');
+        }
+        $this->WriteAttributeBoolean('WbDoubleWriterWarned', !empty($pairs));
 
         $summary = sprintf(
             'InverterHub=%d MeterHub=%d ChargerHub=%d OCPPHub=%d HeishaMon=%d Tessie=%d Tibber=%d',
@@ -1860,6 +1868,32 @@ class EMS extends IPSModule
         $reviewed = count($this->withoutDuplicates(array_merge($c, $o))) < count($c) + count($o);
         if ($hasC && $hasO && !$reviewed) { return array('chargerhub' => true, 'ocpphub' => false, 'warn' => true); }
         return array('chargerhub' => $hasC, 'ocpphub' => $hasO, 'warn' => false);
+    }
+
+    /**
+     * Sicherheitsnetz (Dietmar 13.09.2026): Zwei ueber duplicateOf verknuepfte
+     * Anbindungen desselben Geraets, die BEIDE Schreibrecht haben (managedBy
+     * none/ems), waeren zwei Regler an einer Wallbox (Hardlock WB2 01.09.2026).
+     * EMS schreibt dann nur ueber eine (getControlEntry) und warnt (Status 206).
+     * Liefert die Beschriftungen der betroffenen Paare.
+     */
+    private function doubleWriterPairs(): array
+    {
+        $p = $this->GetPartners();
+        $writable = function ($e) { return in_array($e['managedBy'] ?? 'none', array('none', 'ems'), true); };
+        $pairs = array();
+        foreach (array('chargerhub', 'ocpphub') as $src) {
+            foreach ((array)($p[$src] ?? array()) as $e) {
+                $d = $e['duplicateOf'] ?? null;
+                if (!is_array($d) || !$writable($e)) { continue; }
+                foreach ((array)($p[(string)($d['source'] ?? '')] ?? array()) as $t) {
+                    if ((int)($t['instanceID'] ?? 0) === (int)($d['instanceID'] ?? 0) && $writable($t)) {
+                        $pairs[] = ($e['label'] ?? ('#' . $e['instanceID'])) . ' / ' . ($t['label'] ?? ('#' . $t['instanceID']));
+                    }
+                }
+            }
+        }
+        return $pairs;
     }
 
     /** Eintraege ohne duplicateOf (= fuer dieses Geraet zaehlt eine andere Quelle). */
