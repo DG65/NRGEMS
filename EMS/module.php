@@ -1839,8 +1839,9 @@ class EMS extends IPSModule
             if (!is_array($data)) { continue; }
             foreach ($data as $entry) {
                 if (!is_array($entry)) { continue; }
-                // einzeln deaktivierter Ladepunkt (Status 104 oder active=false) zaehlt nicht
-                if (array_key_exists('active', $entry) && $entry['active'] === false) { continue; }
+                // einzeln deaktivierter Ladepunkt (Status 104) zaehlt nicht. NICHT
+                // `active` auswerten: bei OCPPHub heisst active=false "extern geregelt"
+                // (managedBy other) -- eine fremdgesteuerte Wallbox wird weiter gemessen.
                 $lp = (int)($entry['instanceID'] ?? 0);
                 if ($lp > 0 && (int)(@IPS_GetInstance($lp)['InstanceStatus'] ?? 0) === 104) { continue; }
                 $entry['instanceID'] = (int)($entry['instanceID'] ?? $sid);

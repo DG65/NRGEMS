@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.42.4 (2026-09-13)
+- **Behoben: Extern geregelte OCPP-Wallbox wurde nicht mehr gemessen.**
+  0.42.3 hat Ladepunkte mit `active: false` übersprungen. Bei OCPPHub heißt
+  das aber „von außen geregelt“ (managedBy „other“) und nicht
+  „abgeschaltet“. Eine solche Wallbox muss EMS weiter messen. Abgeschaltet
+  ist ein Ladepunkt nur noch bei Status 104 („Diesen Ladepunkt
+  deaktivieren“).
+- **Prüfstand:** Fall angepasst (extern geregelt = wird gemessen).
+
 ## 0.42.3 (2026-09-13)
 - **Einzeln deaktivierter OCPP-Ladepunkt zählt nicht.** EMS überspringt
   OCPPHub-Ladepunkte, die ausgeschaltet sind (Status 104) oder im Vertrag
