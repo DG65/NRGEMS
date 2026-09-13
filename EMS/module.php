@@ -239,6 +239,13 @@ class EMS extends IPSModule
         $this->RegisterPropertyInteger('EXPOVL_Threshold_W', 100);
         $this->RegisterPropertyInteger('EXPOVL_Seconds',     90);
         $this->RegisterPropertyInteger('EXPOVL_Hold_Min',    15);
+        // Netzdienliche Bausteine (Netzdienlich-Konzept 12.09.2026, Dietmar:
+        // Standard EIN). Greifen nur, wenn der WR die Faehigkeit meldet
+        // (InverterHub-Vertrag 1.3) -- sonst wirkungslos, kein Fehler.
+        $this->RegisterPropertyBoolean('NETZ_Aktiv',          true);
+        $this->RegisterPropertyInteger('NETZ_B1_Margin_W',    300); // gemessene PV mindestens so weit ueber der Hauslast
+        $this->RegisterPropertyInteger('NETZ_B1_Latest_Hour', 13);  // spaetester Freigabezeitpunkt (volle Stunde)
+        $this->RegisterPropertyInteger('NETZ_B1_Safety_Pct',  130); // Restueberschuss >= Platzbedarf x Faktor
         for ($i = 1; $i <= 2; $i++) {
             $this->RegisterPropertyInteger('VAR_BAT' . $i . '_SOC',            0);
             $this->RegisterPropertyInteger('VAR_BAT' . $i . '_Power',          0);
@@ -406,6 +413,11 @@ class EMS extends IPSModule
         $this->RegisterAttributeInteger('ExpOvlHoldUntil',   0);
         $this->RegisterAttributeInteger('ExpOvlLastTs',      0); // letzter Messzeitpunkt fuer die Tageszaehler
         $this->RegisterAttributeString('ExpOvlDay',          '');
+        $this->RegisterAttributeBoolean('B1Active',          false); // B1 hat per svc_charge_inhibit das Laden gesperrt
+        $this->RegisterAttributeInteger('B1LastSwitch',      0);
+        $this->RegisterAttributeString('FcCacheKey',         '');    // Datum|Slot der letzten Prognose-Auffrischung
+        $this->RegisterAttributeString('FcPvToday',          '[]');  // PV-Prognose heute, 96 Slots W
+        $this->RegisterAttributeString('FcLoadToday',        '[]');  // Lastprognose heute, 96 Slots W (null = fehlt)
         $this->RegisterAttributeInteger('LastDiscoveryTs',   0);
 
         // ── Tagesplan (siehe BuildDayPlan()/ensureDayPlanEvent()) ────
@@ -952,7 +964,9 @@ class EMS extends IPSModule
         try {
             $state      = $this->readState();
             $this->updateStatusVars($state);
+            $this->refreshForecastCache();
             $decision = $this->optimize($state);
+            $decision = $this->applyGridServiceB1($decision, $state);
             $decision = $this->applyPlausibilityGuard($decision, $state);
             $decision = $this->applyExportOverlapGuard($decision, $state);
             $this->applyDecision($decision, $state);
@@ -4381,6 +4395,125 @@ class EMS extends IPSModule
         return $this->expOvlFallback($d, sprintf('ausgeloest, Rueckfall fuer %d min', $holdMin));
     }
 
+    /**
+     * Prognosen fuer die netzdienlichen Bausteine einmal je Viertelstunde
+     * zwischenspeichern. PVF_GetForecast kann einen Wetter-API-Abruf
+     * ausloesen und darf nicht jeden 30-s-Zyklus gepollt werden. Bewusst
+     * unabhaengig von BuildDayPlan(), das ohne Tibber gar nicht bis zur
+     * Prognose kommt -- B1 soll auch ohne dynamischen Tarif laufen.
+     */
+    private function refreshForecastCache()
+    {
+        $key = date('Y-m-d') . '|' . (int)((time() - strtotime('today')) / 900);
+        if ($this->ReadAttributeString('FcCacheKey') === $key) { return; }
+        $this->WriteAttributeString('FcCacheKey', $key);
+        try {
+            $pv = array_slice(array_values((array)$this->getPvfSlotsWatt()), 0, 96);
+            $this->WriteAttributeString('FcPvToday', json_encode($pv));
+            $this->WriteAttributeString('FcLoadToday', json_encode($this->getLoadForecastSlots((int)$this->getLfcInstance(), 0)));
+        } catch (Throwable $e) {
+            $this->WriteAttributeString('FcPvToday', '[]');
+            $this->emsLog(EMS_LOG_BASIC, 'Prognose-Zwischenspeicher: Fehler, netzdienliche Bausteine setzen aus: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * B1 -- Mittagsspitze aufnehmen ("Platz freihalten"), Netzdienlich-
+     * Konzept §5. Reine Entscheidung ohne Seiteneffekte (Pruefstand).
+     *
+     * Laden gesperrt, wenn ALLES zutrifft:
+     * - PV-Prognose fuer heute vorhanden,
+     * - vor dem spaetesten Freigabezeitpunkt, Batterie nicht voll,
+     * - gemessene PV mindestens NETZ_B1_Margin_W ueber der Hauslast (bei
+     *   laufendem B1 die halbe Marge, gegen Pendeln),
+     * - der prognostizierte PV-Ueberschuss AB DEM NAECHSTEN Slot reicht,
+     *   um die Batterie trotzdem bis 100 % zu fuellen, x Sicherheitsfaktor.
+     * 'safety' => true heisst: sofort freigeben, keine Wechselsperre
+     * (Hauslast nicht mehr sicher aus PV gedeckt).
+     */
+    private function b1Evaluate(array $in): array
+    {
+        $pv = array_values((array)($in['pv'] ?? array()));
+        if (count($pv) < 96 || array_sum(array_map('floatval', $pv)) <= 0.0) {
+            return array('active' => false, 'reason' => 'keine PV-Prognose fuer heute');
+        }
+        $nowSlot = (int)$in['nowSlot'];
+        if ($nowSlot >= (int)$in['latestSlot']) {
+            return array('active' => false, 'reason' => sprintf('spaetester Freigabezeitpunkt %02d:%02d erreicht', intdiv((int)$in['latestSlot'], 4), ((int)$in['latestSlot'] % 4) * 15));
+        }
+        $capKwh = (float)$in['capKwh'];
+        if ($capKwh <= 0.0) {
+            return array('active' => false, 'reason' => 'Batteriekapazitaet unbekannt');
+        }
+        $soc = (float)$in['soc'];
+        if ($soc >= 99.0) {
+            return array('active' => false, 'reason' => 'Batterie voll');
+        }
+        $margin = !empty($in['wasActive']) ? (float)$in['marginW'] / 2.0 : (float)$in['marginW'];
+        $surplusNowW = (float)$in['pvW'] - (float)$in['houseW'];
+        if ($surplusNowW < $margin) {
+            return array('active' => false, 'safety' => true,
+                'reason' => sprintf('PV %.0f W deckt die Hauslast %.0f W nicht sicher (Marge %.0f W)', $in['pvW'], $in['houseW'], $margin));
+        }
+        $needKwh = $capKwh * (100.0 - $soc) / 100.0;
+        $load = array_values((array)($in['load'] ?? array()));
+        $restKwh = 0.0;
+        for ($i = $nowSlot + 1; $i < 96; $i++) {
+            $l = (isset($load[$i]) && $load[$i] !== null) ? (float)$load[$i] : (float)$in['avgHouseW'];
+            $restKwh += max(0.0, (float)$pv[$i] - $l) * 0.25 / 1000.0;
+        }
+        $reqKwh = $needKwh * (float)$in['safetyPct'] / 100.0;
+        if ($restKwh < $reqKwh) {
+            return array('active' => false,
+                'reason' => sprintf('Restueberschuss heute %.1f kWh reicht nicht fuer %.1f kWh Platz (+%d %% Sicherheit)', $restKwh, $needKwh, (int)$in['safetyPct'] - 100));
+        }
+        return array('active' => true,
+            'reason' => sprintf('Restueberschuss heute %.1f kWh >= %.1f kWh Platz (+%d %%), PV %.0f W > Haus %.0f W', $restKwh, $needKwh, (int)$in['safetyPct'] - 100, $in['pvW'], $in['houseW']));
+    }
+
+    /**
+     * B1 in die laufende Entscheidung einhaengen. Prioritaet laut Konzept §4:
+     * nur dort, wo EMS ohnehin die WR-Automatik fahren wuerde ("Preis
+     * sticht", Netzbetreiber/Grid Rewards/Boost/Tagesplan-Sollwerte haben
+     * Vorrang). Setzt $d['svc'] -- applyDecision() schreibt dann ueber svc_*.
+     */
+    private function applyGridServiceB1($d, $s)
+    {
+        if (!$this->ReadPropertyBoolean('NETZ_Aktiv') || empty($s['bat_active'])) { return $d; }
+        if (!$this->hasGridService('chargeInhibit') || !$this->hasGridService('release')) { return $d; }
+        $isAuto = ($d['op_mode'] === EMS_OP_AUTO) && empty($d['gw_enable'])
+            && in_array($d['source'] ?? 'ems', array('ems', 'tagesplan'), true);
+        if (!$isAuto) { return $d; }
+
+        $was = $this->ReadAttributeBoolean('B1Active');
+        $r = $this->b1Evaluate(array(
+            'nowSlot'    => (int)((time() - strtotime('today')) / 900),
+            'latestSlot' => max(0, min(24, $this->ReadPropertyInteger('NETZ_B1_Latest_Hour'))) * 4,
+            'pv'         => json_decode($this->ReadAttributeString('FcPvToday'), true) ?: array(),
+            'load'       => json_decode($this->ReadAttributeString('FcLoadToday'), true) ?: array(),
+            'avgHouseW'  => (float)$this->ReadPropertyInteger('NEG_Avg_House_Load_W'),
+            'capKwh'     => (float)$this->ReadPropertyFloat('BAT_Capacity_kWh'),
+            'soc'        => (float)$s['bat_soc'],
+            'pvW'        => (float)$s['pv_total_w'],
+            'houseW'     => (float)$s['house_pow_w'],
+            'marginW'    => (float)$this->ReadPropertyInteger('NETZ_B1_Margin_W'),
+            'safetyPct'  => max(100, $this->ReadPropertyInteger('NETZ_B1_Safety_Pct')),
+            'wasActive'  => $was,
+        ));
+        // Wechselsperre gegen Pendeln (Wolken) -- nie beim Sicherheitsausstieg
+        if ($r['active'] !== $was && empty($r['safety']) && (time() - $this->ReadAttributeInteger('B1LastSwitch')) < 120) {
+            $r['active'] = $was;
+            $r['reason'] .= ' (Wechselsperre 2 min)';
+        }
+        if (!$r['active']) {
+            return $d;
+        }
+        $d['svc']    = 'chargeInhibit';
+        $d['source'] = 'netzdienlich';
+        $d['reason'] = '🌞 Netzdienlich (Mittagsspitze): Laden gesperrt, Überschuss ins Netz -- ' . $r['reason'];
+        return $d;
+    }
+
     private function expOvlFallback($d, $note)
     {
         $original = $d['reason'] ?? '';
@@ -4415,6 +4548,48 @@ class EMS extends IPSModule
 
     private function applyDecision($d, $s)
     {
+        // Netzdienlicher Pfad (svc_*): ein Steuerpfad je Wechselrichter und
+        // Zyklus (Dietmars Ergaenzung 12.09.2026). Solange B1 aktiv ist oder
+        // gerade endet, wird ctl_* in diesem Zyklus NICHT geschrieben -- beim
+        // Verlassen erst svc_release (= Automatik, 1/0/enable=false), der
+        // ctl-Pfad uebernimmt ab dem naechsten Zyklus.
+        $b1Was = $this->ReadAttributeBoolean('B1Active');
+        if (!empty($d['svc']) || $b1Was) {
+            $svc   = $d['svc'] ?? 'release';
+            $b1Now = ($svc === 'chargeInhibit');
+            $inv   = $this->getInverterEntry();
+            $iid   = (int)($inv['instanceID'] ?? 0);
+            if ($iid > 0 && $b1Now !== $b1Was) {
+                $ident = $this->gridServiceIdent($svc);
+                if ($ident !== '') {
+                    IPS_RequestAction($iid, $ident, true);
+                    $this->emsLog(EMS_LOG_BASIC, sprintf('Netzdienlich -> %s (%s) | %s', $svc, $ident, $d['reason'] ?? ''));
+                }
+            }
+            if ($b1Now !== $b1Was) {
+                $this->WriteAttributeBoolean('B1Active', $b1Now);
+                $this->WriteAttributeInteger('B1LastSwitch', time());
+            }
+            // Ist-Zustand fuer den ctl-Pfad nachziehen (GoodWe-Abbildung:
+            // Laden sperren = 3/0/false, Freigabe = 1/0/false)
+            $this->WriteAttributeInteger('LastGoodweMode', $b1Now ? GW_MODE_DISCHARGE : GW_MODE_AUTO);
+            $this->WriteAttributeBoolean('LastGoodweEnable', false);
+            $this->WriteAttributeInteger('LastDecision', time());
+            if ($s['wb_active']) {
+                $this->enforceGridImportBudget($d, $s);
+                $this->controlWallbox(1, $d['wb1_enable']);
+                if ($s['wb_count'] >= 2) {
+                    $this->controlWallbox(2, $d['wb2_enable']);
+                }
+            }
+            $reason = $b1Now ? ($d['reason'] ?? '') : '🌞 Netzdienlich beendet, Freigabe an WR-Automatik | ' . ($d['reason'] ?? '');
+            $this->SetValue('EMS_Mode',       $d['op_mode']);
+            $this->SetValue('EMS_LastAction', $reason);
+            $this->SetValue('EMS_Status',     'OK: ' . $reason);
+            $this->WriteAttributeString('LastDecisionSource', $b1Now ? 'netzdienlich' : ($d['source'] ?? 'ems'));
+            return;
+        }
+
         // §14a-Einspeisereduktion (SteuerboxHub) wird bereits in Update()
         // UNABHAENGIG von EMS_Active durchgesetzt (applySteuerboxFeedInLimit()),
         // damit die Netzbetreiber-Vorgabe auch bei deaktiviertem EMS gilt --

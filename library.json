@@ -3,8 +3,8 @@
     "author": "DG65",
     "name": "NRG-Stack EMS",
     "url": "https://github.com/DG65/NRGEMS",
-    "version": "0.32.1",
-    "build": 104,
+    "version": "0.33.0",
+    "build": 105,
     "date": 1789221600,
     "compatibility": {
         "version": "9.0"

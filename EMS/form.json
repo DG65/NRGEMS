@@ -111,6 +111,47 @@
                     "suffix": " min"
                 },
                 {
+                    "type": "Label",
+                    "caption": "── Netzdienliche Bausteine ──────────────"
+                },
+                {
+                    "type": "Label",
+                    "caption": "Wirkt nur, wenn der Wechselrichter die nötigen Befehle meldet (automatisch über InverterHub erkannt) und EMS die Steuerhoheit hat. Sonst bleibt alles wie bisher. Preis-Optimierung, Grid Rewards, Netzbetreiber-Vorgaben und Batterie-Boost haben immer Vorrang."
+                },
+                {
+                    "type": "CheckBox",
+                    "name": "NETZ_Aktiv",
+                    "caption": "Netzdienliche Bausteine aktiv (empfohlen)"
+                },
+                {
+                    "type": "Label",
+                    "caption": "🌞 Mittagsspitze aufnehmen: Reicht der vorhergesagte PV-Überschuss des restlichen Tages sicher, um die Batterie trotzdem zu füllen, sperrt EMS vormittags das Laden. Der Überschuss geht dann ins Netz, und zur Mittagsspitze lädt die Batterie aus PV. Liegt die gemessene PV nicht mehr sicher über der Hauslast, gibt EMS sofort frei. Braucht die PV-Prognose (automatisch erkannt), die Lastprognose ist optional (sonst Durchschnittswert)."
+                },
+                {
+                    "type": "NumberSpinner",
+                    "name": "NETZ_B1_Margin_W",
+                    "caption": "Gemessene PV mindestens so weit über der Hauslast",
+                    "minimum": 100,
+                    "maximum": 5000,
+                    "suffix": " W"
+                },
+                {
+                    "type": "NumberSpinner",
+                    "name": "NETZ_B1_Latest_Hour",
+                    "caption": "Spätestens freigeben um",
+                    "minimum": 8,
+                    "maximum": 18,
+                    "suffix": " Uhr"
+                },
+                {
+                    "type": "NumberSpinner",
+                    "name": "NETZ_B1_Safety_Pct",
+                    "caption": "Sicherheit: Restüberschuss mindestens Platzbedarf ×",
+                    "minimum": 100,
+                    "maximum": 300,
+                    "suffix": " %"
+                },
+                {
                     "type": "NumberSpinner",
                     "name": "EMS_Interval",
                     "caption": "Aktualisierungsintervall (Sekunden)",

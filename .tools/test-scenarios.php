@@ -585,5 +585,83 @@ check('unbekannte Faehigkeit hat keinen Ident', call($ems, 'gridServiceIdent', [
 unset($GLOBALS['INSTMOD'][IHUB_IID]);
 
 // ===========================================================================
+echo "\n15) B1 Mittagsspitze aufnehmen -- Entscheidung (reine Funktion, feste Uhrzeit)\n";
+$ems = freshEms();
+$sonne = array_fill(0, 96, 0.0); for ($i = 32; $i < 72; $i++) { $sonne[$i] = 6000.0; } // 08:00-18:00 je 6 kW
+$basis = ['nowSlot' => 36, 'latestSlot' => 52, 'pv' => $sonne, 'load' => array_fill(0, 96, null), 'avgHouseW' => 400.0,
+    'capKwh' => 40.0, 'soc' => 50.0, 'pvW' => 3000.0, 'houseW' => 400.0, 'marginW' => 300.0, 'safetyPct' => 130, 'wasActive' => false];
+$b1 = fn(array $o = []) => call($ems, 'b1Evaluate', [array_merge($basis, $o)]);
+// 09:00, SOC 50 % von 40 kWh: 20 kWh Platz, x1,3 = 26 kWh; Rest 09:15-18:00 = 35 Slots x 5,6 kW x 0,25 h = 49 kWh
+check('sonniger Vormittag, Rest 49 kWh >= 26 kWh: Laden sperren', $b1()['active'] === true, $b1()['reason']);
+check('keine PV-Prognose: nie sperren', $b1(['pv' => []])['active'] === false && $b1(['pv' => array_fill(0, 96, 0.0)])['active'] === false);
+check('nach dem spaetesten Freigabezeitpunkt (13:00): freigeben', $b1(['nowSlot' => 52])['active'] === false);
+check('Batterie voll: nicht sperren', $b1(['soc' => 99.5])['active'] === false);
+$r = $b1(['pvW' => 600.0]);
+check('gemessene PV nur 200 W ueber Haus (Wolke): freigeben, als Sicherheitsausstieg', $r['active'] === false && !empty($r['safety']), $r['reason']);
+check('bei laufendem B1 reicht die halbe Marge (150 W < 200 W): bleibt gesperrt', $b1(['pvW' => 600.0, 'wasActive' => true])['active'] === true);
+$trueb = array_fill(0, 96, 0.0); for ($i = 32; $i < 72; $i++) { $trueb[$i] = 2500.0; }   // Rest 35 x 2,1 kW x 0,25 = 18,4 kWh
+check('truebe Prognose, Rest 18 kWh < 26 kWh: nicht sperren (Batterie soll voll werden)', $b1(['pv' => $trueb])['active'] === false, $b1(['pv' => $trueb])['reason']);
+check('Lastprognose wird genutzt: 5,5 kW Last je Slot -> Rest nur 1,75 kWh, nicht sperren', $b1(['load' => array_fill(0, 96, 5500.0)])['active'] === false);
+check('Kapazitaet unbekannt (0 kWh): nicht sperren', $b1(['capKwh' => 0.0])['active'] === false);
+
+echo "\n16) B1 im Zusammenspiel -- Vorrang, Faehigkeit, Steuerpfad svc_* statt ctl_*\n";
+$ems = freshEms();
+$GLOBALS['INSTMOD'][IHUB_IID] = GUID_INVERTERHUB;
+$wr();                                                    // GoodWe, Vertrag 1.3, alle Faehigkeiten
+attr('FcPvToday', json_encode(array_fill(0, 96, 50000.0)));  // Prognose: ueberall reichlich Ueberschuss (uhrzeitunabhaengig)
+attr('FcLoadToday', json_encode(array_fill(0, 96, null)));
+prop('NETZ_B1_Latest_Hour', 24);
+prop('BAT_Capacity_kWh', 40.0);
+$sonnig = state(['bat_soc' => 50.0, 'pv_total_w' => 5000.0, 'house_pow_w' => 400.0]);
+$autoD = ['op_mode' => EMS_OP_AUTO, 'gw_mode' => GW_MODE_AUTO, 'gw_power_w' => 0, 'gw_enable' => false,
+    'wb1_enable' => false, 'wb2_enable' => false, 'reason' => 'Automatik', 'source' => 'ems'];
+$spaet = ((int)((time() - strtotime('today')) / 900)) >= 95;
+$d = call($ems, 'applyGridServiceB1', [$autoD, $sonnig]);
+check('Automatik-Entscheidung + Faehigkeit + sonnig: B1 sperrt das Laden (svc, Quelle netzdienlich)', $spaet || (($d['svc'] ?? '') === 'chargeInhibit' && $d['source'] === 'netzdienlich'), fmt($d) . ($spaet ? ' (23:45, uebersprungen)' : ''));
+$planD = array_merge($autoD, ['op_mode' => EMS_OP_NET_CHARGE, 'gw_mode' => GW_MODE_AC_IMPORT, 'gw_power_w' => 8000, 'gw_enable' => true, 'source' => 'tagesplan']);
+check('Tagesplan-Sollwert (Netzladen, Preis sticht): B1 greift nicht', call($ems, 'applyGridServiceB1', [$planD, $sonnig]) === $planD);
+$grD = array_merge($planD, ['op_mode' => EMS_OP_GRIDREWARDS, 'source' => 'tibber']);
+check('Grid Rewards: B1 greift nicht', call($ems, 'applyGridServiceB1', [$grD, $sonnig]) === $grD);
+$nbD = array_merge($autoD, ['source' => 'netzbetreiber']);
+check('§14a-Netzbetreiber (auch wenn Automatik): B1 greift nicht', call($ems, 'applyGridServiceB1', [$nbD, $sonnig]) === $nbD);
+$wr(['gridServiceCapabilities' => []]);
+check('WR ohne Faehigkeit (z. B. SMA): B1 greift nicht, kein Fehler', call($ems, 'applyGridServiceB1', [$autoD, $sonnig]) === $autoD);
+$wr(['gridServiceCapabilities' => ['chargeInhibit']]);
+check('WR kann sperren, aber nicht freigeben: B1 greift nicht (kein Weg zurueck)', call($ems, 'applyGridServiceB1', [$autoD, $sonnig]) === $autoD);
+$wr();
+prop('NETZ_Aktiv', false);
+check('netzdienliche Bausteine abgeschaltet: B1 greift nicht', call($ems, 'applyGridServiceB1', [$autoD, $sonnig]) === $autoD);
+prop('NETZ_Aktiv', true);
+attr('FcPvToday', '[]');
+check('keine PV-Prognose im Zwischenspeicher: B1 greift nicht', call($ems, 'applyGridServiceB1', [$autoD, $sonnig]) === $autoD);
+attr('FcPvToday', json_encode(array_fill(0, 96, 50000.0)));
+
+echo "\n   Steuerpfad in applyDecision()\n";
+attr('PartnerCache', json_encode(['inverterhub' => [['instanceID' => IHUB_IID, 'contractVersion' => '1.3', 'controlAuthority' => 'ems', 'controllable' => true,
+    'gridServiceCapabilities' => ['chargeInhibit', 'gridCharge', 'dischargeToGrid', 'release']]]]));
+$b1D = array_merge($autoD, ['svc' => 'chargeInhibit', 'source' => 'netzdienlich', 'reason' => 'B1 Test']);
+$GLOBALS['ACTIONS'] = [];
+call($ems, 'applyDecision', [$b1D, state()]);
+$ids = array_map(fn($x) => $x[1] . '=' . var_export($x[2], true), $GLOBALS['ACTIONS']);
+check('B1 an: genau svc_charge_inhibit=true, kein ctl_* im selben Zyklus', $ids === ['svc_charge_inhibit=true'], json_encode($ids));
+check('Zustand gemerkt (B1Active), Quelle netzdienlich sichtbar', $ems->ReadAttributeBoolean('B1Active') === true && $ems->ReadAttributeString('LastDecisionSource') === 'netzdienlich');
+$GLOBALS['ACTIONS'] = [];
+call($ems, 'applyDecision', [$b1D, state()]);
+check('B1 bleibt an: kein erneutes Schreiben (Modus haelt mit enable=false)', $GLOBALS['ACTIONS'] === [], json_encode($GLOBALS['ACTIONS']));
+$GLOBALS['ACTIONS'] = [];
+call($ems, 'applyDecision', [$autoD, state()]);
+$ids = array_map(fn($x) => $x[1] . '=' . var_export($x[2], true), $GLOBALS['ACTIONS']);
+check('B1 endet: erst svc_release, kein ctl_* im selben Zyklus', $ids === ['svc_release=true'] && $ems->ReadAttributeBoolean('B1Active') === false, json_encode($ids));
+$GLOBALS['ACTIONS'] = [];
+call($ems, 'applyDecision', [$autoD, state()]);
+check('naechster Zyklus: wieder normaler ctl-Pfad', (bool)array_filter($GLOBALS['ACTIONS'], fn($x) => $x[1] === 'ctl_ems_enable'), json_encode($GLOBALS['ACTIONS']));
+attr('B1Active', true);
+$GLOBALS['ACTIONS'] = [];
+$forced = array_merge($autoD, ['force' => true, 'reason' => 'Waechter']);
+call($ems, 'applyDecision', [$forced, state()]);
+check('Waechter-Rueckfall waehrend B1: ebenfalls zuerst svc_release', array_column($GLOBALS['ACTIONS'], 1) === ['svc_release'], json_encode($GLOBALS['ACTIONS']));
+unset($GLOBALS['INSTMOD'][IHUB_IID]);
+
+// ===========================================================================
 echo "\n" . ($fails === 0 ? "ALLE SZENARIEN BESTANDEN" : "$fails SZENARIO(S) VERLETZT") . "\n\n";
 exit($fails === 0 ? 0 : 1);

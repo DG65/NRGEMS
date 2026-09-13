@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.33.0 (2026-09-13)
+- **Neu: Netzdienlicher Baustein B1 „Mittagsspitze aufnehmen“.** Reicht der
+  vorhergesagte PV-Überschuss des restlichen Tages sicher (Standard +30 %),
+  um die Batterie trotzdem bis 100 % zu füllen, sperrt EMS vormittags das
+  Laden. Der Überschuss geht dann ins Netz, und zur Mittagsspitze lädt die
+  Batterie aus PV.
+  - **Sofortige Freigabe**, sobald die gemessene PV nicht mehr mindestens
+    300 W über der Hauslast liegt (bei laufendem B1 die halbe Marge). Dann
+    deckt die Automatik das Haus aus der Batterie.
+  - **Spätestens um 13 Uhr frei** (einstellbar). Zwischen Ein und Aus liegen
+    mindestens 2 min gegen Pendeln, nie beim Sicherheitsausstieg.
+  - **Nur dort, wo EMS ohnehin die WR-Automatik fahren würde.** Tagesplan-
+    Sollwerte, Grid Rewards, Netzbetreiber-Vorgaben und Boost haben Vorrang
+    („Preis sticht“).
+  - **Voraussetzungen:** Der Wechselrichter muss „Laden sperren“ und
+    „Freigabe“ melden (InverterHub-Vertrag 1.3), EMS braucht die
+    Steuerhoheit, dazu eine PV-Prognose. Die Lastprognose ist optional, sonst
+    gilt der Durchschnittswert. Fehlt etwas, entfällt B1 ohne Fehler.
+  - **Ein Steuerpfad je Wechselrichter:** B1 schreibt nur über `svc_*`. Beim
+    Verlassen kommt erst `svc_release`, der gewohnte `ctl_*`-Pfad folgt ab dem
+    nächsten Zyklus, auch bei einem Wächter-Rückfall.
+  - **Prognose-Zwischenspeicher:** PV- und Lastprognose werden einmal je
+    Viertelstunde abgerufen, nicht in jedem 30-s-Zyklus, und unabhängig vom
+    Tagesplan, damit B1 auch ohne dynamischen Tarif läuft.
+  - **Neue Einstellungen:** `NETZ_Aktiv` (Standard an), Marge, spätester
+    Freigabezeitpunkt, Sicherheitsfaktor.
+  - **Offen:** Abbruch bei schlechter Prognosegüte. Dafür gibt es noch keinen
+    Messwert-Vertrag mit der Prognose, bis dahin deckt das der
+    Sicherheitsfaktor ab.
+- **Prüfstand:** Block 15 (Entscheidung, 9 Fälle mit fester Uhrzeit) und
+  Block 16 (Vorrang, Fähigkeit, Steuerpfad svc/ctl, 14 Fälle).
+
 ## 0.32.1 (2026-09-13)
 - **Grundlage für die netzdienlichen Bausteine:** EMS liest aus dem
   InverterHub-Vertrag 1.3 (`gridServiceCapabilities`), welche netzdienlichen
