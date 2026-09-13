@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.34.2 (2026-09-13)
+- **`GetPlantInfo` Vertrag 1.1 (additiv):** neue Felder `speicherKwh` und
+  `speicherKwhQuelle` (wechselrichter/einstellung/fehlt). Vorrang hat die vom
+  Wechselrichter über InverterHub gemeldete Kapazität, weil sie gemessen ist.
+  Sonst gilt die EMS-Einstellung „Batteriekapazität“. Die hat einen
+  Standardwert von 10 kWh und heißt deshalb „einstellung“ statt
+  „eingetragen“. Anlass: Der Szenariorechner nutzt die echte Speichergröße
+  als Bezugspunkt im Speichergrößen-Szenario.
+- **Prüfstand:** Block 17 um drei Fälle erweitert.
+
 ## 0.34.1 (2026-09-13)
 - **Inbetriebnahmedatum im deutschen Format.** Das Feld im Panel „🏠 Anlage“
   erwartet jetzt TT.MM.JJJJ (z. B. 24.10.2012) und prüft das Format schon

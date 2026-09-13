@@ -737,8 +737,8 @@ prop('ANL_Verguetung_ct', 12.5);
 check('eingetragener Wert hat Vorrang: 12,5 ct -> 0,125 EUR, Quelle eingetragen', call($ems, 'getFeedTariffEur') === ['eur' => 0.125, 'quelle' => 'eingetragen']);
 prop('ANL_IBN_Datum', '2012-10-24'); prop('ANL_kWp_Manuell', 9.18); prop('ANL_Einspeisemanagement', 2);
 $pi = call($ems, 'GetPlantInfo');
-check('GetPlantInfo: Vertrag 1.0, EEG-Fassung, Foerderende, kWp eingetragen, Verguetung 12,5 ct',
-    $pi['contractVersion'] === '1.0' && $pi['eegFassung'] === 'EEG 2012 (PV-Novelle)' && $pi['foerderende'] === '2032-12-31'
+check('GetPlantInfo: Vertrag 1.1, EEG-Fassung, Foerderende, kWp eingetragen, Verguetung 12,5 ct',
+    $pi['contractVersion'] === '1.1' && $pi['eegFassung'] === 'EEG 2012 (PV-Novelle)' && $pi['foerderende'] === '2032-12-31'
     && $pi['kwp'] === 9.18 && $pi['kwpQuelle'] === 'eingetragen' && $pi['verguetungCt'] === 12.5 && $pi['verguetungQuelle'] === 'eingetragen'
     && $pi['einspeisemanagement'] === 'rundsteuerempfaenger', json_encode($pi, JSON_UNESCAPED_UNICODE));
 echo "\n   Datumsformat deutsch (TT.MM.JJJJ)\n";
@@ -768,6 +768,17 @@ check('echt: Zeitraum 10/2012 als geprueft, 2005 als ungeprueft markiert',
 $e2 = freshEms(); $GLOBALS['PROP'][EMS_IID]['ANL_IBN_Datum'] = '2012-10-24'; $GLOBALS['PROP'][EMS_IID]['ANL_kWp_Manuell'] = 9.18;
 $pi2 = call($e2, 'GetPlantInfo');
 check('GetPlantInfo ohne Eintrag/Variable: 18,36 ct berechnet und geprueft', $pi2['verguetungCt'] === 18.36 && $pi2['verguetungQuelle'] === 'berechnet' && $pi2['verguetungGeprueft'] === true, json_encode($pi2, JSON_UNESCAPED_UNICODE));
+$e4 = freshEms();
+$GLOBALS['PROP'][EMS_IID]['BAT_Capacity_kWh'] = 40.0;
+$pi4 = call($e4, 'GetPlantInfo');
+check('GetPlantInfo 1.1: ohne Wechselrichter-Wert speicherKwh 40 aus der Einstellung (Quelle einstellung, NICHT eingetragen)', $pi4['contractVersion'] === '1.1' && $pi4['speicherKwh'] === 40.0 && $pi4['speicherKwhQuelle'] === 'einstellung', json_encode($pi4));
+$e5 = freshEms(); $GLOBALS['PROP'][EMS_IID]['BAT_Capacity_kWh'] = 40.0;
+$capVar = vari('Kapazitaet', IHUB_IID, 'bat_capacity', 20.4);
+attr('PartnerCache', json_encode(['inverterhub' => [['instanceID' => IHUB_IID, 'batteryCapacityID' => $capVar]]]));
+$pi5 = call($e5, 'GetPlantInfo');
+check('GetPlantInfo: gemessene Kapazitaet vom Wechselrichter (20,4) geht vor die Einstellung (40)', $pi5['speicherKwh'] === 20.4 && $pi5['speicherKwhQuelle'] === 'wechselrichter', json_encode($pi5));
+$pi6 = call(freshEms(), 'GetPlantInfo');
+check('nackt: Standardwert 10 kWh erscheint als "einstellung", nicht als eingetragene Anlage', $pi6['speicherKwhQuelle'] === 'einstellung', json_encode($pi6));
 check('GetPlantInfo nackt (nichts angegeben): kein Fehler, leere Felder', ($n = call(freshEms(), 'GetPlantInfo'))['inbetriebnahme'] === '' && $n['eegFassung'] === '' && $n['kwpQuelle'] === 'fehlt' && $n['pflichten'] === [], json_encode($n));
 
 // ===========================================================================

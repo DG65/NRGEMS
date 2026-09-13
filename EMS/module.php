@@ -4498,6 +4498,25 @@ class EMS extends IPSModule
         return preg_match('/^(\d{4})-(\d{2})-(\d{2})$/', $iso, $m) ? $m[3] . '.' . $m[2] . '.' . $m[1] : '';
     }
 
+    /**
+     * Speicherkapazitaet: zuerst die vom Wechselrichter gemeldete Kapazitaet
+     * (InverterHub-Vertrag batteryCapacityID, gemessen), sonst die EMS-
+     * Einstellung BAT_Capacity_kWh. Die Einstellung hat einen Standardwert
+     * (10 kWh) und laesst sich nicht von einem bewusst eingetragenen Wert
+     * unterscheiden -- deshalb Quelle 'einstellung', nie 'eingetragen'.
+     */
+    private function getPlantStorageKwh(): array
+    {
+        $ih = (array)($this->GetPartners()['inverterhub'] ?? array());
+        $vid = (int)($ih[0]['batteryCapacityID'] ?? 0);
+        if ($vid > 0 && IPS_VariableExists($vid) && (float)GetValue($vid) > 0.0) {
+            return array('kwh' => (float)GetValue($vid), 'quelle' => 'wechselrichter');
+        }
+        $prop = (float)$this->ReadPropertyFloat('BAT_Capacity_kWh');
+        if ($prop > 0.0) { return array('kwh' => $prop, 'quelle' => 'einstellung'); }
+        return array('kwh' => 0.0, 'quelle' => 'fehlt');
+    }
+
     /** Anlagengroesse in kWp: eingetragen, sonst PV-Prognose (PVF_GetGenerators totalKwp), sonst 0. */
     private function getPlantKwp(): float
     {
@@ -4639,7 +4658,9 @@ class EMS extends IPSModule
         );
         $em = array(0 => 'unbekannt', 1 => '70prozent', 2 => 'rundsteuerempfaenger', 3 => 'steuerbox', 4 => 'keines');
         return array(
-            'contractVersion'     => '1.0',
+            'contractVersion'     => '1.1',           // 1.1: speicherKwh/speicherKwhQuelle (Szenariorechner, 13.09.2026)
+            'speicherKwh'         => round($this->getPlantStorageKwh()['kwh'], 2),
+            'speicherKwhQuelle'   => $this->getPlantStorageKwh()['quelle'],
             'inbetriebnahme'      => $ibn,            // JJJJ-MM-TT (Maschinenformat im Vertrag)
             'inbetriebnahmeText'  => $this->germanDate($ibn), // TT.MM.JJJJ zur Anzeige
             'kwp'                 => round($kwp, 3),
