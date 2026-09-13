@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.42.3 (2026-09-13)
+- **Einzeln deaktivierter OCPP-Ladepunkt zählt nicht.** EMS überspringt
+  OCPPHub-Ladepunkte, die ausgeschaltet sind (Status 104) oder im Vertrag
+  `active: false` melden. So kann eine Wallbox allein über ChargerHub
+  laufen, während die andere über OCPP läuft.
+- **Prüfstand:** Block 22 um 2 Fälle ergänzt.
+
 ## 0.42.2 (2026-09-13)
 - **Ausgeschalteter OCPPHub wird nicht mehr als Wallbox-Quelle geführt.**
   Ein vom Nutzer ausgeschalteter OCPPHub-Splitter liefert zwar noch seine

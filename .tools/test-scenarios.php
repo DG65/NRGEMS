@@ -1028,6 +1028,12 @@ check('Discovery: Eintrag behält die Ladepunkt-ID (701), nicht die Splitter-ID 
 $GLOBALS['INSTSTATUS'][700] = 104;
 check('ausgeschalteter Splitter (Status 104): keine OCPP-Ladepunkte', call($ems, 'discoverOcppHub') === []);
 unset($GLOBALS['INSTSTATUS'][700]);
+$GLOBALS['INSTSTATUS'][701] = 104;
+check('einzeln deaktivierter Ladepunkt (Status 104): übersprungen', call($ems, 'discoverOcppHub') === []);
+unset($GLOBALS['INSTSTATUS'][701]);
+$GLOBALS['OHUB_FUNCS'] = [array_merge($ohubEntry, ['active' => false])];
+check('Ladepunkt mit active=false: übersprungen', call($ems, 'discoverOcppHub') === []);
+$GLOBALS['OHUB_FUNCS'] = [$ohubEntry];
 unset($GLOBALS['INSTMOD'][700]); $GLOBALS['OHUB_FUNCS'] = [];
 $chub = ['instanceID' => 600, 'powerID' => $p1, 'plugStateID' => 0, 'managedBy' => 'none'];
 attr('PartnerCache', json_encode(['ocpphub' => [array_merge($ohubEntry, ['source' => 'ocpphub'])]]));
