@@ -1,6 +1,21 @@
 # Changelog
 
-## 0.34.0 (2026-09-13, noch nicht veröffentlicht, wartet auf die Vergütungstabelle)
+## 0.34.0 (2026-09-13)
+- **EEG-Vergütungstabelle für PV ab 04/2000** (`EMS/eeg-pv-verguetung.json`,
+  Stand 13.09.2026):
+  - 288 Zeiträume: Gebäudeanlagen 04/2000–01/2027, sonstige Anlagen ab
+    04/2012.
+  - Monatliche Degression, außerordentliche Absenkungen 07/10/2010, Teil- und
+    Volleinspeisung ab 30.07.2022, Eigenverbrauchsbonus 2009–03/2012.
+  - 275 Zeiträume sind an Primärquellen der Bundesnetzagentur geprüft. Die
+    13 übrigen (2000–2012, nur Sekundärquellen) sind als ungeprüft markiert,
+    und `GetPlantInfo` meldet das als `verguetungGeprueft`.
+  - Gegenproben: 24.10.2012/9,18 kWp = 18,36 ct, 11/2012 = 17,90 ct,
+    08/2026 bis 10 kWp = 7,70/12,22 ct.
+  - Prüfskript `.tools/pruefe-eeg-tabelle.py` (Lücken, Überlappungen,
+    Gegenproben).
+  - Nicht abgebildet: Fassadenbonus 2004–2008, Freiflächen vor 04/2012,
+    Mieterstrom. Dafür bleibt die Vergütung von Hand.
 - **Neu: Anlagendaten und `EMS_GetPlantInfo()` (Vertrag 1.0).** Neues
   Formularpanel „🏠 Anlage“ mit diesen Feldern:
   - Inbetriebnahmedatum,

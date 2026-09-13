@@ -4499,14 +4499,24 @@ class EMS extends IPSModule
      * Groessenklassen (seit EEG 2004: Mischverguetung). Reine Funktion.
      * null, wenn kein Zeitraum passt oder die Tabelle fehlt.
      */
-    private function lookupEegTariffCt(array $table, string $ibn, float $kwp, bool $voll): ?float
+    /** Passender Tabellen-Zeitraum (Gebaeudeanlagen) fuer ein Inbetriebnahmedatum, sonst null. */
+    private function findEegPeriod(array $table, string $ibn): ?array
     {
         $ts = strtotime($ibn);
-        if ($ts === false || $kwp <= 0.0) { return null; }
+        if ($ts === false) { return null; }
         $d = date('Y-m-d', $ts);
         foreach ((array)($table['zeitraeume'] ?? array()) as $z) {
             if (($z['kategorie'] ?? 'gebaeude') !== 'gebaeude') { continue; }
-            if ($d < (string)($z['von'] ?? '9999') || $d > (string)($z['bis'] ?? '0000')) { continue; }
+            if ($d >= (string)($z['von'] ?? '9999') && $d <= (string)($z['bis'] ?? '0000')) { return $z; }
+        }
+        return null;
+    }
+
+    private function lookupEegTariffCt(array $table, string $ibn, float $kwp, bool $voll): ?float
+    {
+        if ($kwp <= 0.0) { return null; }
+        $z = $this->findEegPeriod($table, $ibn);
+        if ($z !== null) {
             $sum = 0.0; $unten = 0.0; $gedeckt = 0.0;
             foreach ((array)($z['klassen'] ?? array()) as $k) {
                 $oben = ($k['bis_kwp'] ?? null) === null ? INF : (float)$k['bis_kwp'];
@@ -4610,6 +4620,9 @@ class EMS extends IPSModule
             'verguetungsform'     => $o['verguetungsform'] === 1 ? 'direktvermarktung' : 'fest',
             'verguetungCt'        => round($tarif['eur'] * 100.0, 2),
             'verguetungQuelle'    => $tarif['quelle'],
+            // nur bei 'berechnet' aussagekraeftig: Tabellenzeitraum an einer Primaerquelle geprueft?
+            'verguetungGeprueft'  => $tarif['quelle'] === 'berechnet'
+                ? (bool)(($this->findEegPeriod($this->loadEegTable(), $ibn) ?? array())['geprueft'] ?? false) : null,
             'einspeisemanagement' => $em[$o['einspeisemanagement']] ?? 'unbekannt',
             'iMSys'               => $o['iMSys'],
             'steuerbox'           => $o['steuerbox'],

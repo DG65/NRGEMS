@@ -741,6 +741,20 @@ check('GetPlantInfo: Vertrag 1.0, EEG-Fassung, Foerderende, kWp eingetragen, Ver
     $pi['contractVersion'] === '1.0' && $pi['eegFassung'] === 'EEG 2012 (PV-Novelle)' && $pi['foerderende'] === '2032-12-31'
     && $pi['kwp'] === 9.18 && $pi['kwpQuelle'] === 'eingetragen' && $pi['verguetungCt'] === 12.5 && $pi['verguetungQuelle'] === 'eingetragen'
     && $pi['einspeisemanagement'] === 'rundsteuerempfaenger', json_encode($pi, JSON_UNESCAPED_UNICODE));
+echo "\n   mit der echten Verguetungstabelle (EMS/eeg-pv-verguetung.json)\n";
+$echt = call($ems, 'loadEegTable');
+check('Tabelle vorhanden und lesbar (> 100 Zeitraeume)', count($echt['zeitraeume'] ?? []) > 100, 'Zeitraeume: ' . count($echt['zeitraeume'] ?? []));
+$lr = fn($ibn, $kwp, $voll = false) => call($ems, 'lookupEegTariffCt', [$echt, $ibn, $kwp, $voll]);
+check('echt: IBN 24.10.2012, 9,18 kWp -> 18,36 ct (Dietmars Anlage)', $lr('2012-10-24', 9.18) === 18.36, var_export($lr('2012-10-24', 9.18), true));
+check('echt: IBN 11/2012, 9 kWp -> 17,90 ct', $lr('2012-11-15', 9.0) === 17.90, var_export($lr('2012-11-15', 9.0), true));
+check('echt: IBN 09/2026, 8 kWp -> 7,70 ct Teil / 12,22 ct Voll', $lr('2026-09-13', 8.0) === 7.70 && $lr('2026-09-13', 8.0, true) === 12.22);
+check('echt: IBN 09/2026, 15 kWp Mischsatz -> 7,35 ct', $lr('2026-09-13', 15.0) === 7.35, var_export($lr('2026-09-13', 15.0), true));
+check('echt: vor EEG 2000 und ab 2027 kein Satz (nicht raten)', $lr('2000-01-01', 5.0) === null && $lr('2027-03-01', 5.0) === null);
+check('echt: Zeitraum 10/2012 als geprueft, 2005 als ungeprueft markiert',
+    (call($ems, 'findEegPeriod', [$echt, '2012-10-24'])['geprueft'] ?? null) === true && (call($ems, 'findEegPeriod', [$echt, '2005-06-01'])['geprueft'] ?? null) === false);
+$e2 = freshEms(); $GLOBALS['PROP'][EMS_IID]['ANL_IBN_Datum'] = '2012-10-24'; $GLOBALS['PROP'][EMS_IID]['ANL_kWp_Manuell'] = 9.18;
+$pi2 = call($e2, 'GetPlantInfo');
+check('GetPlantInfo ohne Eintrag/Variable: 18,36 ct berechnet und geprueft', $pi2['verguetungCt'] === 18.36 && $pi2['verguetungQuelle'] === 'berechnet' && $pi2['verguetungGeprueft'] === true, json_encode($pi2, JSON_UNESCAPED_UNICODE));
 check('GetPlantInfo nackt (nichts angegeben): kein Fehler, leere Felder', ($n = call(freshEms(), 'GetPlantInfo'))['inbetriebnahme'] === '' && $n['eegFassung'] === '' && $n['kwpQuelle'] === 'fehlt' && $n['pflichten'] === [], json_encode($n));
 
 // ===========================================================================
