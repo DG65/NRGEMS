@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.33.3 (2026-09-13)
+- **B1 berücksichtigt die Prognosegüte** (Prognose Build 98, `PVF_GetAccuracy`,
+  Vertrag 1.0), als Sicherheitsprüfung:
+  - Lag die Prognose zuletzt im Mittel mehr als 30 % daneben (einstellbar),
+    setzt B1 aus: „Prognosegüte zu schlecht“.
+  - War die Prognose systematisch zu **hoch**, steigt der Sicherheitszuschlag
+    um genau diesen Prozentsatz. Eine zu niedrige Prognose ändert nichts,
+    das ist die sichere Richtung.
+  - Weniger als 5 bewertete Tage (einstellbar), eine fremde Vertrags-
+    Hauptversion oder ein älteres Prognose-Modul: B1 rechnet wie bisher.
+  - Die Tageszeit-Faktoren werden bewusst nicht erneut angewendet. Sie
+    stecken laut Prognose schon in p10/p50, sonst wäre doppelt korrigiert.
+  - Abruf mit dem Prognose-Zwischenspeicher einmal je Viertelstunde, die
+    Güte steht im Entscheidungsgrund.
+- **Prüfstand:** Block 15 um acht Fälle erweitert (fehlt, Dietmars Livewerte,
+  schlechte Güte, zu wenig Tage, Prognose zu hoch oder zu niedrig, fremde
+  Hauptversion, keine Doppelkorrektur).
+
 ## 0.33.2 (2026-09-13)
 - **B1 rechnet mit der vorsichtigen Prognose (p10).** Liefert die
   PV-Prognose den Wert p10 (in 10 % der Fälle unterschritten, bei Prognose

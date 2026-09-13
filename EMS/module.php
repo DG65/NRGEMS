@@ -247,6 +247,8 @@ class EMS extends IPSModule
         $this->RegisterPropertyInteger('NETZ_B1_Latest_Hour', 13);  // spaetester Freigabezeitpunkt (volle Stunde)
         $this->RegisterPropertyInteger('NETZ_B1_Safety_Pct',  130); // Restueberschuss >= Platzbedarf x Faktor (Median p50)
         $this->RegisterPropertyInteger('NETZ_B1_Safety_P10_Pct', 110); // dasselbe, wenn die vorsichtige Prognose p10 vorliegt
+        $this->RegisterPropertyInteger('NETZ_B1_Max_MAPE',    30);  // Prognose-Fehlerquote (%), ab der B1 aussetzt
+        $this->RegisterPropertyInteger('NETZ_B1_Min_Days',    5);   // so viele bewertete Tage braucht die Guete-Auswertung
         for ($i = 1; $i <= 2; $i++) {
             $this->RegisterPropertyInteger('VAR_BAT' . $i . '_SOC',            0);
             $this->RegisterPropertyInteger('VAR_BAT' . $i . '_Power',          0);
@@ -419,6 +421,7 @@ class EMS extends IPSModule
         $this->RegisterAttributeString('FcCacheKey',         '');    // Datum|Slot der letzten Prognose-Auffrischung
         $this->RegisterAttributeString('FcPvToday',          '[]');  // PV-Prognose heute, 96 Slots W
         $this->RegisterAttributeString('FcPv10Today',        '[]');  // vorsichtige PV-Prognose p10 heute (leer = nicht geliefert)
+        $this->RegisterAttributeString('FcAccuracy',         '');    // PVF_GetAccuracy (Vertrag 1.x), leer = nicht verfuegbar
         $this->RegisterAttributeString('FcLoadToday',        '[]');  // Lastprognose heute, 96 Slots W (null = fehlt)
         $this->RegisterAttributeInteger('LastDiscoveryTs',   0);
 
@@ -4417,6 +4420,10 @@ class EMS extends IPSModule
             $pvfId = $this->getPvfInstance();
             $p10 = ($pvfId > 0) ? (array)((PVF_GetForecast($pvfId, 0)['p10'] ?? array())) : array();
             $this->WriteAttributeString('FcPv10Today', json_encode(count($p10) === 96 ? array_values($p10) : array()));
+            // Prognoseguete (Prognose Build 98, Vertrag PVF_CONTRACT_ACCURACY 1.0)
+            $acc = ($pvfId > 0 && function_exists('PVF_GetAccuracy')) ? @PVF_GetAccuracy($pvfId) : null;
+            if (is_string($acc)) { $acc = json_decode($acc, true); }
+            $this->WriteAttributeString('FcAccuracy', is_array($acc) ? json_encode($acc) : '');
             $this->WriteAttributeString('FcLoadToday', json_encode($this->getLoadForecastSlots((int)$this->getLfcInstance(), 0)));
         } catch (Throwable $e) {
             $this->WriteAttributeString('FcPvToday', '[]');
@@ -4462,6 +4469,24 @@ class EMS extends IPSModule
             return array('active' => false, 'safety' => true,
                 'reason' => sprintf('PV %.0f W deckt die Hauslast %.0f W nicht sicher (Marge %.0f W)', $in['pvW'], $in['houseW'], $margin));
         }
+        // Prognoseguete (PVF_GetAccuracy). NUR als Sicherheitspruefung: die
+        // Tageszeit-Faktoren (byDaylightFraction) stecken laut Prognose schon
+        // in p10/p50 (Residuen-Korrektur) -- sie hier erneut anzuwenden waere
+        // doppelt korrigiert. Vorzeichen: bias > 0 = Prognose war zu HOCH.
+        $acc = $in['accuracy'] ?? null;
+        $guete = '';
+        $biasUp = 0.0;
+        if (is_array($acc) && (int)explode('.', (string)($acc['contractVersion'] ?? '1.0'))[0] === 1
+            && (int)($acc['days'] ?? 0) >= (int)($in['minDays'] ?? 5)) {
+            $mape = (float)($acc['mape'] ?? 0.0);
+            $bias = (float)($acc['bias'] ?? 0.0);
+            if ($mape > (float)($in['maxMape'] ?? 30)) {
+                return array('active' => false,
+                    'reason' => sprintf('Prognoseguete zu schlecht (Fehlerquote %.0f %% > %d %%, %d Tage)', $mape, (int)$in['maxMape'], (int)$acc['days']));
+            }
+            $biasUp = max(0.0, $bias);
+            $guete = sprintf(', Guete %.0f %%/%+.0f %%', $mape, $bias);
+        }
         $needKwh = $capKwh * (100.0 - $soc) / 100.0;
         // Vorsichtige Prognose p10 bevorzugen (unsichere Tage -> automatisch
         // weniger Platz freihalten), sonst Median p50 mit groesserem Zuschlag.
@@ -4469,6 +4494,7 @@ class EMS extends IPSModule
         $useP10 = (count($pv10) >= 96 && array_sum(array_map('floatval', $pv10)) > 0.0);
         $series = $useP10 ? $pv10 : $pv;
         $safety = $useP10 ? (float)($in['safetyP10Pct'] ?? 110) : (float)$in['safetyPct'];
+        $safety = $safety * (1.0 + $biasUp / 100.0); // Prognose war zuletzt zu hoch -> entsprechend mehr Reserve
         $basis  = $useP10 ? 'p10' : 'p50';
         $load = array_values((array)($in['load'] ?? array()));
         $restKwh = 0.0;
@@ -4479,10 +4505,10 @@ class EMS extends IPSModule
         $reqKwh = $needKwh * $safety / 100.0;
         if ($restKwh < $reqKwh) {
             return array('active' => false, 'basis' => $basis,
-                'reason' => sprintf('Restueberschuss heute (%s) %.1f kWh reicht nicht fuer %.1f kWh Platz (+%d %% Sicherheit)', $basis, $restKwh, $needKwh, (int)$safety - 100));
+                'reason' => sprintf('Restueberschuss heute (%s) %.1f kWh reicht nicht fuer %.1f kWh Platz (+%d %% Sicherheit%s)', $basis, $restKwh, $needKwh, (int)round($safety) - 100, $guete));
         }
         return array('active' => true, 'basis' => $basis,
-            'reason' => sprintf('Restueberschuss heute (%s) %.1f kWh >= %.1f kWh Platz (+%d %%), PV %.0f W > Haus %.0f W', $basis, $restKwh, $needKwh, (int)$safety - 100, $in['pvW'], $in['houseW']));
+            'reason' => sprintf('Restueberschuss heute (%s) %.1f kWh >= %.1f kWh Platz (+%d %%%s), PV %.0f W > Haus %.0f W', $basis, $restKwh, $needKwh, (int)round($safety) - 100, $guete, $in['pvW'], $in['houseW']));
     }
 
     /**
@@ -4514,6 +4540,9 @@ class EMS extends IPSModule
             'safetyPct'  => max(100, $this->ReadPropertyInteger('NETZ_B1_Safety_Pct')),
             'pv10'       => json_decode($this->ReadAttributeString('FcPv10Today'), true) ?: array(),
             'safetyP10Pct' => max(100, $this->ReadPropertyInteger('NETZ_B1_Safety_P10_Pct')),
+            'accuracy'   => json_decode($this->ReadAttributeString('FcAccuracy'), true),
+            'maxMape'    => $this->ReadPropertyInteger('NETZ_B1_Max_MAPE'),
+            'minDays'    => $this->ReadPropertyInteger('NETZ_B1_Min_Days'),
             'wasActive'  => $was,
         ));
         // Wechselsperre gegen Pendeln (Wolken) -- nie beim Sicherheitsausstieg

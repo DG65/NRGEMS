@@ -613,6 +613,21 @@ check('unsicherer Tag: Median reicht (49 kWh), p10 nicht (18 kWh < 22 kWh) -> NI
 $r = $b1(['pv10' => [], 'safetyP10Pct' => 110]);
 check('p10 fehlt: Rueckfall auf Median mit 130 %, Basis p50', $r['active'] === true && ($r['basis'] ?? '') === 'p50', $r['reason']);
 check('p10 nur Nullen (nicht geliefert): Rueckfall auf Median', ($b1(['pv10' => array_fill(0, 96, 0.0)])['basis'] ?? '') === 'p50');
+// Prognoseguete (PVF_GetAccuracy 1.0). Basisfall p50: Rest 49 kWh, Bedarf 20 x 1,3 = 26 kWh
+$acc = fn(array $o = []) => array_merge(['contractVersion' => '1.0', 'days' => 9, 'bias' => -12.58, 'mape' => 16.75,
+    'byDaylightFraction' => [['from' => 0, 'to' => 0.125, 'factor' => 0.497, 'n' => 62]]], $o);
+$g = ['maxMape' => 30, 'minDays' => 5];
+check('Guete fehlt (Schnittstelle nicht da): unveraendert sperren', $b1(array_merge($g, ['accuracy' => null]))['active'] === true);
+check('Dietmars Livewerte (9 Tage, 16,8 % Fehler, Bias -12,6 %): unveraendert sperren, Guete im Grund',
+    ($r = $b1(array_merge($g, ['accuracy' => $acc()])))['active'] === true && strpos($r['reason'], 'Guete') !== false, $r['reason']);
+check('Fehlerquote 45 % > 30 %: B1 setzt aus', ($r = $b1(array_merge($g, ['accuracy' => $acc(['mape' => 45.0])])))['active'] === false && strpos($r['reason'], 'Prognoseguete') !== false, $r['reason']);
+check('zu wenig Tage (3 < 5): Guete wird ignoriert, auch bei 45 %', $b1(array_merge($g, ['accuracy' => $acc(['mape' => 45.0, 'days' => 3])]))['active'] === true);
+check('Prognose zuletzt 100 % zu HOCH (bias +100): Zuschlag verdoppelt, 52 kWh > 49 kWh -> nicht sperren',
+    ($r = $b1(array_merge($g, ['accuracy' => $acc(['bias' => 100.0])])))['active'] === false, $r['reason']);
+check('Prognose zu NIEDRIG (bias -40): kein Abschlag, unveraendert sperren', $b1(array_merge($g, ['accuracy' => $acc(['bias' => -40.0])]))['active'] === true);
+check('fremde Vertrags-Major 2.0: Guete ignoriert', $b1(array_merge($g, ['accuracy' => $acc(['contractVersion' => '2.0', 'mape' => 90.0])]))['active'] === true);
+check('Tageszeit-Faktoren werden NICHT erneut angewendet (0,497 am Morgen aendert nichts)',
+    $b1(array_merge($g, ['accuracy' => $acc()]))['active'] === $b1(array_merge($g, ['accuracy' => $acc(['byDaylightFraction' => []])]))['active']);
 
 echo "\n16) B1 im Zusammenspiel -- Vorrang, Faehigkeit, Steuerpfad svc_* statt ctl_*\n";
 $ems = freshEms();

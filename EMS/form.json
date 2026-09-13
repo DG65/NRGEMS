@@ -161,6 +161,22 @@
                 },
                 {
                     "type": "NumberSpinner",
+                    "name": "NETZ_B1_Max_MAPE",
+                    "caption": "Aussetzen, wenn die Prognose zuletzt im Mittel mehr danebenlag als",
+                    "minimum": 5,
+                    "maximum": 100,
+                    "suffix": " %"
+                },
+                {
+                    "type": "NumberSpinner",
+                    "name": "NETZ_B1_Min_Days",
+                    "caption": "Prognosegüte erst berücksichtigen ab bewerteten Tagen",
+                    "minimum": 1,
+                    "maximum": 60,
+                    "suffix": " Tage"
+                },
+                {
+                    "type": "NumberSpinner",
                     "name": "EMS_Interval",
                     "caption": "Aktualisierungsintervall (Sekunden)",
                     "minimum": 5,
