@@ -242,6 +242,18 @@ class EMS extends IPSModule
         // Netzdienliche Bausteine (Netzdienlich-Konzept 12.09.2026, Dietmar:
         // Standard EIN). Greifen nur, wenn der WR die Faehigkeit meldet
         // (InverterHub-Vertrag 1.3) -- sonst wirkungslos, kein Fehler.
+        // Anlagendaten (Anlagenstammdaten-Konzept 12./13.09.2026, Dietmar:
+        // im EMS, eigene lesende Schnittstelle EMS_GetPlantInfo). Keine
+        // Anlagenwerte als Default -- leer/0 heisst "nicht angegeben".
+        $this->RegisterPropertyString('ANL_IBN_Datum',          '');   // JJJJ-MM-TT
+        $this->RegisterPropertyInteger('ANL_Einspeiseart',      0);    // 0 Teileinspeisung, 1 Volleinspeisung
+        $this->RegisterPropertyFloat('ANL_kWp_Manuell',         0.0);  // 0 = aus der PV-Prognose
+        $this->RegisterPropertyFloat('ANL_Verguetung_ct',       0.0);  // 0 = automatisch (Variable/Tabelle)
+        $this->RegisterPropertyInteger('ANL_Einspeisemanagement', 0);  // 0 unbekannt, 1 70-%-Kappung, 2 Rundsteuerempfaenger, 3 Steuerbox, 4 keines
+        $this->RegisterPropertyBoolean('ANL_iMSys',             false);
+        $this->RegisterPropertyBoolean('ANL_Steuerbox',         false);
+        $this->RegisterPropertyBoolean('ANL_Neues_Modell',      false); // freiwilliger Wechsel ins Solarspitzen-Modell
+        $this->RegisterPropertyInteger('ANL_Verguetungsform',   0);    // 0 feste Einspeiseverguetung, 1 Direktvermarktung
         $this->RegisterPropertyBoolean('NETZ_Aktiv',          true);
         $this->RegisterPropertyInteger('NETZ_B1_Margin_W',    300); // gemessene PV mindestens so weit ueber der Hauslast
         $this->RegisterPropertyInteger('NETZ_B1_Latest_Hour', 13);  // spaetester Freigabezeitpunkt (volle Stunde)
@@ -2685,7 +2697,7 @@ class EMS extends IPSModule
             $partners = $this->GetPartners();
             foreach ((array)($partners['tessie'] ?? array()) as $veh) {
                 if (($veh['charging'] ?? false) && ($veh['scheduledChargingActive'] ?? false)) {
-                    $feedTariff = (float)$this->readVar('VAR_TIB_Feed_Tariff', 0.1836);
+                    $feedTariff = (float)$this->getFeedTariffEur()['eur'];
                     $reason .= sprintf(
                         ' (Fahrzeug lädt parallel via Tibber Grid Rewards aus dem Netz -- wirtschaftlich '
                         . 'gewollt: die Grid-Reward-Einspeiseprämie von %.2fct/kWh ginge verloren, würde '
@@ -3079,7 +3091,7 @@ class EMS extends IPSModule
         $thCharge       = (float)$this->ReadPropertyFloat('TIB_Threshold_Charge');
         $thDischarge    = (float)$this->ReadPropertyFloat('TIB_Threshold_Discharge');
         $fcMinPower     = (float)$this->ReadPropertyInteger('FORECAST_Min_Power_W');
-        $feedTariff     = (float)$this->readVar('VAR_TIB_Feed_Tariff', 0.1836);
+        $feedTariff     = (float)$this->getFeedTariffEur()['eur'];
         $enwgActive     = $this->ReadPropertyBoolean('ENWG14A_Active');
         $enwgStartH     = $this->ReadPropertyInteger('ENWG14A_Start_Hour');
         $enwgEndH       = $this->ReadPropertyInteger('ENWG14A_End_Hour');
@@ -3620,11 +3632,11 @@ class EMS extends IPSModule
         // reason-Text, kann ihn also erkennen und bei Bedarf durch eine
         // eigene Variable ersetzen, statt dass er unsichtbar falsch fuer ihn
         // rechnet.
-        $feedTariffVarId = $this->ReadPropertyInteger('VAR_TIB_Feed_Tariff');
-        $feedTariff = (float)$this->readVar('VAR_TIB_Feed_Tariff', 0.1836);
-        if ($feedTariffVarId <= 0) {
+        $tarif = $this->getFeedTariffEur(); // eingetragen > Variable > Tabelle > Platzhalter
+        $feedTariff = (float)$tarif['eur'];
+        if ($tarif['quelle'] === 'platzhalter') {
             $this->emsLog(EMS_LOG_VERBOSE, sprintf(
-                'hasArbitrageInPrices(): keine Einspeiseverguetung verknuepft (VAR_TIB_Feed_Tariff) -- rechne mit Platzhalter %.4f EUR/kWh',
+                'hasArbitrageInPrices(): keine Einspeiseverguetung angegeben (Anlagendaten/VAR_TIB_Feed_Tariff) -- rechne mit Platzhalter %.4f EUR/kWh',
                 $feedTariff
             ));
         }
@@ -3843,7 +3855,7 @@ class EMS extends IPSModule
         $s['tib_active']    = $this->ReadPropertyBoolean('TIBBER_Active');
         $s['tib_price']     = $s['tib_active'] ? (float)$this->readVar('VAR_TIB_Price',       0)     : 0.0;
         $s['tib_level']     = $s['tib_active'] ? (int)  $this->readVar('VAR_TIB_Level',       2)     : 2;
-        $s['tib_feed']      = $s['tib_active'] ? (float)$this->readVar('VAR_TIB_Feed_Tariff', 0.1836) : 0.1836;
+        $s['tib_feed']      = (float)$this->getFeedTariffEur()['eur']; // haengt an der Anlage, nicht am Tibber-Schalter
 
         // PV Forecast
         $s['fc_active']     = $this->ReadPropertyBoolean('FORECAST_Active');
@@ -4429,6 +4441,182 @@ class EMS extends IPSModule
             $this->WriteAttributeString('FcPvToday', '[]');
             $this->emsLog(EMS_LOG_BASIC, 'Prognose-Zwischenspeicher: Fehler, netzdienliche Bausteine setzen aus: ' . $e->getMessage());
         }
+    }
+
+    // ----------------------------------------------------------------
+    //  Anlagendaten (EMS_GetPlantInfo, Anlagenstammdaten-Konzept)
+    // ----------------------------------------------------------------
+
+    /**
+     * Einspeiseverguetung in EUR/kWh an EINER Stelle aufgeloest, mit Quelle.
+     * Reihenfolge: eingetragener Wert (Anlagenpanel) > verknuepfte Variable
+     * (VAR_TIB_Feed_Tariff, EUR/kWh wie bisher) > aus Inbetriebnahmedatum +
+     * kWp berechnet (EEG-Tabelle) > sichtbarer Platzhalter 0,1836.
+     */
+    private function getFeedTariffEur(): array
+    {
+        $manual = (float)$this->ReadPropertyFloat('ANL_Verguetung_ct');
+        if ($manual > 0.0) { return array('eur' => $manual / 100.0, 'quelle' => 'eingetragen'); }
+        if ($this->ReadPropertyInteger('VAR_TIB_Feed_Tariff') > 0) {
+            return array('eur' => (float)$this->readVar('VAR_TIB_Feed_Tariff', 0.1836), 'quelle' => 'variable');
+        }
+        $ibn = $this->ReadPropertyString('ANL_IBN_Datum');
+        $kwp = $this->getPlantKwp();
+        if ($ibn !== '' && $kwp > 0.0) {
+            $ct = $this->lookupEegTariffCt($this->loadEegTable(), $ibn, $kwp, $this->ReadPropertyInteger('ANL_Einspeiseart') === 1);
+            if ($ct !== null) { return array('eur' => $ct / 100.0, 'quelle' => 'berechnet'); }
+        }
+        return array('eur' => 0.1836, 'quelle' => 'platzhalter');
+    }
+
+    /** Anlagengroesse in kWp: eingetragen, sonst PV-Prognose (PVF_GetGenerators totalKwp), sonst 0. */
+    private function getPlantKwp(): float
+    {
+        $manual = (float)$this->ReadPropertyFloat('ANL_kWp_Manuell');
+        if ($manual > 0.0) { return $manual; }
+        $pvfId = $this->getPvfInstance();
+        if ($pvfId > 0 && function_exists('PVF_GetGenerators')) {
+            $g = @PVF_GetGenerators($pvfId);
+            if (is_string($g)) { $g = json_decode($g, true); }
+            if (is_array($g) && (int)explode('.', (string)($g['contractVersion'] ?? '1.0'))[0] === 1) {
+                return max(0.0, (float)($g['totalKwp'] ?? 0.0));
+            }
+        }
+        return 0.0;
+    }
+
+    /** EEG-Verguetungstabelle (EMS/eeg-pv-verguetung.json), leeres Array wenn nicht vorhanden. */
+    private function loadEegTable(): array
+    {
+        $file = __DIR__ . '/eeg-pv-verguetung.json';
+        if (!is_file($file)) { return array(); }
+        $t = json_decode((string)file_get_contents($file), true);
+        return is_array($t) ? $t : array();
+    }
+
+    /**
+     * Verguetungssatz in ct/kWh aus der Tabelle, anteilig ueber die
+     * Groessenklassen (seit EEG 2004: Mischverguetung). Reine Funktion.
+     * null, wenn kein Zeitraum passt oder die Tabelle fehlt.
+     */
+    private function lookupEegTariffCt(array $table, string $ibn, float $kwp, bool $voll): ?float
+    {
+        $ts = strtotime($ibn);
+        if ($ts === false || $kwp <= 0.0) { return null; }
+        $d = date('Y-m-d', $ts);
+        foreach ((array)($table['zeitraeume'] ?? array()) as $z) {
+            if (($z['kategorie'] ?? 'gebaeude') !== 'gebaeude') { continue; }
+            if ($d < (string)($z['von'] ?? '9999') || $d > (string)($z['bis'] ?? '0000')) { continue; }
+            $sum = 0.0; $unten = 0.0; $gedeckt = 0.0;
+            foreach ((array)($z['klassen'] ?? array()) as $k) {
+                $oben = ($k['bis_kwp'] ?? null) === null ? INF : (float)$k['bis_kwp'];
+                $anteil = max(0.0, min($kwp, $oben) - $unten);
+                $satz = ($voll && isset($k['voll']) && $k['voll'] !== null) ? $k['voll'] : ($k['teil'] ?? null);
+                if ($anteil > 0.0) {
+                    if ($satz === null) { return null; }
+                    $sum += $anteil * (float)$satz;
+                    $gedeckt += $anteil;
+                }
+                $unten = $oben;
+                if ($unten >= $kwp) { break; }
+            }
+            return ($gedeckt >= $kwp - 1e-6) ? round($sum / $kwp, 2) : null;
+        }
+        return null;
+    }
+
+    /** EEG-Fassung nach Inbetriebnahmedatum (Stichtage laut Konzept §2). */
+    private function eegFassung(string $ibn): string
+    {
+        $ts = strtotime($ibn);
+        if ($ts === false) { return ''; }
+        $d = date('Y-m-d', $ts);
+        $grenzen = array(
+            array('2000-04-01', 'EEG 2000'), array('2004-08-01', 'EEG 2004'), array('2009-01-01', 'EEG 2009'),
+            array('2012-01-01', 'EEG 2012'), array('2012-04-01', 'EEG 2012 (PV-Novelle)'), array('2014-08-01', 'EEG 2014'),
+            array('2017-01-01', 'EEG 2017'), array('2021-01-01', 'EEG 2021'), array('2023-01-01', 'EEG 2023'),
+            array('2025-02-25', 'EEG 2023 mit Solarspitzengesetz'), array('2027-01-01', 'Regelung offen (EEG 2027 noch nicht verkündet)'),
+        );
+        $f = 'vor EEG 2000';
+        foreach ($grenzen as $g) { if ($d >= $g[0]) { $f = $g[1]; } }
+        return $f;
+    }
+
+    /** Ende der gesetzlichen Verguetung: 20 Jahre plus Rest des Inbetriebnahmejahres. */
+    private function foerderende(string $ibn): string
+    {
+        $ts = strtotime($ibn);
+        return $ts === false ? '' : ((int)date('Y', $ts) + 20) . '-12-31';
+    }
+
+    /**
+     * Pflichten/Hinweise aus Datum, Groesse und Angaben -- nur Hinweis,
+     * keine Rechtsberatung. Jeder Eintrag: code + Klartext.
+     */
+    private function plantObligations(string $ibn, float $kwp, array $o): array
+    {
+        $out = array();
+        $ts = strtotime($ibn);
+        if ($ts === false) { return $out; }
+        $d = date('Y-m-d', $ts);
+        $neu = ($d >= '2025-02-25') || !empty($o['neuesModell']);
+        $fest = ((int)($o['verguetungsform'] ?? 0) === 0);
+        if ($neu && $fest && $kwp >= 2.0) {
+            $out[] = array('code' => 'negativpreis', 'text' => 'Keine Vergütung in Viertelstunden mit negativem Börsenpreis (§ 51 EEG).');
+        }
+        if ($d >= '2025-02-25' && $kwp >= 2.0 && $kwp < 100.0 && !(!empty($o['iMSys']) && !empty($o['steuerbox']))) {
+            $out[] = array('code' => 'einspeisung60', 'text' => 'Einspeisung am Netzanschluss auf 60 % der kWp begrenzt, bis Smart Meter UND Steuerbox eingebaut sind (§ 9 EEG).');
+        }
+        if ($d < '2023-01-01' && $kwp > 7.0 && $kwp <= 25.0 && (int)($o['einspeisemanagement'] ?? 0) === 1) {
+            $out[] = array('code' => 'einspeisung70', 'text' => '70-%-Kappung der Wirkleistung am Netzanschluss (Bestandsanlage über 7 kW).');
+        }
+        if ($kwp >= 100.0) {
+            $out[] = array('code' => 'direktvermarktung', 'text' => 'Ab 100 kW Direktvermarktungspflicht und Fernsteuerbarkeit.');
+        }
+        if ($this->foerderende($ibn) !== '' && $this->foerderende($ibn) < date('Y-m-d')) {
+            $out[] = array('code' => 'ue20', 'text' => 'Förderdauer abgelaufen (Ü20): Einspeisung zum Marktwert, Eigenverbrauch oder Direktvermarktung.');
+        }
+        $out[] = array('code' => 'marktstammdaten', 'text' => 'Registrierung im Marktstammdatenregister ist Pflicht.');
+        return $out;
+    }
+
+    /**
+     * Anlagendaten fuer andere Module (Dashboard, Szenariorechner) -- rein
+     * lesend, Vertrag 'plantinfo' 1.0. Kein Modul setzt EMS voraus; Konsumenten
+     * behalten ihr eigenes Ersatzfeld.
+     */
+    public function GetPlantInfo(): array
+    {
+        $ibn = $this->ReadPropertyString('ANL_IBN_Datum');
+        $kwp = $this->getPlantKwp();
+        $tarif = $this->getFeedTariffEur();
+        $o = array(
+            'einspeiseart'        => $this->ReadPropertyInteger('ANL_Einspeiseart') === 1 ? 'voll' : 'teil',
+            'verguetungsform'     => $this->ReadPropertyInteger('ANL_Verguetungsform'),
+            'einspeisemanagement' => $this->ReadPropertyInteger('ANL_Einspeisemanagement'),
+            'iMSys'               => $this->ReadPropertyBoolean('ANL_iMSys'),
+            'steuerbox'           => $this->ReadPropertyBoolean('ANL_Steuerbox'),
+            'neuesModell'         => $this->ReadPropertyBoolean('ANL_Neues_Modell'),
+        );
+        $em = array(0 => 'unbekannt', 1 => '70prozent', 2 => 'rundsteuerempfaenger', 3 => 'steuerbox', 4 => 'keines');
+        return array(
+            'contractVersion'     => '1.0',
+            'inbetriebnahme'      => $ibn,
+            'kwp'                 => round($kwp, 3),
+            'kwpQuelle'           => ((float)$this->ReadPropertyFloat('ANL_kWp_Manuell') > 0.0) ? 'eingetragen' : ($kwp > 0.0 ? 'prognose' : 'fehlt'),
+            'eegFassung'          => $this->eegFassung($ibn),
+            'foerderende'         => $this->foerderende($ibn),
+            'einspeiseart'        => $o['einspeiseart'],
+            'verguetungsform'     => $o['verguetungsform'] === 1 ? 'direktvermarktung' : 'fest',
+            'verguetungCt'        => round($tarif['eur'] * 100.0, 2),
+            'verguetungQuelle'    => $tarif['quelle'],
+            'einspeisemanagement' => $em[$o['einspeisemanagement']] ?? 'unbekannt',
+            'iMSys'               => $o['iMSys'],
+            'steuerbox'           => $o['steuerbox'],
+            'neuesModell'         => $o['neuesModell'],
+            'pflichten'           => $this->plantObligations($ibn, $kwp, $o),
+            'hinweis'             => 'Automatisch abgeleitet, keine Rechtsberatung.',
+        );
     }
 
     /**

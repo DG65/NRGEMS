@@ -280,6 +280,81 @@
         },
         {
             "type": "ExpansionPanel",
+            "caption": "🏠 Anlage (Inbetriebnahme, Vergütung, Pflichten)",
+            "expanded": false,
+            "items": [
+                {
+                    "type": "Label",
+                    "caption": "Aus dem Inbetriebnahmedatum leitet EMS die EEG-Fassung, das Ende der festen Vergütung und die Pflichten ab, die eine Steuerung einhalten muss (z. B. Solarspitzengesetz). Mit der Anlagengröße wird die Einspeisevergütung berechnet. Alles automatisch abgeleitet, keine Rechtsberatung. Leere Felder heißen „nicht angegeben“."
+                },
+                {
+                    "type": "ValidationTextBox",
+                    "name": "ANL_IBN_Datum",
+                    "caption": "Inbetriebnahmedatum (JJJJ-MM-TT)"
+                },
+                {
+                    "type": "NumberSpinner",
+                    "name": "ANL_kWp_Manuell",
+                    "caption": "Anlagengröße (0 = automatisch aus der PV-Prognose)",
+                    "digits": 2,
+                    "suffix": " kWp"
+                },
+                {
+                    "type": "Select",
+                    "name": "ANL_Einspeiseart",
+                    "caption": "Einspeiseart",
+                    "options": [
+                        {"caption": "Teileinspeisung (Überschuss)", "value": 0},
+                        {"caption": "Volleinspeisung", "value": 1}
+                    ]
+                },
+                {
+                    "type": "Select",
+                    "name": "ANL_Verguetungsform",
+                    "caption": "Vergütungsform",
+                    "options": [
+                        {"caption": "Feste Einspeisevergütung", "value": 0},
+                        {"caption": "Direktvermarktung", "value": 1}
+                    ]
+                },
+                {
+                    "type": "NumberSpinner",
+                    "name": "ANL_Verguetung_ct",
+                    "caption": "Einspeisevergütung (0 = automatisch: verknüpfte Variable, sonst aus Datum und Größe berechnet)",
+                    "digits": 2,
+                    "suffix": " ct/kWh"
+                },
+                {
+                    "type": "Select",
+                    "name": "ANL_Einspeisemanagement",
+                    "caption": "Einspeisemanagement laut Netzanschluss",
+                    "options": [
+                        {"caption": "Nicht angegeben", "value": 0},
+                        {"caption": "70-%-Kappung", "value": 1},
+                        {"caption": "Rundsteuerempfänger (Netzbetreiber)", "value": 2},
+                        {"caption": "Steuerbox (Smart Meter)", "value": 3},
+                        {"caption": "Keines", "value": 4}
+                    ]
+                },
+                {
+                    "type": "CheckBox",
+                    "name": "ANL_iMSys",
+                    "caption": "Intelligentes Messsystem (Smart Meter) eingebaut"
+                },
+                {
+                    "type": "CheckBox",
+                    "name": "ANL_Steuerbox",
+                    "caption": "Steuerbox eingebaut und geprüft"
+                },
+                {
+                    "type": "CheckBox",
+                    "name": "ANL_Neues_Modell",
+                    "caption": "Bestandsanlage freiwillig ins neue Modell gewechselt (keine Vergütung bei negativen Preisen, +0,6 ct)"
+                }
+            ]
+        },
+        {
+            "type": "ExpansionPanel",
             "caption": "📡 Netzmesspunkte (optionaler manueller Fallback)",
             "expanded": false,
             "items": [

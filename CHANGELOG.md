@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.34.0 (2026-09-13, noch nicht veröffentlicht, wartet auf die Vergütungstabelle)
+- **Neu: Anlagendaten und `EMS_GetPlantInfo()` (Vertrag 1.0).** Neues
+  Formularpanel „🏠 Anlage“ mit diesen Feldern:
+  - Inbetriebnahmedatum,
+  - Anlagengröße (0 = automatisch aus der PV-Prognose, `PVF_GetGenerators`),
+  - Einspeiseart, Vergütungsform, Vergütung von Hand,
+  - Einspeisemanagement (70 %, Rundsteuerempfänger, Steuerbox, keines),
+  - Smart Meter, Steuerbox, freiwilliger Wechsel ins neue Modell.
+
+  Daraus leitet EMS EEG-Fassung, Förderende (20 Jahre plus Rest des
+  Inbetriebnahmejahres) und die Pflichten ab: Negativpreis-Regel,
+  60-%-Grenze, 70-%-Kappung, Direktvermarktung, Ü20, Marktstammdatenregister.
+  Das ist ein Hinweis, keine Rechtsberatung.
+- **Einspeisevergütung an einer Stelle** (`getFeedTariffEur()`, vorher an
+  vier Stellen einzeln gelesen): eingetragener Wert > verknüpfte Variable
+  `VAR_TIB_Feed_Tariff` > aus Datum und Größe berechnet (EEG-Tabelle,
+  Mischsatz über die Größenklassen) > sichtbarer Platzhalter 0,1836. Die
+  Quelle steht in `GetPlantInfo`. Die Vergütung hängt jetzt an der Anlage
+  und nicht mehr am Tibber-Schalter.
+- **Prüfstand:** Block 17 mit 24 Fällen (Mischsatz, Voll-/Teileinspeisung,
+  keine Daten, EEG-Fassungen, Förderende, Pflichten für Bestand, Neuanlage,
+  Steckersolar und Ü20, Reihenfolge der Vergütungsquellen, nacktes Modul).
+
 ## 0.33.5 (2026-09-13)
 - **B1-Texte mit echten Umlauten:** „Restüberschuss“, „für“, „Güte“,
   „Prognosegüte“, „spätester Freigabezeitpunkt“, „Batteriekapazität“ statt

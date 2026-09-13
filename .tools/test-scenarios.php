@@ -693,5 +693,56 @@ check('Waechter-Rueckfall waehrend B1: ebenfalls zuerst svc_release', array_colu
 unset($GLOBALS['INSTMOD'][IHUB_IID]);
 
 // ===========================================================================
+echo "\n17) Anlagendaten -- Verguetung, EEG-Fassung, Foerderende, Pflichten (EMS_GetPlantInfo)\n";
+$ems = freshEms();
+$tab = ['zeitraeume' => [
+    ['von' => '2012-10-01', 'bis' => '2012-10-31', 'kategorie' => 'gebaeude', 'klassen' => [
+        ['bis_kwp' => 10, 'teil' => 18.36, 'voll' => null], ['bis_kwp' => 40, 'teil' => 17.42, 'voll' => null],
+        ['bis_kwp' => 1000, 'teil' => 15.53, 'voll' => null]]],
+    ['von' => '2026-08-01', 'bis' => '2027-01-31', 'kategorie' => 'gebaeude', 'klassen' => [
+        ['bis_kwp' => 10, 'teil' => 7.70, 'voll' => 12.22], ['bis_kwp' => 40, 'teil' => 6.66, 'voll' => 10.24],
+        ['bis_kwp' => 100, 'teil' => 5.44, 'voll' => 10.24]]],
+]];
+$lk = fn($ibn, $kwp, $voll = false) => call($ems, 'lookupEegTariffCt', [$tab, $ibn, $kwp, $voll]);
+check('IBN 24.10.2012, 9,18 kWp: 18,36 ct (Dietmars Anlage)', $lk('2012-10-24', 9.18) === 18.36, var_export($lk('2012-10-24', 9.18), true));
+check('IBN 10/2012, 15 kWp: Mischsatz (10x18,36 + 5x17,42)/15 = 18,05 ct', $lk('2012-10-15', 15.0) === 18.05, var_export($lk('2012-10-15', 15.0), true));
+check('IBN 09/2026, 8 kWp Volleinspeisung: 12,22 ct', $lk('2026-09-13', 8.0, true) === 12.22);
+check('IBN 09/2026, 8 kWp Teileinspeisung: 7,70 ct', $lk('2026-09-13', 8.0) === 7.70);
+check('kein passender Zeitraum in der Tabelle: null (nicht raten)', $lk('2011-05-01', 9.18) === null);
+check('leere Tabelle: null', call($ems, 'lookupEegTariffCt', [[], '2012-10-24', 9.18, false]) === null);
+check('Volleinspeisung ohne Voll-Satz (vor 2022): Teil-Satz gilt', $lk('2012-10-24', 9.18, true) === 18.36);
+check('Anlage groesser als die Tabelle abdeckt (2000 kWp): null statt falschem Satz', $lk('2012-10-24', 2000.0) === null);
+
+check('EEG-Fassung 24.10.2012: PV-Novelle 2012', call($ems, 'eegFassung', ['2012-10-24']) === 'EEG 2012 (PV-Novelle)');
+check('EEG-Fassung 01.03.2025: Solarspitzengesetz', call($ems, 'eegFassung', ['2025-03-01']) === 'EEG 2023 mit Solarspitzengesetz');
+check('EEG-Fassung 2027: Regelung offen (noch kein Gesetz)', strpos(call($ems, 'eegFassung', ['2027-02-01']), 'offen') !== false);
+check('Foerderende IBN 24.10.2012: 31.12.2032', call($ems, 'foerderende', ['2012-10-24']) === '2032-12-31');
+
+$codes = fn($ibn, $kwp, $o = []) => array_column(call($ems, 'plantObligations', [$ibn, $kwp, $o]), 'code');
+$c = $codes('2012-10-24', 9.18, ['einspeisemanagement' => 2]);
+check('Dietmar (2012, 9,18 kWp, Rundsteuerempfaenger): KEIN Solarspitzengesetz, KEINE 70 %', !in_array('negativpreis', $c) && !in_array('einspeisung60', $c) && !in_array('einspeisung70', $c), json_encode($c));
+check('Bestand 2012 mit 70-%-Kappung angegeben: Hinweis 70 %', in_array('einspeisung70', $codes('2012-10-24', 9.18, ['einspeisemanagement' => 1])));
+$c = $codes('2025-06-01', 9.0);
+check('Neuanlage 06/2025, 9 kWp, ohne Smart Meter: Negativpreis-Regel + 60-%-Grenze', in_array('negativpreis', $c) && in_array('einspeisung60', $c), json_encode($c));
+check('Neuanlage mit Smart Meter UND Steuerbox: 60-%-Grenze entfaellt', !in_array('einspeisung60', $codes('2025-06-01', 9.0, ['iMSys' => true, 'steuerbox' => true])));
+check('Steckersolar (1,6 kWp, 2025): weder Negativpreis-Regel noch 60 %', array_diff($codes('2025-06-01', 1.6), ['marktstammdaten']) === []);
+check('Bestand, freiwillig ins neue Modell: Negativpreis-Regel gilt', in_array('negativpreis', $codes('2012-10-24', 9.18, ['neuesModell' => true])));
+check('IBN 2003 (Foerderende 2023 vorbei): Ue20-Hinweis', in_array('ue20', $codes('2003-06-01', 5.0)));
+
+// Verguetungs-Reihenfolge: eingetragen > Variable > Tabelle > Platzhalter
+check('nichts angegeben: Platzhalter 0,1836, Quelle sichtbar', call($ems, 'getFeedTariffEur') === ['eur' => 0.1836, 'quelle' => 'platzhalter']);
+feedTariffVar(0.20);
+check('verknuepfte Variable: 0,20 EUR, Quelle variable', call($ems, 'getFeedTariffEur') === ['eur' => 0.20, 'quelle' => 'variable']);
+prop('ANL_Verguetung_ct', 12.5);
+check('eingetragener Wert hat Vorrang: 12,5 ct -> 0,125 EUR, Quelle eingetragen', call($ems, 'getFeedTariffEur') === ['eur' => 0.125, 'quelle' => 'eingetragen']);
+prop('ANL_IBN_Datum', '2012-10-24'); prop('ANL_kWp_Manuell', 9.18); prop('ANL_Einspeisemanagement', 2);
+$pi = call($ems, 'GetPlantInfo');
+check('GetPlantInfo: Vertrag 1.0, EEG-Fassung, Foerderende, kWp eingetragen, Verguetung 12,5 ct',
+    $pi['contractVersion'] === '1.0' && $pi['eegFassung'] === 'EEG 2012 (PV-Novelle)' && $pi['foerderende'] === '2032-12-31'
+    && $pi['kwp'] === 9.18 && $pi['kwpQuelle'] === 'eingetragen' && $pi['verguetungCt'] === 12.5 && $pi['verguetungQuelle'] === 'eingetragen'
+    && $pi['einspeisemanagement'] === 'rundsteuerempfaenger', json_encode($pi, JSON_UNESCAPED_UNICODE));
+check('GetPlantInfo nackt (nichts angegeben): kein Fehler, leere Felder', ($n = call(freshEms(), 'GetPlantInfo'))['inbetriebnahme'] === '' && $n['eegFassung'] === '' && $n['kwpQuelle'] === 'fehlt' && $n['pflichten'] === [], json_encode($n));
+
+// ===========================================================================
 echo "\n" . ($fails === 0 ? "ALLE SZENARIEN BESTANDEN" : "$fails SZENARIO(S) VERLETZT") . "\n\n";
 exit($fails === 0 ? 0 : 1);
