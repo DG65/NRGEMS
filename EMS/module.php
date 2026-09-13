@@ -4449,15 +4449,15 @@ class EMS extends IPSModule
     {
         $pv = array_values((array)($in['pv'] ?? array()));
         if (count($pv) < 96 || array_sum(array_map('floatval', $pv)) <= 0.0) {
-            return array('active' => false, 'reason' => 'keine PV-Prognose fuer heute');
+            return array('active' => false, 'reason' => 'keine PV-Prognose für heute');
         }
         $nowSlot = (int)$in['nowSlot'];
         if ($nowSlot >= (int)$in['latestSlot']) {
-            return array('active' => false, 'reason' => sprintf('spaetester Freigabezeitpunkt %02d:%02d erreicht', intdiv((int)$in['latestSlot'], 4), ((int)$in['latestSlot'] % 4) * 15));
+            return array('active' => false, 'reason' => sprintf('spätester Freigabezeitpunkt %02d:%02d erreicht', intdiv((int)$in['latestSlot'], 4), ((int)$in['latestSlot'] % 4) * 15));
         }
         $capKwh = (float)$in['capKwh'];
         if ($capKwh <= 0.0) {
-            return array('active' => false, 'reason' => 'Batteriekapazitaet unbekannt');
+            return array('active' => false, 'reason' => 'Batteriekapazität unbekannt');
         }
         $soc = (float)$in['soc'];
         if ($soc >= 99.0) {
@@ -4482,10 +4482,10 @@ class EMS extends IPSModule
             $bias = (float)($acc['bias'] ?? 0.0);
             if ($mape > (float)($in['maxMape'] ?? 30)) {
                 return array('active' => false,
-                    'reason' => sprintf('Prognoseguete zu schlecht (Fehlerquote %.0f %% > %d %%, %d Tage)', $mape, (int)$in['maxMape'], (int)$acc['days']));
+                    'reason' => sprintf('Prognosegüte zu schlecht (Fehlerquote %.0f %% > %d %%, %d Tage)', $mape, (int)$in['maxMape'], (int)$acc['days']));
             }
             $biasUp = max(0.0, $bias);
-            $guete = sprintf(', Guete %.0f %%/%+.0f %%', $mape, $bias);
+            $guete = sprintf(', Güte %.0f %%/%+.0f %%', $mape, $bias);
         }
         $needKwh = $capKwh * (100.0 - $soc) / 100.0;
         // Vorsichtige Prognose p10 bevorzugen (unsichere Tage -> automatisch
@@ -4505,10 +4505,10 @@ class EMS extends IPSModule
         $reqKwh = $needKwh * $safety / 100.0;
         if ($restKwh < $reqKwh) {
             return array('active' => false, 'basis' => $basis,
-                'reason' => sprintf('Restueberschuss heute (%s) %.1f kWh reicht nicht fuer %.1f kWh Platz (+%d %% Sicherheit%s)', $basis, $restKwh, $needKwh, (int)round($safety) - 100, $guete));
+                'reason' => sprintf('Restüberschuss heute (%s) %.1f kWh reicht nicht für %.1f kWh Platz (+%d %% Sicherheit%s)', $basis, $restKwh, $needKwh, (int)round($safety) - 100, $guete));
         }
         return array('active' => true, 'basis' => $basis,
-            'reason' => sprintf('Restueberschuss heute (%s) %.1f kWh >= %.1f kWh Platz (+%d %%%s), PV %.0f W > Haus %.0f W', $basis, $restKwh, $needKwh, (int)round($safety) - 100, $guete, $in['pvW'], $in['houseW']));
+            'reason' => sprintf('Restüberschuss heute (%s) %.1f kWh >= %.1f kWh Platz (+%d %%%s), PV %.0f W > Haus %.0f W', $basis, $restKwh, $needKwh, (int)round($safety) - 100, $guete, $in['pvW'], $in['houseW']));
     }
 
     /**

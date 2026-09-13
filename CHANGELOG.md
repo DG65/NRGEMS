@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.33.5 (2026-09-13)
+- **B1-Texte mit echten Umlauten:** „Restüberschuss“, „für“, „Güte“,
+  „Prognosegüte“, „spätester Freigabezeitpunkt“, „Batteriekapazität“ statt
+  der Umschreibungen mit ue/ae. Nur Anzeige.
+
 ## 0.33.4 (2026-09-13)
 - **B1 zeigt, warum er gerade nicht greift.** Könnte B1 eingreifen (der
   Wechselrichter kann es, die Bausteine sind an, EMS fährt die Automatik),

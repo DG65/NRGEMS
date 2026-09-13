@@ -619,8 +619,8 @@ $acc = fn(array $o = []) => array_merge(['contractVersion' => '1.0', 'days' => 9
 $g = ['maxMape' => 30, 'minDays' => 5];
 check('Guete fehlt (Schnittstelle nicht da): unveraendert sperren', $b1(array_merge($g, ['accuracy' => null]))['active'] === true);
 check('Dietmars Livewerte (9 Tage, 16,8 % Fehler, Bias -12,6 %): unveraendert sperren, Guete im Grund',
-    ($r = $b1(array_merge($g, ['accuracy' => $acc()])))['active'] === true && strpos($r['reason'], 'Guete') !== false, $r['reason']);
-check('Fehlerquote 45 % > 30 %: B1 setzt aus', ($r = $b1(array_merge($g, ['accuracy' => $acc(['mape' => 45.0])])))['active'] === false && strpos($r['reason'], 'Prognoseguete') !== false, $r['reason']);
+    ($r = $b1(array_merge($g, ['accuracy' => $acc()])))['active'] === true && strpos($r['reason'], 'Güte') !== false, $r['reason']);
+check('Fehlerquote 45 % > 30 %: B1 setzt aus', ($r = $b1(array_merge($g, ['accuracy' => $acc(['mape' => 45.0])])))['active'] === false && strpos($r['reason'], 'Prognosegüte') !== false, $r['reason']);
 check('zu wenig Tage (3 < 5): Guete wird ignoriert, auch bei 45 %', $b1(array_merge($g, ['accuracy' => $acc(['mape' => 45.0, 'days' => 3])]))['active'] === true);
 check('Prognose zuletzt 100 % zu HOCH (bias +100): Zuschlag verdoppelt, 52 kWh > 49 kWh -> nicht sperren',
     ($r = $b1(array_merge($g, ['accuracy' => $acc(['bias' => 100.0])])))['active'] === false, $r['reason']);
