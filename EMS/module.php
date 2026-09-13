@@ -245,7 +245,7 @@ class EMS extends IPSModule
         // Anlagendaten (Anlagenstammdaten-Konzept 12./13.09.2026, Dietmar:
         // im EMS, eigene lesende Schnittstelle EMS_GetPlantInfo). Keine
         // Anlagenwerte als Default -- leer/0 heisst "nicht angegeben".
-        $this->RegisterPropertyString('ANL_IBN_Datum',          '');   // JJJJ-MM-TT
+        $this->RegisterPropertyString('ANL_IBN_Datum',          '');   // TT.MM.JJJJ (deutsch; JJJJ-MM-TT wird ebenfalls verstanden)
         $this->RegisterPropertyInteger('ANL_Einspeiseart',      0);    // 0 Teileinspeisung, 1 Volleinspeisung
         $this->RegisterPropertyFloat('ANL_kWp_Manuell',         0.0);  // 0 = aus der PV-Prognose
         $this->RegisterPropertyFloat('ANL_Verguetung_ct',       0.0);  // 0 = automatisch (Variable/Tabelle)
@@ -4460,13 +4460,42 @@ class EMS extends IPSModule
         if ($this->ReadPropertyInteger('VAR_TIB_Feed_Tariff') > 0) {
             return array('eur' => (float)$this->readVar('VAR_TIB_Feed_Tariff', 0.1836), 'quelle' => 'variable');
         }
-        $ibn = $this->ReadPropertyString('ANL_IBN_Datum');
+        $ibn = $this->getPlantIbn();
         $kwp = $this->getPlantKwp();
         if ($ibn !== '' && $kwp > 0.0) {
             $ct = $this->lookupEegTariffCt($this->loadEegTable(), $ibn, $kwp, $this->ReadPropertyInteger('ANL_Einspeiseart') === 1);
             if ($ct !== null) { return array('eur' => $ct / 100.0, 'quelle' => 'berechnet'); }
         }
         return array('eur' => 0.1836, 'quelle' => 'platzhalter');
+    }
+
+    /**
+     * Inbetriebnahmedatum aus dem Formular, deutsch TT.MM.JJJJ eingegeben
+     * (Dietmar 13.09.2026: alle Datumsformate deutsch). Ein bereits im
+     * Format JJJJ-MM-TT eingetragener Wert wird weiter verstanden. Rueckgabe
+     * intern JJJJ-MM-TT, '' bei leer oder ungueltig.
+     */
+    private function getPlantIbn(): string
+    {
+        return $this->parsePlantDate($this->ReadPropertyString('ANL_IBN_Datum'));
+    }
+
+    private function parsePlantDate(string $s): string
+    {
+        $s = trim($s);
+        if (preg_match('/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/', $s, $m)) {
+            return checkdate((int)$m[2], (int)$m[1], (int)$m[3]) ? sprintf('%04d-%02d-%02d', $m[3], $m[2], $m[1]) : '';
+        }
+        if (preg_match('/^(\d{4})-(\d{2})-(\d{2})$/', $s, $m)) {
+            return checkdate((int)$m[2], (int)$m[3], (int)$m[1]) ? $s : '';
+        }
+        return '';
+    }
+
+    /** JJJJ-MM-TT -> TT.MM.JJJJ fuer die Anzeige, '' bleibt ''. */
+    private function germanDate(string $iso): string
+    {
+        return preg_match('/^(\d{4})-(\d{2})-(\d{2})$/', $iso, $m) ? $m[3] . '.' . $m[2] . '.' . $m[1] : '';
     }
 
     /** Anlagengroesse in kWp: eingetragen, sonst PV-Prognose (PVF_GetGenerators totalKwp), sonst 0. */
@@ -4597,7 +4626,7 @@ class EMS extends IPSModule
      */
     public function GetPlantInfo(): array
     {
-        $ibn = $this->ReadPropertyString('ANL_IBN_Datum');
+        $ibn = $this->getPlantIbn();
         $kwp = $this->getPlantKwp();
         $tarif = $this->getFeedTariffEur();
         $o = array(
@@ -4611,11 +4640,13 @@ class EMS extends IPSModule
         $em = array(0 => 'unbekannt', 1 => '70prozent', 2 => 'rundsteuerempfaenger', 3 => 'steuerbox', 4 => 'keines');
         return array(
             'contractVersion'     => '1.0',
-            'inbetriebnahme'      => $ibn,
+            'inbetriebnahme'      => $ibn,            // JJJJ-MM-TT (Maschinenformat im Vertrag)
+            'inbetriebnahmeText'  => $this->germanDate($ibn), // TT.MM.JJJJ zur Anzeige
             'kwp'                 => round($kwp, 3),
             'kwpQuelle'           => ((float)$this->ReadPropertyFloat('ANL_kWp_Manuell') > 0.0) ? 'eingetragen' : ($kwp > 0.0 ? 'prognose' : 'fehlt'),
             'eegFassung'          => $this->eegFassung($ibn),
             'foerderende'         => $this->foerderende($ibn),
+            'foerderendeText'     => $this->germanDate($this->foerderende($ibn)),
             'einspeiseart'        => $o['einspeiseart'],
             'verguetungsform'     => $o['verguetungsform'] === 1 ? 'direktvermarktung' : 'fest',
             'verguetungCt'        => round($tarif['eur'] * 100.0, 2),

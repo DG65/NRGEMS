@@ -741,6 +741,19 @@ check('GetPlantInfo: Vertrag 1.0, EEG-Fassung, Foerderende, kWp eingetragen, Ver
     $pi['contractVersion'] === '1.0' && $pi['eegFassung'] === 'EEG 2012 (PV-Novelle)' && $pi['foerderende'] === '2032-12-31'
     && $pi['kwp'] === 9.18 && $pi['kwpQuelle'] === 'eingetragen' && $pi['verguetungCt'] === 12.5 && $pi['verguetungQuelle'] === 'eingetragen'
     && $pi['einspeisemanagement'] === 'rundsteuerempfaenger', json_encode($pi, JSON_UNESCAPED_UNICODE));
+echo "\n   Datumsformat deutsch (TT.MM.JJJJ)\n";
+check('24.10.2012 -> intern 2012-10-24', call($ems, 'parsePlantDate', ['24.10.2012']) === '2012-10-24');
+check('einstellig 1.4.2012 -> 2012-04-01', call($ems, 'parsePlantDate', ['1.4.2012']) === '2012-04-01');
+check('ungueltiges Datum 31.02.2012 -> leer (nicht raten)', call($ems, 'parsePlantDate', ['31.02.2012']) === '');
+check('altes Format 2012-10-24 wird weiter verstanden', call($ems, 'parsePlantDate', ['2012-10-24']) === '2012-10-24');
+check('Unsinn "Oktober 2012" -> leer', call($ems, 'parsePlantDate', ['Oktober 2012']) === '');
+check('Anzeige 2032-12-31 -> 31.12.2032', call($ems, 'germanDate', ['2032-12-31']) === '31.12.2032');
+$e3 = freshEms(); $GLOBALS['PROP'][EMS_IID]['ANL_IBN_Datum'] = '24.10.2012'; $GLOBALS['PROP'][EMS_IID]['ANL_kWp_Manuell'] = 9.18;
+$pi3 = call($e3, 'GetPlantInfo');
+check('GetPlantInfo mit deutscher Eingabe: inbetriebnahmeText 24.10.2012, foerderendeText 31.12.2032, Vertrag weiter JJJJ-MM-TT',
+    $pi3['inbetriebnahmeText'] === '24.10.2012' && $pi3['foerderendeText'] === '31.12.2032' && $pi3['inbetriebnahme'] === '2012-10-24'
+    && $pi3['eegFassung'] === 'EEG 2012 (PV-Novelle)', json_encode($pi3, JSON_UNESCAPED_UNICODE));
+
 echo "\n   mit der echten Verguetungstabelle (EMS/eeg-pv-verguetung.json)\n";
 $echt = call($ems, 'loadEegTable');
 check('Tabelle vorhanden und lesbar (> 100 Zeitraeume)', count($echt['zeitraeume'] ?? []) > 100, 'Zeitraeume: ' . count($echt['zeitraeume'] ?? []));

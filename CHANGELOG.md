@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.34.1 (2026-09-13)
+- **Inbetriebnahmedatum im deutschen Format.** Das Feld im Panel „🏠 Anlage“
+  erwartet jetzt TT.MM.JJJJ (z. B. 24.10.2012) und prüft das Format schon
+  bei der Eingabe. Ein im alten Format JJJJ-MM-TT eingetragener Wert wird
+  weiter verstanden, ein ungültiges Datum wie 31.02. gilt als „nicht
+  angegeben“.
+- **`GetPlantInfo`:** zusätzlich die Anzeigefelder `inbetriebnahmeText` und
+  `foerderendeText` im Format TT.MM.JJJJ. Die Vertragsfelder
+  `inbetriebnahme`/`foerderende` bleiben im Maschinenformat JJJJ-MM-TT.
+- **Prüfstand:** Block 17 um sieben Datumsfälle erweitert.
+
 ## 0.34.0 (2026-09-13)
 - **EEG-Vergütungstabelle für PV ab 04/2000** (`EMS/eeg-pv-verguetung.json`,
   Stand 13.09.2026):

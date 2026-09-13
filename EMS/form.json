@@ -290,7 +290,8 @@
                 {
                     "type": "ValidationTextBox",
                     "name": "ANL_IBN_Datum",
-                    "caption": "Inbetriebnahmedatum (JJJJ-MM-TT)"
+                    "caption": "Inbetriebnahmedatum (TT.MM.JJJJ, z. B. 24.10.2012)",
+                    "validate": "^(\\d{1,2}\\.\\d{1,2}\\.\\d{4})?$"
                 },
                 {
                     "type": "NumberSpinner",
