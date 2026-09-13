@@ -88,6 +88,15 @@ define('GUID_WEBFRONT', '{3565B1F2-8F7B-4311-A4B6-1BF1D868F39E}');
 
 class EMS extends IPSModule
 {
+    // Netzdienliche Faehigkeiten -> InverterHub-Ident (Vertrag 1.3,
+    // gridServiceCapabilities). Reihenfolge = Reihenfolge der Rueckgabe.
+    private const GRID_SERVICE_IDENTS = array(
+        'chargeInhibit'   => 'svc_charge_inhibit',
+        'gridCharge'      => 'svc_grid_charge_w',
+        'dischargeToGrid' => 'svc_discharge_to_grid_w',
+        'release'         => 'svc_release',
+    );
+
     // ----------------------------------------------------------------
     //  Modul-Lebenszyklus
     // ----------------------------------------------------------------
@@ -1355,10 +1364,50 @@ class EMS extends IPSModule
                 'acPowerID'        => $i['acPowerID']         ?? 0,
                 'batPowerID'       => $i['batPowerID']        ?? 0,
                 'socID'            => $i['socID']             ?? 0,
+                'contractVersion'  => (string)($i['contractVersion'] ?? '1.0'),
+                // Vertrag 1.3 (12.09.2026): fehlt bei aelteren InverterHub-Staenden
+                'gridServiceCapabilities' => $i['gridServiceCapabilities'] ?? null,
             );
         }
 
         return null;
+    }
+
+    /**
+     * Netzdienliche Faehigkeiten des Wechselrichters (InverterHub-Vertrag 1.3,
+     * `gridServiceCapabilities`, Netzdienlich-Konzept 12.09.2026). Grundlage
+     * fuer die netzdienlichen Bausteine: EMS fragt nur "kannst du das?", der
+     * Treiber uebersetzt intern. Live bestaetigt an GoodWe 12./13.09.2026.
+     *
+     * Liefert eine leere Liste -- und damit "Baustein entfaellt, WR-Automatik
+     * bleibt" statt eines Fehlers --, wenn:
+     * - kein InverterHub-Wechselrichter gefunden wurde,
+     * - EMS nicht die Steuerhoheit hat (controlAuthority != 'ems') oder der
+     *   Treiber keine Steuerregister hat (controllable = false),
+     * - der Vertrag das Feld nicht kennt (vor 1.3) oder eine fremde Major hat,
+     * - der Treiber nichts davon kann (leere Liste, z. B. reine Lesetreiber).
+     * Unbekannte Eintraege werden verworfen (vorwaertskompatibel).
+     */
+    private function getGridServiceCapabilities(): array
+    {
+        $inv = $this->getInverterEntry();
+        if ($inv === null || ($inv['source'] ?? '') !== 'inverterhub' || (int)($inv['instanceID'] ?? 0) <= 0) { return array(); }
+        if (($inv['controlAuthority'] ?? 'none') !== 'ems' || empty($inv['controllable'])) { return array(); }
+        if ((int)explode('.', (string)($inv['contractVersion'] ?? '1.0'))[0] !== 1) { return array(); }
+        $caps = $inv['gridServiceCapabilities'] ?? null;
+        if (!is_array($caps)) { return array(); }
+        return array_values(array_intersect(array_keys(self::GRID_SERVICE_IDENTS), $caps));
+    }
+
+    private function hasGridService(string $cap): bool
+    {
+        return in_array($cap, $this->getGridServiceCapabilities(), true);
+    }
+
+    /** svc_*-Ident fuer eine Faehigkeit, '' wenn unbekannt. */
+    private function gridServiceIdent(string $cap): string
+    {
+        return self::GRID_SERVICE_IDENTS[$cap] ?? '';
     }
 
     /**

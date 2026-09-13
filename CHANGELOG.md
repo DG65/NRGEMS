@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.32.1 (2026-09-13)
+- **Grundlage für die netzdienlichen Bausteine:** EMS liest aus dem
+  InverterHub-Vertrag 1.3 (`gridServiceCapabilities`), welche netzdienlichen
+  Befehle der Wechselrichter kann: Laden sperren, Netzladung, Einspeisen aus
+  der Batterie, Freigabe. Die Befehle wurden an einem GoodWe am 12./13.09.
+  live bestätigt.
+  - `getGridServiceCapabilities()`, `hasGridService()`, `gridServiceIdent()`,
+    rein lesend. Es wird noch nichts geschaltet.
+  - Die Liste bleibt leer, wenn EMS nicht die Steuerhoheit hat, der Treiber
+    keine Steuerregister oder keine dieser Befehle hat, oder der Vertrag älter
+    als 1.3 ist bzw. eine fremde Hauptversion hat. Der jeweilige Baustein
+    entfällt dann, und die WR-Automatik läuft weiter. Einen Fehler gibt es
+    dabei nicht.
+- **Prüfstand:** Block 14 mit 13 Fällen (nackt, voller GoodWe, leere Liste,
+  Teilmenge, alter Vertrag, fremde Steuerhoheit, keine Steuerregister, fremde
+  Hauptversion, unbekannter Eintrag, kaputtes Feld).
+
 ## 0.32.0 (2026-09-13)
 - **Neu: Einspeise-Überwachung (Batterie → Netz).** EMS misst jeden Zyklus,
   ob die Batterie entlädt, während gleichzeitig ins Netz eingespeist wird.

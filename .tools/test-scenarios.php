@@ -549,5 +549,41 @@ $withSeen(0);
 check('Vertrag 1.3, lastSeenAt = 0 (noch nie geantwortet): Leistung unbekannt (0)', call($ems, 'readChargerPowerKw', [1]) === 0.0);
 
 // ===========================================================================
+echo "\n14) Netzdienliche Faehigkeiten des WR (InverterHub-Vertrag 1.3) -- Grundlage der Bausteine\n";
+$ems = freshEms();
+$GLOBALS['INSTMOD'][IHUB_IID] = GUID_INVERTERHUB;
+$wr = function (array $o = []) {
+    attr('PartnerCache', json_encode(['inverterhub' => [array_merge(['instanceID' => IHUB_IID, 'contractVersion' => '1.3',
+        'controlAuthority' => 'ems', 'controllable' => true,
+        'gridServiceCapabilities' => ['chargeInhibit', 'gridCharge', 'dischargeToGrid', 'release']], $o)]]));
+};
+attr('PartnerCache', json_encode([]));
+check('nackt: kein Wechselrichter -> keine Faehigkeit, kein Fehler', call($ems, 'getGridServiceCapabilities') === []);
+$wr();
+check('GoodWe, Vertrag 1.3, EMS hat die Steuerhoheit: alle vier Faehigkeiten',
+    call($ems, 'getGridServiceCapabilities') === ['chargeInhibit', 'gridCharge', 'dischargeToGrid', 'release'], json_encode(call($ems, 'getGridServiceCapabilities')));
+check('hasGridService(gridCharge) = true, Ident svc_grid_charge_w', call($ems, 'hasGridService', ['gridCharge']) === true && call($ems, 'gridServiceIdent', ['gridCharge']) === 'svc_grid_charge_w');
+$wr(['gridServiceCapabilities' => []]);
+check('Treiber ohne diese Befehle (leere Liste, z. B. SMA/Fronius): keine Faehigkeit', call($ems, 'getGridServiceCapabilities') === [] && call($ems, 'hasGridService', ['chargeInhibit']) === false);
+$wr(['gridServiceCapabilities' => ['chargeInhibit', 'release']]);
+check('Teilmenge (nur Laden sperren + Freigabe): genau diese zwei', call($ems, 'getGridServiceCapabilities') === ['chargeInhibit', 'release'] && call($ems, 'hasGridService', ['dischargeToGrid']) === false);
+$wr(['contractVersion' => '1.2', 'gridServiceCapabilities' => null]);
+check('aelterer Vertrag 1.2 ohne das Feld: keine Faehigkeit (Baustein entfaellt, kein Fehler)', call($ems, 'getGridServiceCapabilities') === []);
+$wr(['controlAuthority' => 'external']);
+check('Steuerhoheit extern (z. B. Sunny Home Manager): keine Faehigkeit, obwohl der Treiber sie kann', call($ems, 'getGridServiceCapabilities') === []);
+$wr(['controlAuthority' => 'none']);
+check('Steuerhoheit "none": keine Faehigkeit', call($ems, 'getGridServiceCapabilities') === []);
+$wr(['controllable' => false]);
+check('Treiber ohne Steuerregister (controllable=false): keine Faehigkeit', call($ems, 'getGridServiceCapabilities') === []);
+$wr(['contractVersion' => '2.0']);
+check('fremde Vertrags-Major 2.0: vorsichtshalber keine Faehigkeit', call($ems, 'getGridServiceCapabilities') === []);
+$wr(['gridServiceCapabilities' => ['chargeInhibit', 'peakShave', 'release']]);
+check('unbekannter Eintrag (kuenftige Faehigkeit) wird verworfen, bekannte bleiben', call($ems, 'getGridServiceCapabilities') === ['chargeInhibit', 'release']);
+$wr(['gridServiceCapabilities' => 'chargeInhibit']);
+check('kaputtes Feld (String statt Liste): keine Faehigkeit, kein Absturz', call($ems, 'getGridServiceCapabilities') === []);
+check('unbekannte Faehigkeit hat keinen Ident', call($ems, 'gridServiceIdent', ['peakShave']) === '');
+unset($GLOBALS['INSTMOD'][IHUB_IID]);
+
+// ===========================================================================
 echo "\n" . ($fails === 0 ? "ALLE SZENARIEN BESTANDEN" : "$fails SZENARIO(S) VERLETZT") . "\n\n";
 exit($fails === 0 ? 0 : 1);
