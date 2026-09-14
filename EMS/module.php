@@ -76,7 +76,9 @@ define('GUID_ARCHIVECONTROL', '{43192F0B-135B-4CE7-A0A7-1475603F3060}');
 // SteuerboxHub (SBH_GetState-Vertrag: §14a-Netzbetreiber-Dimmung, oberste
 // Prioritaet -- siehe SUITE.md "§14a-Lastabwurf-Priorisierung")
 define('GUID_STEUERBOXHUB', '{B76BE0BA-DF99-4B81-81BD-636A610011EE}');
-// NRG-Stack Boersenpreis (NRGSpotPrice, SPOT_GetPriceCurve 1.0, 13.09.2026):
+// NRG-Stack Boersenpreis (Klasse Boersenpreis, vormals NRGSpotPrice, Repo
+// DG65/NRGBoersenpreis seit 14.09.2026 -- GUID/Praefix SPOT_/Vertraege
+// unveraendert; SPOT_GetPriceCurve 1.0, 13.09.2026):
 // Day-Ahead-Boersenpreis netto -- NUR fuer § 51 EEG (negative Preise) und
 // netzdienliche Signale, NIE als Bezugspreis (Dietmar 13.09.2026).
 define('GUID_SPOTPRICE', '{11BBF147-16A1-4332-82A3-29BB31154D03}');
