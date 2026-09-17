@@ -1124,6 +1124,16 @@ $ctxCap = array_merge($ctxFull, ['negativpreisPflicht' => false]);
 $dCap = call($ems, 'simulateDaySlot', [50, 0.30, 8000.0, 95.0, [], $ctxCap, 0.0]);
 check('dauerhafte Einspeisegrenze kappt PV-Vollernte-Export (8000W PV, Grenze 3000W)', $dCap['plan']['op'] === EMS_OP_EXPORT && (int)$dCap['plan']['power'] === 3000 && strpos($dCap['plan']['reason'], 'Einspeisegrenze') !== false, json_encode($dCap['plan']));
 
+echo "\n24) SimulateDayPlanScenarios -- mehrere Rechtslagen auf einen Schlag (Funktionsfaehigkeits-Nachweis)\n";
+$s = call($ems, 'SimulateDayPlanScenarios', [[]]);
+check('Referenzset ohne Angabe: 4 Szenarien, alle ok', count($s) === 4 && count(array_filter($s, fn($x) => $x['ok'] === true)) === 4, json_encode(array_map(fn($x) => $x['ok'], $s)));
+check('Bestandsanlage 2012: keine Pflicht, keine Grenze', $s['24.10.2012']['negativpreisPflicht'] === false && $s['24.10.2012']['einspeisegrenzeW'] === null);
+check('vor Solarspitzengesetz (2024): ebenfalls keine Pflicht/Grenze', $s['01.01.2024']['negativpreisPflicht'] === false && $s['01.01.2024']['einspeisegrenzeW'] === null);
+check('Solarspitzengesetz (03/2025): Pflicht + 60-%-Grenze', $s['01.03.2025']['negativpreisPflicht'] === true && $s['01.03.2025']['einspeisegrenzeW'] === 5508);
+check('jedes Szenario traegt sein Label', $s['01.03.2025']['label'] === 'Solarspitzengesetz (§ 51 + 60-%-Einspeisegrenze)');
+$eigene = call($ems, 'SimulateDayPlanScenarios', [['24.10.2012', '01.03.2025']]);
+check('eigene Datumsliste: nur die angegebenen, Label = Datum selbst', count($eigene) === 2 && $eigene['01.03.2025']['label'] === '01.03.2025');
+
 // ===========================================================================
 echo "\n" . ($fails === 0 ? "ALLE SZENARIEN BESTANDEN" : "$fails SZENARIO(S) VERLETZT") . "\n\n";
 exit($fails === 0 ? 0 : 1);

@@ -3671,6 +3671,43 @@ class EMS extends IPSModule
     }
 
     /**
+     * Mehrere SimulateDayPlan()-Aufrufe in einem Rutsch -- gedacht fuer
+     * Dashboard, um EMS' Verhalten unter verschiedenen EEG-Rechtslagen
+     * nebeneinander zu zeigen (Funktionsfaehigkeits-Nachweis, nicht nur
+     * Zwei-Varianten-Vergleich). Ohne Angabe wird ein festes Referenzset
+     * genutzt, das die im Code tatsaechlich unterschiedenen Rechtslagen
+     * abdeckt (siehe plantObligations()): Bestandsanlage ohne Sonderpflichten,
+     * moderne Anlage vor dem Solarspitzengesetz, Anlage unter dem
+     * Solarspitzengesetz, und eine Anlage nach Foerderende (Ue20). Ebenso
+     * bewusst NICHT im Formular/Funktionsvertrag -- nur fuer Dashboard/Skript.
+     *
+     * @param string[] $ibnDaten leer = Referenzset, sonst eigene Datumsliste (TT.MM.JJJJ).
+     * @return array<string, array> je Eintrag Rueckgabe wie SimulateDayPlan(), zusaetzlich 'label'.
+     */
+    public function SimulateDayPlanScenarios(array $ibnDaten = array()): array
+    {
+        if (empty($ibnDaten)) {
+            $ibnDaten = array(
+                '24.10.2012' => 'Bestandsanlage (keine Sonderpflichten)',
+                '01.01.2024' => 'Moderne Anlage vor dem Solarspitzengesetz',
+                '01.03.2025' => 'Solarspitzengesetz (§ 51 + 60-%-Einspeisegrenze)',
+                '01.01.2003' => 'Anlage nach Förderende (Ü20)',
+            );
+        } else {
+            $labeled = array();
+            foreach ($ibnDaten as $d) { $labeled[$d] = $d; }
+            $ibnDaten = $labeled;
+        }
+        $out = array();
+        foreach ($ibnDaten as $ibnDatum => $label) {
+            $r = $this->SimulateDayPlan((string)$ibnDatum);
+            $r['label'] = $label;
+            $out[$ibnDatum] = $r;
+        }
+        return $out;
+    }
+
+    /**
      * Wie getFeedTariffEur(), aber mit ueberschreibbarem Inbetriebnahmedatum
      * -- ausschliesslich fuer SimulateDayPlan(). Ein manuell eingetragener
      * Wert (Property/Variable) gilt weiterhin unveraendert: wer die

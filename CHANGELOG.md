@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.43.1 (2026-09-17)
+- **Neu (intern, kein Formular): `EMS_SimulateDayPlanScenarios(array $ibnDaten = [])`.**
+  Ruft `EMS_SimulateDayPlan()` für mehrere Inbetriebnahmedaten in einem
+  Rutsch auf, für Dashboard gedacht: EMS' Verhalten soll nicht nur an zwei,
+  sondern an mehreren Rechtslagen nebeneinander gezeigt werden können, um
+  die Funktionsfähigkeit zu belegen. Ohne Angabe ein festes Referenzset, das
+  die im Code tatsächlich unterschiedenen Fälle abdeckt: Bestandsanlage ohne
+  Sonderpflichten, moderne Anlage vor dem Solarspitzengesetz, Anlage unter
+  dem Solarspitzengesetz, Anlage nach Förderende (Ü20). Ebenfalls nicht im
+  Funktionsvertrag verankert -- nur für Dashboard/Skript.
+
 ## 0.43.0 (2026-09-17)
 - **Neu (intern, kein Formular): `EMS_SimulateDayPlan($IbnDatum)`.** Berechnet
   rein lesend einen Tagesplan für die reale Anlage (Größe, Wetter, PV-Prognose,
