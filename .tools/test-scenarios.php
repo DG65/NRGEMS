@@ -1096,5 +1096,34 @@ $ziele = array_unique(array_map(fn($a) => $a[0], $GLOBALS['ACTIONS']));
 check('EMS schreibt trotzdem nur über EINE Anbindung (die zählende 701)', array_values($ziele) === [701], json_encode($GLOBALS['ACTIONS']));
 
 // ===========================================================================
+echo "\n23) SimulateDayPlan -- gleiche Anlage, anderes Inbetriebnahmedatum (Dietmar 17.09.2026)\n";
+$ems = freshEms();
+prop('TIBBER_Active', true); prop('BAT_Active', true); prop('ANL_kWp_Manuell', 9.18);
+prop('BAT_Capacity_kWh', 40.0); prop('EMS_Max_Power_W', 20000);
+pricesToday(0.30);
+$r = call($ems, 'SimulateDayPlan', ['nicht-parsbar']);
+check('ungueltiges Datum: ok=false statt Fatal Error', $r['ok'] === false && isset($r['fehler']));
+$r = call($ems, 'SimulateDayPlan', ['24.10.2012']);
+check('IBN 2012: kein Fatal Error, 96 Slots, keine § 51 Pflicht, keine dauerhafte Grenze', $r['ok'] === true && count($r['plan']) === 96 && $r['negativpreisPflicht'] === false && $r['einspeisegrenzeW'] === null, json_encode($r['fehler'] ?? $r['einspeisegrenzeGrund'] ?? null));
+check('IBN 2012: Verguetung berechnet ~18,36 ct (bekannter Gegenwert)', abs($r['verguetungCt'] - 18.36) < 0.5, (string)$r['verguetungCt']);
+$r2 = call($ems, 'SimulateDayPlan', ['01.06.2025']);
+check('IBN 06/2025: § 51 Pflicht aktiv, dauerhafte 60-%-Grenze = 5508 W (ohne Smart Meter/Steuerbox)', $r2['ok'] === true && $r2['negativpreisPflicht'] === true && $r2['einspeisegrenzeW'] === 5508, json_encode($r2));
+check('IBN 06/2025: andere Verguetung als IBN 2012 (unterschiedliche EEG-Fassung)', abs($r2['verguetungCt'] - $r['verguetungCt']) > 0.5, $r['verguetungCt'] . ' vs ' . $r2['verguetungCt']);
+check('echtes BuildDayPlan() bleibt unbeeinflusst (negativpreisPflicht/feedInLimitW nur in SimulateDayPlan gesetzt)', call($ems, 'permanentFeedInLimit') === call($ems, 'permanentFeedInLimit'));
+// § 51 wirkt sich im Plan aus: bei negativem Boersenpreis + volle Batterie -> 0 W statt Export
+attr('FcSpotCurve', json_encode([['start' => strtotime('today'), 'end' => strtotime('tomorrow'), 'price' => -5.0, 'aufloesung' => 86400, 'quelle' => 'boersenpreis']]));
+$ctxFull = ['negativpreisPflicht' => true, 'feedInLimitW' => 3000.0, 'capKwh' => 40.0, 'chargeKw' => 10.0, 'dischargeKw' => 10.0,
+    'maxW' => 20000, 'feedTariff' => 0.18, 'thCharge' => 0.10, 'thDischarge' => 0.25, 'socTargetDay' => 90.0, 'hystSoc' => 2.0,
+    'socMin' => 10.0, 'socReserve' => 5.0, 'socTargetNight' => 30.0, 'avgHouseW' => 400.0, 'houseLoadSlots' => [], 'fcMinPower' => 300.0,
+    'enwgActive' => false, 'enwgStartH' => 0, 'enwgEndH' => 0];
+$d = call($ems, 'simulateDaySlot', [10, -0.10, 8000.0, 99.6, [], $ctxFull, 0.0]);
+check('§ 51 + volle Batterie + negativer Bezugspreis: 0 W statt Export (Pflicht sticht)', $d['plan']['op'] === EMS_OP_AUTO && (int)$d['plan']['power'] === 0 && strpos($d['plan']['reason'], '§ 51') !== false, json_encode($d['plan']));
+$dNoPflicht = call($ems, 'simulateDaySlot', [10, -0.10, 8000.0, 99.6, [], array_merge($ctxFull, ['negativpreisPflicht' => false]), 0.0]);
+check('ohne § 51-Pflicht bei gleicher Lage: normale Regel greift (Negativpreis -> laden, SOC schon fast voll -> kein Export-Zwang durch die Pflicht)', strpos($dNoPflicht['plan']['reason'], '§ 51') === false);
+$ctxCap = array_merge($ctxFull, ['negativpreisPflicht' => false]);
+$dCap = call($ems, 'simulateDaySlot', [50, 0.30, 8000.0, 95.0, [], $ctxCap, 0.0]);
+check('dauerhafte Einspeisegrenze kappt PV-Vollernte-Export (8000W PV, Grenze 3000W)', $dCap['plan']['op'] === EMS_OP_EXPORT && (int)$dCap['plan']['power'] === 3000 && strpos($dCap['plan']['reason'], 'Einspeisegrenze') !== false, json_encode($dCap['plan']));
+
+// ===========================================================================
 echo "\n" . ($fails === 0 ? "ALLE SZENARIEN BESTANDEN" : "$fails SZENARIO(S) VERLETZT") . "\n\n";
 exit($fails === 0 ? 0 : 1);

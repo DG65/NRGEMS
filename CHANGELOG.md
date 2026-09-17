@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.43.0 (2026-09-17)
+- **Neu (intern, kein Formular): `EMS_SimulateDayPlan($IbnDatum)`.** Berechnet
+  rein lesend einen Tagesplan für die reale Anlage (Größe, Wetter, PV-Prognose,
+  Preise unverändert), aber mit einem hypothetischen anderen
+  Inbetriebnahmedatum — zeigt, wie sich EMS unter einer anderen EEG-
+  Gesetzeslage verhalten würde (z. B. Solarspitzengesetz-Pflichten ab
+  25.02.2025: dauerhafte Einspeisegrenze, § 51-Nullexport-Pflicht bei
+  negativem Preis). Schreibt nichts (kein Attribut, kein Kalender, kein
+  Wechselrichter-Befehl) und ist bewusst NICHT im Formular/Funktionsvertrag
+  verankert — nur für Skript-/Dashboard-Aufruf, nicht für normale Nutzer.
+- `simulateDaySlot()`: neue optionale Kontextwerte `negativpreisPflicht`
+  (erzwingt 0 W statt Export bei negativem Preis + voller Batterie) und
+  `feedInLimitW` (kappt PV-Vollernte-Export auf eine dauerhafte Grenze) —
+  beide standardmäßig unbelegt, echter `BuildDayPlan()`-Pfad unverändert.
+- `permanentFeedInLimit()` nimmt optional ein IBN-Override entgegen (privat,
+  zwei bestehende Aufrufstellen unverändert).
+
 ## 0.42.4 (2026-09-13)
 - **Behoben: Extern geregelte OCPP-Wallbox wurde nicht mehr gemessen.**
   0.42.3 hat Ladepunkte mit `active: false` übersprungen. Bei OCPPHub heißt

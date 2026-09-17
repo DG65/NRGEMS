@@ -2421,6 +2421,19 @@ class EMS extends IPSModule
     {
         $hourOfSlot = (int)($slot / 4);
 
+        // § 51 Negativpreis-Pflicht im Plan (nur gesetzt von simulateDayPlanForIbn(),
+        // im normalen Live-Betrieb leer -- diese beiden ctx-Schluessel fehlen dann,
+        // Verhalten bleibt fuer BuildDayPlan()/optimize() unveraendert). Anders als
+        // der "Negativpreis -> immer laden"-Zweig unten (der bleibt lukrativ:
+        // Bezug UND Vergueten sind zwei unabhaengige Dinge) erzwingt die Pflicht
+        // zusaetzlich 0 W Einspeisung, auch wenn die Batterie schon voll ist und
+        // der Plan sonst in einen Export-Zweig gelaufen waere.
+        if (($ctx['negativpreisPflicht'] ?? false) && $price !== null && $price < 0 && $soc >= 99.5) {
+            return array('plan' => array('op' => EMS_OP_AUTO, 'gw' => GW_MODE_AUTO, 'power' => 0,
+                'reason' => sprintf('§ 51 Negativpreis-Pflicht %.2fct: Batterie voll, Einspeisung 0 W (PV-Überschuss ungenutzt)', $price * 100),
+                'price' => $price, 'soc' => round($soc, 1)), 'soc' => $soc);
+        }
+
         if ($ctx['enwgActive'] && $this->slotInEnwgWindow($hourOfSlot, $ctx['enwgStartH'], $ctx['enwgEndH'])) {
             // §14a wird zur Laufzeit reaktiv erzwungen (optimize()-Branch
             // 1, Netzbetreiber-Pflicht, kein Preis-Vorschlag) -- hier nur
@@ -2477,8 +2490,21 @@ class EMS extends IPSModule
                 return array('plan' => array('op' => EMS_OP_PV_SELFUSE, 'gw' => GW_MODE_CHARGE_PV, 'power' => 0,
                     'reason' => $reason, 'price' => $price, 'soc' => round($soc, 1)), 'soc' => $soc);
             }
-            return array('plan' => array('op' => EMS_OP_EXPORT, 'gw' => GW_MODE_AC_EXPORT, 'power' => (int)$pvW,
-                'reason' => sprintf('Akku am Ziel (SOC=%.0f%%), PV-Vollernte %.0fW exportieren', $soc, $pvW),
+            // Dauerhafte Einspeisegrenze am Netzanschluss (nur gesetzt von
+            // simulateDayPlanForIbn(), sonst fehlt der Schluessel -- Live-
+            // Betrieb unveraendert, applySteuerboxFeedInLimit() erzwingt das
+            // dort am Wechselrichter selbst). Vereinfachung fuer den
+            // Vergleichs-Plan: ueberschuessige Leistung wird gekappt
+            // (curtailed) dargestellt, keine Umleitung in die Batterie
+            // simuliert -- das waere ein Zweiregler-Sonderfall extra wert.
+            $exportW = $pvW;
+            $capped  = '';
+            if (isset($ctx['feedInLimitW']) && $exportW > $ctx['feedInLimitW']) {
+                $capped = sprintf(' -- Einspeisegrenze %.0fW greift, %.0fW gekappt', $ctx['feedInLimitW'], $exportW - $ctx['feedInLimitW']);
+                $exportW = $ctx['feedInLimitW'];
+            }
+            return array('plan' => array('op' => EMS_OP_EXPORT, 'gw' => GW_MODE_AC_EXPORT, 'power' => (int)$exportW,
+                'reason' => sprintf('Akku am Ziel (SOC=%.0f%%), PV-Vollernte %.0fW exportieren%s', $soc, $pvW, $capped),
                 'price' => $price, 'soc' => round($soc, 1)), 'soc' => $soc);
         }
 
@@ -3503,6 +3529,167 @@ class EMS extends IPSModule
             return sprintf('⚠️ Tagesplan berechnet, aber %d/%d Slots konnten nicht in den Kalender geschrieben werden (siehe Instanz-Debug für Details).', $written['failed'], $written['ok'] + $written['failed']);
         }
         return sprintf('✅ Tagesplan neu berechnet und in den Kalender geschrieben (%d Viertelstunden ab Slot %d/96).', $written['ok'], $nowSlot);
+    }
+
+    /**
+     * Vergleichs-Werkzeug (Dietmar 17.09.2026): "gleiche Anlage, anderes
+     * Inbetriebnahmedatum -- wie wuerde EMS unter einer anderen EEG-
+     * Rechtslage entscheiden?" Rechnet den heutigen Tagesplan komplett neu,
+     * mit denselben echten Preisen/PV-Prognose/Lastprognose wie
+     * BuildDayPlan(), aber mit einem ANDEREN Inbetriebnahmedatum fuer
+     * Verguetung, dauerhafte Einspeisegrenze (60/70 %) und § 51
+     * Negativpreis-Pflicht. Bewusst eine eigenstaendige Funktion, KEINE
+     * Umbauten an BuildDayPlan()/simulateDaySlot()'s Live-Pfad ausser den
+     * beiden neuen, standardmaessig LEEREN ctx-Schluesseln oben
+     * ('negativpreisPflicht'/'feedInLimitW') -- im echten Betrieb (kein
+     * Aufruf dieser Funktion) bleibt alles exakt wie vorher.
+     *
+     * Rein lesend, schreibt NICHTS (kein Attribut, kein Kalender, kein
+     * Wechselrichter-Befehl) -- Restaurationspunkt fuer den Fall, dass diese
+     * Explorations-Funktion sich als unbrauchbar herausstellt: einfach
+     * wieder entfernen, nichts anderes haengt daran (Commit 18a06b9 ist der
+     * letzte saubere Stand davor).
+     *
+     * BEWUSST NICHT in form.json/EnableAction verdrahtet und NICHT
+     * Bestandteil des `EMS_GetFunctions`-Vertrags -- andere Nutzer sollen
+     * dieses Entwickler-/Neugier-Werkzeug nicht in ihrem Formular sehen,
+     * nur per Skript/php_eval oder gezielt von Dashboard aufrufbar.
+     *
+     * Vereinfachung (siehe Kommentar in simulateDaySlot()): die dauerhafte
+     * Einspeisegrenze wird als Kappung/Curtailment der PV-Vollernte-Export-
+     * Leistung dargestellt, keine Umleitung des Ueberschusses in die
+     * Batterie simuliert.
+     *
+     * @param string $ibnDatum TT.MM.JJJJ oder JJJJ-MM-TT, das hypothetische Inbetriebnahmedatum.
+     * @return array{ok: bool, fehler?: string, ibn?: string, verguetungCt?: float,
+     *     verguetungQuelle?: string, einspeisegrenzeW?: ?int, einspeisegrenzeGrund?: string,
+     *     negativpreisPflicht?: bool, plan?: array}
+     */
+    public function SimulateDayPlan(string $ibnDatum): array
+    {
+        $ibn = $this->parsePlantDate($ibnDatum);
+        if ($ibn === '') {
+            return array('ok' => false, 'fehler' => 'Ungültiges Datum -- TT.MM.JJJJ oder JJJJ-MM-TT erwartet.');
+        }
+
+        $todayJson = $this->getPT15MTodayJson();
+        if (empty($todayJson) || !$this->ReadPropertyBoolean('TIBBER_Active') || !$this->ReadPropertyBoolean('BAT_Active')) {
+            return array('ok' => false, 'fehler' => 'Kein Vergleich möglich: keine PT15M-Preisdaten oder Tibber/Batteriespeicher deaktiviert (dieselbe Voraussetzung wie beim echten Tagesplan).');
+        }
+        $prices = $this->parsePT15M($todayJson);
+        $nowSlot = (int)(((int)date('H') * 60 + (int)date('i')) / 15);
+
+        $pvfSlots  = $this->getPvfSlotsWatt();
+        $lfcId     = $this->getLfcInstance();
+        $avgHouseW = (float)$this->ReadPropertyInteger('NEG_Avg_House_Load_W');
+        if ($lfcId > 0) {
+            $window = @LFC_GetEnergyWindow($lfcId, strtotime('today'), strtotime('tomorrow'));
+            if (is_array($window) && isset($window['kwh']) && ($window['coverage'] ?? 0) >= 1.0) {
+                $avgHouseW = ($window['kwh'] * 1000.0) / 24.0;
+            }
+        }
+        $houseLoadSlots = $this->getLoadForecastSlots($lfcId, 0);
+
+        $inv    = $this->getInverterEntry();
+        $capKwh = (float)$this->ReadPropertyFloat('BAT_Capacity_kWh');
+        $maxW   = (float)$this->ReadPropertyInteger('EMS_Max_Power_W');
+        $batLimits = $this->getBatteryPowerLimitsKw($inv, $maxW, $capKwh);
+
+        // Die drei Stellen, an denen sich das Inbetriebnahmedatum tatsaechlich
+        // auswirkt -- alles Weitere (Preise, PV, Lastprognose, Batteriegrenzen)
+        // bleibt exakt wie in der Realitaet, nur die Rechtslage aendert sich.
+        $kwp   = $this->getPlantKwp();
+        $tarif = $this->getFeedTariffEurForIbn($ibn);
+        $limit = $this->permanentFeedInLimit($ibn);
+        $codes = array_column($this->plantObligations($ibn, $kwp, $this->plantOptions()), 'code');
+        $negativpreisPflicht = in_array('negativpreis', $codes, true);
+
+        $spotCurve = $negativpreisPflicht ? $this->getSpotCurveLive() : array();
+
+        $ctx = array(
+            'enwgActive' => $this->ReadPropertyBoolean('ENWG14A_Active'),
+            'enwgStartH' => $this->ReadPropertyInteger('ENWG14A_Start_Hour'),
+            'enwgEndH'   => $this->ReadPropertyInteger('ENWG14A_End_Hour'),
+            'avgHouseW' => $avgHouseW, 'houseLoadSlots' => $houseLoadSlots,
+            'fcMinPower' => (float)$this->ReadPropertyInteger('FORECAST_Min_Power_W'),
+            'socTargetDay' => $this->getDynamicSocTargetDay(), 'hystSoc' => (float)$this->ReadPropertyInteger('OPT_Hysteresis_SOC'),
+            'socMin' => (float)$this->ReadPropertyInteger('BAT_SOC_Min'),
+            'socReserve' => (float)$this->ReadPropertyInteger('BAT_SOC_Reserve_Backup'),
+            'socTargetNight' => (float)$this->ReadPropertyInteger('BAT_SOC_Target_Night'),
+            'capKwh' => $capKwh, 'chargeKw' => $batLimits['chargeKw'], 'dischargeKw' => $batLimits['dischargeKw'], 'maxW' => $maxW,
+            'feedTariff' => $tarif['eur'], 'thCharge' => (float)$this->ReadPropertyFloat('TIB_Threshold_Charge'),
+            'thDischarge' => (float)$this->ReadPropertyFloat('TIB_Threshold_Discharge'),
+            'negativpreisPflicht' => $negativpreisPflicht,
+        );
+        if ($limit['w'] !== null) { $ctx['feedInLimitW'] = (float)$limit['w']; }
+
+        $ranked = $prices; asort($ranked);
+        $cheapRank = array(); $r = 0;
+        foreach ($ranked as $slotIdx => $p) { $cheapRank[$slotIdx] = $r++; }
+        $expensiveReserve = $this->computeExpensiveReserveKwh($prices, $ctx['thDischarge'], $avgHouseW);
+        $hasArbitrageToday = $this->hasArbitrageInPrices($prices);
+
+        $soc  = $this->getCurrentBatterySoc();
+        $plan = array();
+        $dayStart = strtotime('today');
+        for ($slot = 0; $slot < 96; $slot++) {
+            if ($slot < $nowSlot) {
+                $plan[$slot] = array('op' => EMS_OP_AUTO, 'gw' => GW_MODE_AUTO, 'power' => 0,
+                    'reason' => '(vergangen -- Vergleich beginnt ab jetzt)', 'price' => $prices[$slot], 'soc' => round($soc, 1));
+                continue;
+            }
+            $price = $prices[$slot];
+            $pvW   = (float)($pvfSlots[$slot] ?? 0.0);
+            // § 51 kennt nur die Boersenpreis-Viertelstunde, nicht den
+            // (meist hoeheren) Bezugspreis -- eigener Preiswert nur fuer die
+            // Pflicht-Pruefung, der Bezugspreis fuer alles andere bleibt $price.
+            if ($negativpreisPflicht) {
+                $spotSlot = $this->spotPriceAt($spotCurve, $dayStart + $slot * 900);
+                if ($spotSlot !== null && (float)$spotSlot['price'] < 0.0) {
+                    // simulateDaySlot() prueft 'negativpreisPflicht' nur auf den
+                    // Bezugspreis -- fuer die Slots, in denen NUR der Boersenpreis
+                    // negativ ist (Bezugspreis inkl. Aufschlag/Steuern typischerweise
+                    // nicht), wird das hier als eigener negativer $price durchgereicht,
+                    // rein fuer diese Pruefung, NICHT fuer die Lade-/Export-Rechnung.
+                    $price = $price !== null ? min($price, -0.0001) : -0.0001;
+                }
+            }
+            $result = $hasArbitrageToday
+                ? $this->simulateDaySlot($slot, $price, $pvW, $soc, $cheapRank, $ctx, $expensiveReserve[$slot] ?? 0.0)
+                : $this->simulateAutomatikSlot($slot, $pvW, $prices[$slot], $soc, $ctx);
+            $plan[$slot] = $result['plan'];
+            $soc = $result['soc'];
+        }
+
+        return array(
+            'ok' => true, 'ibn' => $ibn, 'ibnText' => $this->germanDate($ibn),
+            'verguetungCt' => round($tarif['eur'] * 100.0, 2), 'verguetungQuelle' => $tarif['quelle'],
+            'einspeisegrenzeW' => $limit['w'], 'einspeisegrenzeGrund' => $limit['grund'],
+            'negativpreisPflicht' => $negativpreisPflicht,
+            'plan' => $plan,
+        );
+    }
+
+    /**
+     * Wie getFeedTariffEur(), aber mit ueberschreibbarem Inbetriebnahmedatum
+     * -- ausschliesslich fuer SimulateDayPlan(). Ein manuell eingetragener
+     * Wert (Property/Variable) gilt weiterhin unveraendert: wer die
+     * Verguetung von Hand pflegt, meint damit "so ist es, unabhaengig vom
+     * Datum" -- das gilt auch im hypothetischen Vergleich.
+     */
+    private function getFeedTariffEurForIbn(string $ibn): array
+    {
+        $manual = (float)$this->ReadPropertyFloat('ANL_Verguetung_ct');
+        if ($manual > 0.0) { return array('eur' => $manual / 100.0, 'quelle' => 'eingetragen'); }
+        if ($this->ReadPropertyInteger('VAR_TIB_Feed_Tariff') > 0) {
+            return array('eur' => (float)$this->readVar('VAR_TIB_Feed_Tariff', 0.1836), 'quelle' => 'variable');
+        }
+        $kwp = $this->getPlantKwp();
+        if ($ibn !== '' && $kwp > 0.0) {
+            $ct = $this->lookupEegTariffCt($this->loadEegTable(), $ibn, $kwp, $this->ReadPropertyInteger('ANL_Einspeiseart') === 1);
+            if ($ct !== null) { return array('eur' => $ct / 100.0, 'quelle' => 'berechnet'); }
+        }
+        return array('eur' => 0.1836, 'quelle' => 'platzhalter');
     }
 
     /**
@@ -4915,14 +5102,15 @@ class EMS extends IPSModule
      * (z. B. 50 % fuer das geplante EEG 2027 oder 0 = Nulleinspeisung laut
      * Netzanschluss), 100 = keine. Ohne kWp keine Grenze (nicht raten).
      */
-    private function permanentFeedInLimit(): array
+    /** @param ?string $ibnOverride nur fuer SimulateDayPlan(); null = echtes Inbetriebnahmedatum. */
+    private function permanentFeedInLimit(?string $ibnOverride = null): array
     {
         $none = array('w' => null, 'pct' => null, 'grund' => '');
         $kwp = $this->getPlantKwp();
         if ($kwp <= 0.0) { return $none; }
         $pct = $this->ReadPropertyInteger('ANL_Einspeisegrenze_Pct');
         if ($pct < 0) {
-            $codes = array_column($this->plantObligations($this->getPlantIbn(), $kwp, $this->plantOptions()), 'code');
+            $codes = array_column($this->plantObligations($ibnOverride ?? $this->getPlantIbn(), $kwp, $this->plantOptions()), 'code');
             if (in_array('einspeisung60', $codes, true))      { $pct = 60; $grund = 'Einspeisegrenze 60 % der kWp (§ 9 EEG, ohne Smart Meter + Steuerbox)'; }
             elseif (in_array('einspeisung70', $codes, true))  { $pct = 70; $grund = 'Einspeisegrenze 70 % der kWp (Bestandsanlage mit 70-%-Kappung)'; }
             else { return $none; }
