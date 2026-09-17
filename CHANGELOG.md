@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.43.2 (2026-09-17)
+- **`SimulateDayPlan()`/`SimulateDayPlanScenarios()`: Slot-Format an `GetDayPlan()`
+  (Vertrag 1.0) angeglichen.** Jeder Slot bekommt jetzt `time` (DST-fest über
+  `slotTimestamp()`, wie im echten Tagesplan), der Preis wird wie dort in
+  ct/kWh statt €/kWh geliefert (neues Feld `priceUnit`). Grund: Dashboard
+  soll beim Bau der Szenario-Ansicht nicht zwischen echtem und simuliertem
+  Tagesplan unterscheiden müssen.
+
 ## 0.43.1 (2026-09-17)
 - **Neu (intern, kein Formular): `EMS_SimulateDayPlanScenarios(array $ibnDaten = [])`.**
   Ruft `EMS_SimulateDayPlan()` für mehrere Inbetriebnahmedaten in einem

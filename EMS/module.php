@@ -3661,11 +3661,22 @@ class EMS extends IPSModule
             $soc = $result['soc'];
         }
 
+        // Gleiches Zeitachsen-/Preisformat wie GetDayPlan() (Vertrag 1.0):
+        // 'time' je Slot ueber slotTimestamp() (DST-fest), Preis in ct/kWh.
+        // Konsumenten wie Dashboard sollen hier nicht zwischen echtem und
+        // simuliertem Tagesplan unterscheiden muessen.
+        foreach ($plan as $slot => &$entry) {
+            $entry['time'] = $this->slotTimestamp($dayStart, $slot);
+            if (isset($entry['price']) && $entry['price'] !== null) { $entry['price'] = round($entry['price'] * 100, 2); }
+        }
+        unset($entry);
+
         return array(
             'ok' => true, 'ibn' => $ibn, 'ibnText' => $this->germanDate($ibn),
             'verguetungCt' => round($tarif['eur'] * 100.0, 2), 'verguetungQuelle' => $tarif['quelle'],
             'einspeisegrenzeW' => $limit['w'], 'einspeisegrenzeGrund' => $limit['grund'],
             'negativpreisPflicht' => $negativpreisPflicht,
+            'priceUnit' => 'ct/kWh',
             'plan' => $plan,
         );
     }

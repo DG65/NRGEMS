@@ -1106,6 +1106,7 @@ check('ungueltiges Datum: ok=false statt Fatal Error', $r['ok'] === false && iss
 $r = call($ems, 'SimulateDayPlan', ['24.10.2012']);
 check('IBN 2012: kein Fatal Error, 96 Slots, keine § 51 Pflicht, keine dauerhafte Grenze', $r['ok'] === true && count($r['plan']) === 96 && $r['negativpreisPflicht'] === false && $r['einspeisegrenzeW'] === null, json_encode($r['fehler'] ?? $r['einspeisegrenzeGrund'] ?? null));
 check('IBN 2012: Verguetung berechnet ~18,36 ct (bekannter Gegenwert)', abs($r['verguetungCt'] - 18.36) < 0.5, (string)$r['verguetungCt']);
+check('IBN 2012: Slot-Format wie GetDayPlan (time gesetzt, Preis in ct/kWh)', isset($r['priceUnit']) && $r['priceUnit'] === 'ct/kWh' && isset($r['plan'][50]['time']) && $r['plan'][50]['time'] > 0 && abs($r['plan'][50]['price'] - 30.0) < 0.01, json_encode($r['plan'][50] ?? null));
 $r2 = call($ems, 'SimulateDayPlan', ['01.06.2025']);
 check('IBN 06/2025: § 51 Pflicht aktiv, dauerhafte 60-%-Grenze = 5508 W (ohne Smart Meter/Steuerbox)', $r2['ok'] === true && $r2['negativpreisPflicht'] === true && $r2['einspeisegrenzeW'] === 5508, json_encode($r2));
 check('IBN 06/2025: andere Verguetung als IBN 2012 (unterschiedliche EEG-Fassung)', abs($r2['verguetungCt'] - $r['verguetungCt']) > 0.5, $r['verguetungCt'] . ' vs ' . $r2['verguetungCt']);
