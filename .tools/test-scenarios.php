@@ -1153,6 +1153,15 @@ check('Echte PV-Einspeisung (Akku am Ziel) bleibt op 5 Einspeisen mit Leistung >
 $acts = array_column(call($ems, 'getPlanActions'), null, 'op');
 check('Kalender-Aktionen kennen op 8 (Name, Tuerkis)', ($acts[8]['name'] ?? '') === 'Akku halten (Netzbezug)' && ($acts[8]['color'] ?? 0) === 0x00ACC1, json_encode($acts[8] ?? null));
 
+echo "\n24c) Prognose-Rueckgabe: Platzhalter (generated=0) und altes Datum sind 'unbekannt'\n";
+$ems = freshEms();
+check('normale Prognose (heute, generated>0) brauchbar', call($ems, 'forecastUsable', [['date' => date('Y-m-d'), 'generated' => time(), 'kwh' => 40.0], 0]) === true);
+check('generated=0 = Platzhalter, nicht brauchbar', call($ems, 'forecastUsable', [['date' => date('Y-m-d'), 'generated' => 0, 'kwh' => 0.0], 0]) === false);
+check('Datum von gestern fuer Offset 0 nicht brauchbar', call($ems, 'forecastUsable', [['date' => date('Y-m-d', strtotime('yesterday')), 'generated' => time()], 0]) === false);
+check('Datum von heute fuer Offset 1 nicht brauchbar', call($ems, 'forecastUsable', [['date' => date('Y-m-d'), 'generated' => time()], 1]) === false);
+check('aelterer Vertrag ohne date/generated bleibt brauchbar', call($ems, 'forecastUsable', [['kwh' => 12.0, 'p50' => []], 0]) === true);
+check('kein Array: nicht brauchbar', call($ems, 'forecastUsable', [null, 0]) === false);
+
 echo "\n25) Weitere Waermepumpen-Quellen (WPModbusHub, WPModbusHubGateway, SamsungEhs) werden gefunden\n";
 $ems = freshEms();
 $hp = fn($iid, $cap) => [['contractVersion' => '1.15', 'Type' => 'heatpump', 'Caption' => $cap, 'PowerID' => 0, 'EnergyID' => 0, 'reachable' => true, 'unit' => 'W', 'Measured' => true, 'outsideTempID' => 0, 'lastSeenAt' => time()]];

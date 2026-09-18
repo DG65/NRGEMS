@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.45.1 (2026-09-19)
+- **Prognose-Platzhalter ist „unbekannt“, nicht „0 kWh“.** Neuer Prognose-Vertragsstand
+  (PVF 1.3 / LFC 1.2, Prognose Build 113) liefert `generated` (0 = Platzhalter ohne echte
+  Daten) und `date` (Kalendertag). EMS behandelt eine Prognose mit `generated = 0` oder
+  einem älteren Datum als nicht brauchbar: `fc_today_kwh` fällt dann auf die manuelle
+  Variable zurück statt 0 kWh anzunehmen, und der vorsichtige p10-Wert für die netzdienliche
+  Mittagsspitze (B1) bleibt leer, B1 setzt dann aus. Ältere Vertragsstände ohne diese Felder
+  verhalten sich unverändert. Anlass: nach Mitternacht lieferte die Prognose kurzzeitig nur
+  eine Teilsumme der Generatoren bzw. die Kurve vom Vortag (Behebung im Prognose-Modul).
 ## 0.45.0 (2026-09-19)
 - **Neuer Tagesplan-Modus `op 8` „Akku halten (Netzbezug)“.** Bei Netzbezugspreis unter der
   Einspeisevergütung bleibt die Leistung auf 0 W, das Haus läuft aus dem Netz, der Akku wird

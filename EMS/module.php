@@ -2143,6 +2143,19 @@ class EMS extends IPSModule
         return array_merge($todayP50, $tomorrowP50); // Index 0-191
     }
 
+    /**
+     * PVF_/LFC_GetForecast-Rueckgabe (Vertrag PVF 1.3 / LFC 1.2): `generated` = 0 ist ein
+     * Platzhalter ohne echte Daten (KEIN Wert 0 kWh), `date` ist der Kalendertag der
+     * Prognose. Aeltere Vertragsstaende ohne diese Felder gelten als brauchbar.
+     */
+    private function forecastUsable($fc, int $offset = 0): bool
+    {
+        if (!is_array($fc)) { return false; }
+        if (array_key_exists('generated', $fc) && (int)$fc['generated'] === 0) { return false; }
+        if (!empty($fc['date']) && $fc['date'] < date('Y-m-d', strtotime(sprintf('%+d days', $offset)))) { return false; }
+        return true;
+    }
+
     private function getLfcInstance()
     {
         if (!function_exists('LFC_GetEnergyWindow')) { return 0; }
@@ -4392,7 +4405,10 @@ class EMS extends IPSModule
             $pvfId = $this->getPvfInstance();
             if ($pvfId > 0) {
                 $today = PVF_GetForecast($pvfId, 0);
-                $s['fc_today_kwh'] = (float)($today['kwh'] ?? 0.0);
+                // Platzhalter/veraltete Prognose ist "unbekannt", nicht "0 kWh heute"
+                $s['fc_today_kwh'] = $this->forecastUsable($today, 0)
+                    ? (float)($today['kwh'] ?? 0.0)
+                    : (float)$this->readVar('VAR_FC_Today', 0);
             } else {
                 $s['fc_today_kwh'] = (float)$this->readVar('VAR_FC_Today', 0);
             }
@@ -4958,7 +4974,8 @@ class EMS extends IPSModule
             // p10 (Prognose-Sitzung 13.09.2026: bereits residuen-korrigiert,
             // reiner Cache-Read) -- vorsichtige Basis fuer B1
             $pvfId = $this->getPvfInstance();
-            $p10 = ($pvfId > 0) ? (array)((PVF_GetForecast($pvfId, 0)['p10'] ?? array())) : array();
+            $fcToday = ($pvfId > 0) ? PVF_GetForecast($pvfId, 0) : null;
+            $p10 = $this->forecastUsable($fcToday, 0) ? (array)($fcToday['p10'] ?? array()) : array();
             $this->WriteAttributeString('FcPv10Today', json_encode(count($p10) === 96 ? array_values($p10) : array()));
             // Prognoseguete (Prognose Build 98, Vertrag PVF_CONTRACT_ACCURACY 1.0)
             $acc = ($pvfId > 0 && function_exists('PVF_GetAccuracy')) ? @PVF_GetAccuracy($pvfId) : null;
