@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.46.0 (2026-09-19)
+- **Neu: Nachtfenster im Tagesplan** (Dietmar 19.09.2026: „bis 06:00 die Energie aus dem Netz
+  beziehen und die Batterie in den günstigsten Viertelstunden beladen“). Neue Einstellungen im
+  Panel „Tagesplan“: `PLAN_NightGrid_Active` (Standard **aus**, Netzladung ist anlagen- und
+  rechtsabhängig) und `PLAN_NightGrid_EndHour` (Standard 6). Wenn eingeschaltet, gilt für heute UND
+  morgen:
+  - **Laden:** EMS wählt die günstigsten Viertelstunden bis zur Endstunde (so viele, wie die Ladeleistung
+    für das Nachtziel `BAT_SOC_Target_Night` braucht) und lädt dort aus dem Netz (Tagesplan-Modus
+    „Netz laden“). Die Auswahl richtet sich jede Viertelstunde am echten SOC neu aus.
+  - **Haus aus dem Netz:** in den übrigen Viertelstunden des Fensters, aber nur wenn der Netzpreis
+    unter der Einspeisevergütung abzüglich 5 % Batterieverlust liegt (18,36 ct × 0,95 = 17,44 ct);
+    Modus „Akku halten (Netzbezug)“. Teurere Viertelstunden versorgt weiter der Akku.
+  - **Sichtbar im Tagesplan:** Die Begründung je Viertelstunde nennt Rang, Preis und Grenze.
+  - **Gilt auch live** und an Tagen ohne Arbitrage-Chance, wenn der Plan die Viertelstunde als
+    Nachtfenster markiert hat.
+  Hinweis: Netzladung hat bei Mischspeichern rechtliche Folgen (Einspeisevergütung, Ausschließlichkeit).
+
 ## 0.45.1 (2026-09-19)
 - **Prognose-Platzhalter ist „unbekannt“, nicht „0 kWh“.** Neuer Prognose-Vertragsstand
   (PVF 1.3 / LFC 1.2, Prognose Build 113) liefert `generated` (0 = Platzhalter ohne echte

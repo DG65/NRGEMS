@@ -198,6 +198,11 @@ class EMS extends IPSModule
         $this->RegisterPropertyFloat(  'BAT_Capacity_kWh',         10.0);
         $this->RegisterPropertyInteger('BAT_SOC_Min',              10);
         $this->RegisterPropertyInteger('BAT_SOC_Target_Night',     100);
+        // Nachtfenster (Dietmar 19.09.2026): bis zur Endstunde Haus aus dem Netz und
+        // Akku in den guenstigsten Viertelstunden laden. Standard aus: Netzladung ist
+        // anlagen-/rechtsabhaengig (Mischspeicher), gehoert nicht in jede Installation.
+        $this->RegisterPropertyBoolean('PLAN_NightGrid_Active',    false);
+        $this->RegisterPropertyInteger('PLAN_NightGrid_EndHour',   6);
         $this->RegisterPropertyInteger('BAT_SOC_Target_Day',       80);
         $this->RegisterPropertyBoolean('BAT_SOC_Dynamic_Target',   true);
         $this->RegisterPropertyInteger('BAT_SOC_Safety_Margin_Pct',10);
@@ -2258,7 +2263,8 @@ class EMS extends IPSModule
     private function dayPlanSignature(array $prices, array $tomorrowPrices, float $vehicleReserveKwh, int $nowSlot): string
     {
         return date('Y-m-d') . '|' . md5(json_encode($prices) . '|' . json_encode($tomorrowPrices)
-            . '|veh=' . round($vehicleReserveKwh, 1) . '|slot=' . $nowSlot);
+            . '|veh=' . round($vehicleReserveKwh, 1) . '|slot=' . $nowSlot
+            . '|nw=' . ($this->ReadPropertyBoolean('PLAN_NightGrid_Active') ? $this->ReadPropertyInteger('PLAN_NightGrid_EndHour') : 0));
     }
 
     private function getTibberGridRewardInstance()
@@ -2416,6 +2422,74 @@ class EMS extends IPSModule
      * fuer den Rest des Tages waere falsch, die Batterie laedt/entlaedt ja
      * trotzdem, nur eben ohne EMS-Preis-Entscheidung.
      */
+    /**
+     * Nachtfenster (Dietmar 19.09.2026: "bis 06:00 die Energie aus dem Netz beziehen und die
+     * Batterie in den guenstigsten Viertelstunden beladen ... dieses Verhalten moechte ich immer").
+     * Gibt die Endstunde zurueck (0 = Funktion aus).
+     */
+    private function nightWindowEndHour(): int
+    {
+        if (!$this->ReadPropertyBoolean('PLAN_NightGrid_Active')) { return 0; }
+        return max(1, min(12, $this->ReadPropertyInteger('PLAN_NightGrid_EndHour')));
+    }
+
+    /**
+     * Waehlt die guenstigsten Viertelstunden des Fensters, in denen der Akku bis zum Nachtziel
+     * geladen wird (so viele, wie die Ladeleistung fuer die fehlende Energie braucht).
+     * Ergebnis: ['end' => Endslot, 'charge' => [slot => rang], 'n' => Anzahl, 'cand' => Kandidaten].
+     */
+    private function nightWindowPlan(array $prices, int $fromSlot, float $soc, array $ctx): ?array
+    {
+        $endHour = $this->nightWindowEndHour();
+        if ($endHour <= 0) { return null; }
+        $endSlot = $endHour * 4;
+        $cand = array();
+        for ($i = max(0, $fromSlot); $i < $endSlot; $i++) {
+            if (isset($prices[$i]) && $prices[$i] !== null) { $cand[$i] = (float)$prices[$i]; }
+        }
+        $missingKwh = max(0.0, ($ctx['socTargetNight'] - $soc) / 100.0 * $ctx['capKwh']);
+        $perSlotKwh = max(0.001, $ctx['chargeKw'] * 0.25);
+        $needed = ($missingKwh > 0.0) ? (int)ceil($missingKwh / $perSlotKwh) : 0;
+        asort($cand);
+        $charge = array();
+        $rank = 0;
+        foreach ($cand as $slotIdx => $p) {
+            if ($rank >= $needed) { break; }
+            $charge[$slotIdx] = ++$rank;
+        }
+        return array('end' => $endSlot, 'charge' => $charge, 'n' => count($charge), 'cand' => count($cand));
+    }
+
+    /**
+     * Ein Slot im Nachtfenster: Ladeslot (Netz laedt Akku) oder Haltezeit (Haus aus dem Netz,
+     * Akku bleibt, nur wenn Netzpreis < Einspeiseverguetung x 0,95). Gibt null zurueck, wenn der
+     * Slot nicht im Fenster liegt, keinen Preis hat oder das Haus vom Akku versorgt werden soll.
+     */
+    private function nightWindowSlot(int $slot, $price, $soc, ?array $nw, array $ctx): ?array
+    {
+        if ($nw === null || $slot >= $nw['end'] || $price === null) { return null; }
+        $endLabel = sprintf('%02d:00', (int)($nw['end'] / 4));
+        if (isset($nw['charge'][$slot])) {
+            $missingKwh = max(0.0, ($ctx['socTargetNight'] - $soc) / 100.0 * $ctx['capKwh']);
+            $gainKwh = min($missingKwh, $ctx['chargeKw'] * 0.25);
+            $soc = min(100.0, $soc + $gainKwh / max(0.001, $ctx['capKwh']) * 100.0);
+            return array('plan' => array('op' => EMS_OP_NET_CHARGE, 'gw' => GW_MODE_AC_IMPORT, 'power' => (int)$ctx['maxW'], 'nw' => 1,
+                'reason' => sprintf('Nachtfenster bis %s: günstigste Viertelstunde (Rang %d von %d, %.2fct) -- Akku wird aus dem Netz geladen (Ziel %.0f%%)',
+                    $endLabel, $nw['charge'][$slot], $nw['n'], $price * 100, $ctx['socTargetNight']),
+                'price' => $price, 'soc' => round($soc, 1)), 'soc' => $soc);
+        }
+        // Haus nur dann aus dem Netz, wenn Netzstrom inkl. 5 % Batterieverlust billiger ist als die
+        // Einspeiseverguetung (Dietmar 19.09.2026); sonst versorgt wie sonst der Akku das Haus.
+        $holdBelow = $ctx['feedTariff'] * 0.95;
+        if ($price >= $holdBelow) { return null; }
+        $why = sprintf('%.2fct < %.2fct (Einspeisevergütung %.2fct abzüglich 5 %% Batterieverlust)', $price * 100, $holdBelow * 100, $ctx['feedTariff'] * 100);
+        $reason = ($nw['n'] > 0 || $soc < $ctx['socTargetNight'])
+            ? sprintf('Nachtfenster bis %s: Haus aus dem Netz, %s -- Akku wird nicht entladen', $endLabel, $why)
+            : sprintf('Nachtfenster bis %s: Haus aus dem Netz, %s -- Akku voll (Ziel %.0f%% erreicht)', $endLabel, $why, $ctx['socTargetNight']);
+        return array('plan' => array('op' => EMS_OP_HOLD, 'gw' => GW_MODE_AC_EXPORT, 'power' => 0, 'nw' => 1,
+            'reason' => $reason, 'price' => $price, 'soc' => round($soc, 1)), 'soc' => $soc);
+    }
+
     private function simulateAutomatikSlot($slot, $pvW, $price, $soc, array $ctx): array
     {
         // Echte 15-Min-Lastkurve aus der Lastprognose (LFC_GetForecast),
@@ -3494,6 +3568,7 @@ class EMS extends IPSModule
             ? $this->getArchivedSlotsToday($this->GetIDForIdent('EMS_GridRewards')) : array();
 
         $plan = array();
+        $nwToday = false; // beim ersten kuenftigen Slot mit dem dann gueltigen SOC berechnet
         for ($slot = 0; $slot < 96; $slot++) {
             if ($slot < $nowSlot) {
                 $pastSoc  = $archivedSoc[$slot] ?? null;
@@ -3513,9 +3588,13 @@ class EMS extends IPSModule
             }
             $price = $prices[$slot];
             $pvW   = (float)($pvfSlots[$slot] ?? 0.0);
-            $result = $hasArbitrageToday
-                ? $this->simulateDaySlot($slot, $price, $pvW, $soc, $cheapRank, $ctx, $expensiveReserve[$slot] ?? 0.0)
-                : $this->simulateAutomatikSlot($slot, $pvW, $price, $soc, $ctx);
+            if ($nwToday === false) { $nwToday = $this->nightWindowPlan($prices, $slot, $soc, $ctx); }
+            $result = $this->nightWindowSlot($slot, $price, $soc, $nwToday, $ctx);
+            if ($result === null) {
+                $result = $hasArbitrageToday
+                    ? $this->simulateDaySlot($slot, $price, $pvW, $soc, $cheapRank, $ctx, $expensiveReserve[$slot] ?? 0.0)
+                    : $this->simulateAutomatikSlot($slot, $pvW, $price, $soc, $ctx);
+            }
             $plan[$slot] = $result['plan'];
             $soc = $result['soc'];
         }
@@ -3555,12 +3634,16 @@ class EMS extends IPSModule
         $hasArbitrageTomorrow = $this->hasArbitrageInPrices($tomorrowPrices);
 
         $tomorrowPlan = array();
+        $nwTomorrow = $this->nightWindowPlan($tomorrowPrices, 0, $soc, $ctxTomorrow);
         for ($slot = 0; $slot < 96; $slot++) {
             $price = $tomorrowPrices[$slot];
             $pvW   = (float)($pvfSlots[96 + $slot] ?? 0.0);
-            $result = $hasArbitrageTomorrow
-                ? $this->simulateDaySlot($slot, $price, $pvW, $soc, $tomorrowCheapRank, $ctxTomorrow, $tomorrowExpensiveReserve[$slot] ?? 0.0)
-                : $this->simulateAutomatikSlot($slot, $pvW, $price, $soc, $ctxTomorrow);
+            $result = $this->nightWindowSlot($slot, $price, $soc, $nwTomorrow, $ctxTomorrow);
+            if ($result === null) {
+                $result = $hasArbitrageTomorrow
+                    ? $this->simulateDaySlot($slot, $price, $pvW, $soc, $tomorrowCheapRank, $ctxTomorrow, $tomorrowExpensiveReserve[$slot] ?? 0.0)
+                    : $this->simulateAutomatikSlot($slot, $pvW, $price, $soc, $ctxTomorrow);
+            }
             $tomorrowPlan[$slot] = $result['plan'];
             $soc = $result['soc'];
         }
@@ -3680,6 +3763,7 @@ class EMS extends IPSModule
 
         $soc  = $this->getCurrentBatterySoc();
         $plan = array();
+        $nwSim = false;
         $dayStart = strtotime('today');
         for ($slot = 0; $slot < 96; $slot++) {
             if ($slot < $nowSlot) {
@@ -3703,9 +3787,13 @@ class EMS extends IPSModule
                     $price = $price !== null ? min($price, -0.0001) : -0.0001;
                 }
             }
-            $result = $hasArbitrageToday
-                ? $this->simulateDaySlot($slot, $price, $pvW, $soc, $cheapRank, $ctx, $expensiveReserve[$slot] ?? 0.0)
-                : $this->simulateAutomatikSlot($slot, $pvW, $prices[$slot], $soc, $ctx);
+            if ($nwSim === false) { $nwSim = $this->nightWindowPlan($prices, $slot, $soc, $ctx); }
+            $result = $this->nightWindowSlot($slot, $prices[$slot], $soc, $nwSim, $ctx);
+            if ($result === null) {
+                $result = $hasArbitrageToday
+                    ? $this->simulateDaySlot($slot, $price, $pvW, $soc, $cheapRank, $ctx, $expensiveReserve[$slot] ?? 0.0)
+                    : $this->simulateAutomatikSlot($slot, $pvW, $prices[$slot], $soc, $ctx);
+            }
             $plan[$slot] = $result['plan'];
             $soc = $result['soc'];
         }
@@ -4664,6 +4752,18 @@ class EMS extends IPSModule
         }
 
         } // Ende Arbitrage-Selbsteinschaetzung
+
+        // Nachtfenster gilt "immer" (Dietmar 19.09.2026), auch an Tagen ohne Arbitrage-Chance,
+        // an denen der Tagesplan sonst nicht befragt wird. Nur Slots, die der Plan selbst als
+        // Nachtfenster markiert hat ('nw'); alles andere bleibt Sache der Automatik.
+        if ($this->nightWindowEndHour() > 0) {
+            $nwPlan = $this->loadDayPlan();
+            $nwSlot = (int)(((int)date('H') * 60 + (int)date('i')) / 15);
+            if (!empty($nwPlan[$nwSlot]['nw'])) {
+                $planned = $this->applyPlanSlot($s);
+                if ($planned !== null) { return $planned; }
+            }
+        }
 
         // ── 4. Fallback: Automatik (kein Tagesplan vorhanden, z.B. PVF/LFC
         // fehlt oder noch keine Preisdaten da -- oder das Plan-Sicherheits-

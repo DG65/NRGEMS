@@ -1162,6 +1162,34 @@ check('Datum von heute fuer Offset 1 nicht brauchbar', call($ems, 'forecastUsabl
 check('aelterer Vertrag ohne date/generated bleibt brauchbar', call($ems, 'forecastUsable', [['kwh' => 12.0, 'p50' => []], 0]) === true);
 check('kein Array: nicht brauchbar', call($ems, 'forecastUsable', [null, 0]) === false);
 
+echo "\n24d) Nachtfenster: bis 06:00 Haus aus dem Netz, Akku in den guenstigsten Viertelstunden laden\n";
+$ems = freshEms();
+$ctxN = ['capKwh' => 40.0, 'chargeKw' => 10.0, 'maxW' => 20000, 'socTargetNight' => 100.0, 'feedTariff' => 0.1836];
+$pN = array_fill(0, 96, 0.30);
+foreach ([10 => 0.10, 11 => 0.11, 12 => 0.12, 13 => 0.13, 14 => 0.14, 15 => 0.15, 16 => 0.16, 17 => 0.17, 40 => 0.01] as $i => $v) { $pN[$i] = $v; }
+check('Funktion aus (Standard): kein Nachtfenster', call($ems, 'nightWindowPlan', [$pN, 0, 60.0, $ctxN]) === null);
+prop('PLAN_NightGrid_Active', true); prop('PLAN_NightGrid_EndHour', 6);
+$nw = call($ems, 'nightWindowPlan', [$pN, 0, 60.0, $ctxN]);
+check('SOC 60 % -> 16 kWh fehlen, 2,5 kWh je Viertelstunde = 7 Ladeslots', $nw['n'] === 7 && $nw['end'] === 24, json_encode($nw));
+check('gewaehlt sind die 7 guenstigsten Slots des Fensters (10-16), nicht der billigere Slot 40 ausserhalb', array_keys($nw['charge']) === [10, 11, 12, 13, 14, 15, 16] && $nw['charge'][10] === 1, json_encode($nw['charge']));
+$c = call($ems, 'nightWindowSlot', [12, 0.12, 80.0, $nw, $ctxN]);
+check('Ladeslot: Netz laden (op 2, AC-Import, volle Leistung), Rang und Preis in der Begruendung', $c['plan']['op'] === EMS_OP_NET_CHARGE && $c['plan']['gw'] === GW_MODE_AC_IMPORT && $c['plan']['power'] === 20000 && strpos($c['plan']['reason'], 'Rang 3 von 7') !== false && strpos($c['plan']['reason'], '12,00') === false && !empty($c['plan']['nw']), json_encode($c['plan']));
+check('Ladeslot erhoeht den SOC (80 % + 2,5 kWh = 86,25 %)', abs($c['soc'] - 86.25) < 0.01, (string)$c['soc']);
+$h = call($ems, 'nightWindowSlot', [3, 0.17, 60.0, $nw, $ctxN]);
+check('uebriger Slot im Fenster, Preis 17 ct < 17,44 ct: Akku halten (op 8, AC-Export 0 W), Haus aus dem Netz, SOC unveraendert', $h['plan']['op'] === EMS_OP_HOLD && $h['plan']['gw'] === GW_MODE_AC_EXPORT && (int)$h['plan']['power'] === 0 && $h['soc'] === 60.0 && !empty($h['plan']['nw']), json_encode($h['plan']));
+check('Preis 18 ct liegt ueber 18,36 ct x 0,95 = 17,44 ct: Haus vom Akku versorgt (normale Logik, null)', call($ems, 'nightWindowSlot', [3, 0.18, 60.0, $nw, $ctxN]) === null && call($ems, 'nightWindowSlot', [3, 0.30, 60.0, $nw, $ctxN]) === null);
+check('Grenze: 17,4 ct noch Netz, 17,5 ct schon Akku', call($ems, 'nightWindowSlot', [3, 0.174, 60.0, $nw, $ctxN]) !== null && call($ems, 'nightWindowSlot', [3, 0.175, 60.0, $nw, $ctxN]) === null);
+check('Ladeslot bleibt Ladeslot, auch wenn der Preis ueber der Vergueltungsgrenze liegt (guenstigste Viertelstunden zaehlen)', call($ems, 'nightWindowSlot', [12, 0.19, 80.0, $nw, $ctxN])['plan']['op'] === EMS_OP_NET_CHARGE);
+check('ausserhalb des Fensters (06:00) und ohne Preis: nichts', call($ems, 'nightWindowSlot', [24, 0.10, 60.0, $nw, $ctxN]) === null && call($ems, 'nightWindowSlot', [3, null, 60.0, $nw, $ctxN]) === null);
+$nwFull = call($ems, 'nightWindowPlan', [$pN, 0, 100.0, $ctxN]);
+$hf = call($ems, 'nightWindowSlot', [5, 0.17, 100.0, $nwFull, $ctxN]);
+check('Akku schon voll: keine Ladeslots, Haus trotzdem aus dem Netz ("Akku voll" in der Begruendung)', $nwFull['n'] === 0 && $hf['plan']['op'] === EMS_OP_HOLD && strpos($hf['plan']['reason'], 'voll') !== false, json_encode($hf['plan']));
+$nwLate = call($ems, 'nightWindowPlan', [$pN, 12, 60.0, $ctxN]);
+check('ab Slot 12 (03:00): nur noch die guenstigsten der restlichen Slots, vergangene zaehlen nicht', min(array_keys($nwLate['charge'])) >= 12, json_encode($nwLate['charge']));
+prop('PLAN_NightGrid_EndHour', 7);
+check('Endstunde einstellbar (7 Uhr -> Slot 28)', call($ems, 'nightWindowPlan', [$pN, 0, 60.0, $ctxN])['end'] === 28);
+prop('PLAN_NightGrid_Active', false); prop('PLAN_NightGrid_EndHour', 6);
+
 echo "\n25) Weitere Waermepumpen-Quellen (WPModbusHub, WPModbusHubGateway, SamsungEhs) werden gefunden\n";
 $ems = freshEms();
 $hp = fn($iid, $cap) => [['contractVersion' => '1.15', 'Type' => 'heatpump', 'Caption' => $cap, 'PowerID' => 0, 'EnergyID' => 0, 'reachable' => true, 'unit' => 'W', 'Measured' => true, 'outsideTempID' => 0, 'lastSeenAt' => time()]];

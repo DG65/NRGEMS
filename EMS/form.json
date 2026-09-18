@@ -1353,6 +1353,23 @@
                     "caption": "Braucht Tibber (PT15M-Preise) + Batterie aktiv, PV-Prognose (PVF) optional. Berechnet automatisch bei neuen Preisen einen Plan für den ganzen Tag (Laden/Entladen/Einspeisen je Viertelstunde) und schreibt ihn sichtbar in den Wochenplan \"EMS Tagesplan (automatisch)\" unter dieser Instanz — auch bei negativen Preisen (immer laden) und bei Preisen unter der Einspeisevergütung (Haus läuft aus dem Netz, die Batterie wird geschont)."
                 },
                 {
+                    "type": "CheckBox",
+                    "name": "PLAN_NightGrid_Active",
+                    "caption": "Nachtfenster: bis zur Endstunde den Akku in den günstigsten Viertelstunden aus dem Netz laden und das Haus aus dem Netz versorgen, solange der Netzpreis unter der Einspeisevergütung liegt (abzüglich 5 % Batterieverlust)"
+                },
+                {
+                    "type": "NumberSpinner",
+                    "name": "PLAN_NightGrid_EndHour",
+                    "caption": "Nachtfenster endet um (Uhr)",
+                    "minimum": 1,
+                    "maximum": 12,
+                    "suffix": " Uhr"
+                },
+                {
+                    "type": "Label",
+                    "caption": "Im Tagesplan erscheint das Nachtfenster als „Netz laden“ (günstigste Viertelstunden, Ziel wie beim Nacht-Laden oben) und „Akku halten (Netzbezug)“ (übrige Viertelstunden mit Preis unter 95 % der Einspeisevergütung; teurere Viertelstunden versorgt weiter der Akku). Die Begründung je Viertelstunde nennt Rang und Preis. Achtung: Netzladung hat rechtliche Folgen bei Mischspeichern (Einspeisevergütung, Ausschließlichkeit) — bewusst nur einschalten, wenn das für Ihre Anlage geklärt ist."
+                },
+                {
                     "type": "NumberSpinner",
                     "name": "NEG_Avg_House_Load_W",
                     "caption": "Geschätzter durchschnittlicher Hausverbrauch (W) — bis eine echte 15-Minuten-Lastprognose angebunden ist",
