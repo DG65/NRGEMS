@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.44.1 (2026-09-19)
+- **WPHub (Panasonic Comfort Cloud) wird ebenfalls gefunden** (`WPHUB_GetFunctions`, GUID am
+  `module.json` des Repos gegengeprüft). Da dieselbe Anlage an mehreren Quellen hängen kann
+  (z. B. Panasonic an HeishaMon UND WPHub) und der Wärmepumpen-Vertrag kein `duplicateOf`
+  kennt, trägt jeder Eintrag der Situationsanzeige jetzt `sourceModule` (HeishaMon, WPHub,
+  WPModbusHub, WPModbusHubGateway, SamsungEhs). Die Partner-Übersicht zählt je Quelle.
 ## 0.44.0 (2026-09-18)
 - **Weitere Wärmepumpen-Quellen werden gefunden:** WPModbusHub (`WPMBHUB_GetFunctions`),
   WPModbusHubGateway (`WPMBGW_GetFunctions`, RS485 über Symcons ModBus-Gateway) und

@@ -112,6 +112,7 @@ function SGW_GetState($iid)               { return $GLOBALS['SGW_STATE']; }
 $GLOBALS['OHUB_FUNCS'] = [];
 function OHUB_GetFunctions($iid)          { return $GLOBALS['OHUB_FUNCS']; }
 $GLOBALS['WP_FUNCS'] = [];
+function WPHUB_GetFunctions($iid)          { return $GLOBALS['WP_FUNCS']['wphub'] ?? []; }
 function WPMBHUB_GetFunctions($iid)       { return $GLOBALS['WP_FUNCS']['wpmbhub'] ?? []; }
 function WPMBGW_GetFunctions($iid)        { return $GLOBALS['WP_FUNCS']['wpmbgw'] ?? []; }
 function SAMEHS_GetFunctions($iid)        { return $GLOBALS['WP_FUNCS']['samehs'] ?? []; }
@@ -1142,22 +1143,24 @@ check('eigene Datumsliste: nur die angegebenen, Label = Datum selbst', count($ei
 echo "\n25) Weitere Waermepumpen-Quellen (WPModbusHub, WPModbusHubGateway, SamsungEhs) werden gefunden\n";
 $ems = freshEms();
 $hp = fn($iid, $cap) => [['contractVersion' => '1.15', 'Type' => 'heatpump', 'Caption' => $cap, 'PowerID' => 0, 'EnergyID' => 0, 'reachable' => true, 'unit' => 'W', 'Measured' => true, 'outsideTempID' => 0, 'lastSeenAt' => time()]];
+$GLOBALS['INSTMOD'][909] = GUID_WPHUB;
 $GLOBALS['INSTMOD'][910] = GUID_WPMODBUSHUB; $GLOBALS['INSTMOD'][911] = GUID_WPMODBUSGW; $GLOBALS['INSTMOD'][912] = GUID_SAMSUNGEHS;
-$GLOBALS['WP_FUNCS'] = ['wpmbhub' => $hp(910, 'Waterkotte'), 'wpmbgw' => $hp(911, 'NIBE RTU'), 'samehs' => $hp(912, 'Samsung EHS')];
+$GLOBALS['WP_FUNCS'] = ['wphub' => $hp(909, 'Panasonic'), 'wpmbhub' => $hp(910, 'Waterkotte'), 'wpmbgw' => $hp(911, 'NIBE RTU'), 'samehs' => $hp(912, 'Samsung EHS')];
 call($ems, 'Discover');
 $pc = json_decode($ems->ReadAttributeString('PartnerCache'), true);
 check('Discovery: WPModbusHub gefunden (Instanz-ID ergaenzt)', count($pc['wpmodbushub'] ?? []) === 1 && $pc['wpmodbushub'][0]['instanceID'] === 910 && $pc['wpmodbushub'][0]['Type'] === 'heatpump', json_encode($pc['wpmodbushub'] ?? null));
 check('Discovery: WPModbusHubGateway gefunden', count($pc['wpmodbushubgw'] ?? []) === 1 && $pc['wpmodbushubgw'][0]['instanceID'] === 911);
+check('Discovery: WPHub gefunden', count($pc['wphub'] ?? []) === 1 && $pc['wphub'][0]['instanceID'] === 909);
 check('Discovery: SamsungEhs gefunden', count($pc['samsungehs'] ?? []) === 1 && $pc['samsungehs'][0]['instanceID'] === 912);
-check('Uebersicht nennt die weiteren Quellen', strpos($ems->GetValue('EMS_Partners'), 'WPModbusHub=1 WPModbusHubGateway=1 SamsungEhs=1') !== false, $ems->GetValue('EMS_Partners'));
+check('Uebersicht nennt die weiteren Quellen', strpos($ems->GetValue('EMS_Partners'), 'WPHub=1 WPModbusHub=1 WPModbusHubGateway=1 SamsungEhs=1') !== false, $ems->GetValue('EMS_Partners'));
 $sit = array_filter(call($ems, 'GetSituation')['devices'] ?? call($ems, 'GetSituation'), fn($d) => ($d['domain'] ?? '') === 'heatpump');
-check('Situation: alle drei als Waermepumpe (Situation A, nicht schaltbar)', count($sit) === 3 && count(array_filter($sit, fn($d) => $d['writable'] === false && $d['situation'] === 'A')) === 3, json_encode(array_values($sit)));
+check('Situation: alle vier als Waermepumpe (Situation A, nicht schaltbar), Quelle je Eintrag sichtbar', count($sit) === 4 && count(array_filter($sit, fn($d) => $d['writable'] === false && $d['situation'] === 'A')) === 4 && array_column($sit, 'sourceModule') === ['WPHub', 'WPModbusHub', 'WPModbusHubGateway', 'SamsungEhs'], json_encode(array_values($sit)));
 $un = json_decode($ems->ReadAttributeString('UnresponsiveInstances'), true);
 check('Keine der drei als "installiert, aber stumm" gemeldet', empty($un['wpmodbushub']) && empty($un['wpmodbushubgw']) && empty($un['samsungehs']), json_encode($un));
 $GLOBALS['WP_FUNCS'] = []; call($ems, 'Discover');
 $un = json_decode($ems->ReadAttributeString('UnresponsiveInstances'), true);
 check('Antwortet ein Modul nicht, wird es als stumm gemeldet (wie HeishaMon)', ($un['wpmodbushub'] ?? []) === [910] && ($un['samsungehs'] ?? []) === [912], json_encode($un));
-unset($GLOBALS['INSTMOD'][910], $GLOBALS['INSTMOD'][911], $GLOBALS['INSTMOD'][912]); $GLOBALS['WP_FUNCS'] = [];
+unset($GLOBALS['INSTMOD'][909], $GLOBALS['INSTMOD'][910], $GLOBALS['INSTMOD'][911], $GLOBALS['INSTMOD'][912]); $GLOBALS['WP_FUNCS'] = [];
 
 // ===========================================================================
 echo "\n" . ($fails === 0 ? "ALLE SZENARIEN BESTANDEN" : "$fails SZENARIO(S) VERLETZT") . "\n\n";
