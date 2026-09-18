@@ -1186,6 +1186,8 @@ $hf = call($ems, 'nightWindowSlot', [5, 0.17, 100.0, $nwFull, $ctxN]);
 check('Akku schon voll: keine Ladeslots, Haus trotzdem aus dem Netz ("Akku voll" in der Begruendung)', $nwFull['n'] === 0 && $hf['plan']['op'] === EMS_OP_HOLD && strpos($hf['plan']['reason'], 'voll') !== false, json_encode($hf['plan']));
 $nwLate = call($ems, 'nightWindowPlan', [$pN, 12, 60.0, $ctxN]);
 check('ab Slot 12 (03:00): nur noch die guenstigsten der restlichen Slots, vergangene zaehlen nicht', min(array_keys($nwLate['charge'])) >= 12, json_encode($nwLate['charge']));
+$nwCap = call($ems, 'nightWindowPlan', [$pN, 0, 40.0, array_merge($ctxN, ['chargeKw' => 41.0, 'maxW' => 20000])]);
+check('Ladeleistung wird auf die EMS-Grenze (20 kW) gedeckelt: 24 kWh fehlen, 5 kWh je Viertelstunde = 5 Slots (nicht 3 wie bei 41 kW)', $nwCap['n'] === 5, json_encode($nwCap));
 prop('PLAN_NightGrid_EndHour', 7);
 check('Endstunde einstellbar (7 Uhr -> Slot 28)', call($ems, 'nightWindowPlan', [$pN, 0, 60.0, $ctxN])['end'] === 28);
 prop('PLAN_NightGrid_Active', false); prop('PLAN_NightGrid_EndHour', 6);

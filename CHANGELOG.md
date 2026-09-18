@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.46.1 (2026-09-19)
+- Nachtfenster: Die Ladeleistung für die Planung wird auf die EMS-Leistungsgrenze (`EMS_Max_Power_W`)
+  gedeckelt. Die BMS-Angabe kann höher sein (bei Dietmar rechnerisch ca. 41 kW) und ließ den Plan zu
+  wenige Ladeviertelstunden wählen.
+
 ## 0.46.0 (2026-09-19)
 - **Neu: Nachtfenster im Tagesplan** (Dietmar 19.09.2026: „bis 06:00 die Energie aus dem Netz
   beziehen und die Batterie in den günstigsten Viertelstunden beladen“). Neue Einstellungen im

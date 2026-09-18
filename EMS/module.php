@@ -2448,7 +2448,8 @@ class EMS extends IPSModule
             if (isset($prices[$i]) && $prices[$i] !== null) { $cand[$i] = (float)$prices[$i]; }
         }
         $missingKwh = max(0.0, ($ctx['socTargetNight'] - $soc) / 100.0 * $ctx['capKwh']);
-        $perSlotKwh = max(0.001, $ctx['chargeKw'] * 0.25);
+        // Ladeleistung: BMS-Angabe, aber nie mehr als die EMS-Leistungsgrenze (Hausanschluss)
+        $perSlotKwh = max(0.001, min($ctx['chargeKw'], $ctx['maxW'] / 1000.0) * 0.25);
         $needed = ($missingKwh > 0.0) ? (int)ceil($missingKwh / $perSlotKwh) : 0;
         asort($cand);
         $charge = array();
@@ -2471,7 +2472,7 @@ class EMS extends IPSModule
         $endLabel = sprintf('%02d:00', (int)($nw['end'] / 4));
         if (isset($nw['charge'][$slot])) {
             $missingKwh = max(0.0, ($ctx['socTargetNight'] - $soc) / 100.0 * $ctx['capKwh']);
-            $gainKwh = min($missingKwh, $ctx['chargeKw'] * 0.25);
+            $gainKwh = min($missingKwh, min($ctx['chargeKw'], $ctx['maxW'] / 1000.0) * 0.25);
             $soc = min(100.0, $soc + $gainKwh / max(0.001, $ctx['capKwh']) * 100.0);
             return array('plan' => array('op' => EMS_OP_NET_CHARGE, 'gw' => GW_MODE_AC_IMPORT, 'power' => (int)$ctx['maxW'], 'nw' => 1,
                 'reason' => sprintf('Nachtfenster bis %s: günstigste Viertelstunde (Rang %d von %d, %.2fct) -- Akku wird aus dem Netz geladen (Ziel %.0f%%)',
