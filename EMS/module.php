@@ -2562,7 +2562,7 @@ class EMS extends IPSModule
             $lossKwh = $loadW / 1000.0 * 0.25;
             $soc = max(0.0, $soc - ($lossKwh / max(0.001, $ctx['capKwh']) * 100.0));
             return array('plan' => array('op' => EMS_OP_EXPORT, 'gw' => GW_MODE_AC_EXPORT, 'power' => 0,
-                'reason' => sprintf('Bezug %.2fct < Einspeiseverguetung %.2fct -- Batterie exportiert, Haus aus Netz', $price * 100, $ctx['feedTariff'] * 100),
+                'reason' => sprintf('Bezug %.2fct < Einspeiseverguetung %.2fct -- Batterie bleibt geschont, Haus aus dem Netz', $price * 100, $ctx['feedTariff'] * 100),
                 'price' => $price, 'soc' => round($soc, 1)), 'soc' => $soc);
         }
 
@@ -2589,7 +2589,7 @@ class EMS extends IPSModule
         // der Verguetung liegt, ist Entladen (teuren Netzbezug vermeiden)
         // wirtschaftlich immer mindestens gleichwertig, meist besser. Der
         // einzige korrekte Export-Ausloeser bleibt der Zweig oben (Bezug <
-        // Einspeiseverguetung -- Batterie exportiert, Haus aus Netz).
+        // Einspeiseverguetung -- Batterie bleibt geschont, Haus aus dem Netz).
         if ($price > $ctx['thDischarge'] && $soc > ($ctx['socMin'] + $ctx['socReserve'] + $ctx['hystSoc'])) {
             $lossKwh = $loadW / 1000.0 * 0.25;
             $soc = max(0.0, $soc - ($lossKwh / max(0.001, $ctx['capKwh']) * 100.0));

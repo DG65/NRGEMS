@@ -1350,7 +1350,7 @@
             "items": [
                 {
                     "type": "Label",
-                    "caption": "Braucht Tibber (PT15M-Preise) + Batterie aktiv, PV-Prognose (PVF) optional. Berechnet automatisch bei neuen Preisen einen Plan für den ganzen Tag (Laden/Entladen/Einspeisen je Viertelstunde) und schreibt ihn sichtbar in den Wochenplan \"EMS Tagesplan (automatisch)\" unter dieser Instanz — auch bei negativen Preisen (immer laden) und bei Preisen unter der Einspeisevergütung (Batterie exportiert statt Eigenverbrauch)."
+                    "caption": "Braucht Tibber (PT15M-Preise) + Batterie aktiv, PV-Prognose (PVF) optional. Berechnet automatisch bei neuen Preisen einen Plan für den ganzen Tag (Laden/Entladen/Einspeisen je Viertelstunde) und schreibt ihn sichtbar in den Wochenplan \"EMS Tagesplan (automatisch)\" unter dieser Instanz — auch bei negativen Preisen (immer laden) und bei Preisen unter der Einspeisevergütung (Haus läuft aus dem Netz, die Batterie wird geschont)."
                 },
                 {
                     "type": "NumberSpinner",

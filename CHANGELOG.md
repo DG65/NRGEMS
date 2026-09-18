@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.44.2 (2026-09-19)
+- **Tagesplan-Begründung ehrlicher:** Bei Netzbezugspreis unter der Einspeisevergütung stand
+  „Batterie exportiert, Haus aus Netz“, obwohl mit 0 W nichts ins Netz geht. Jetzt: „Batterie
+  bleibt geschont, Haus aus dem Netz“. Gleiche Korrektur im Formulartext zum Tagesplan.
+  Hinweis: die Bezeichnung „Einspeisen“ für diesen Modus (`EMS_OP_EXPORT`) bleibt vorerst, sie
+  ist im Fall 0 W missverständlich.
 ## 0.44.1 (2026-09-19)
 - **WPHub (Panasonic Comfort Cloud) wird ebenfalls gefunden** (`WPHUB_GetFunctions`, GUID am
   `module.json` des Repos gegengeprüft). Da dieselbe Anlage an mehreren Quellen hängen kann
