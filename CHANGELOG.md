@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.44.0 (2026-09-18)
+- **Weitere Wärmepumpen-Quellen werden gefunden:** WPModbusHub (`WPMBHUB_GetFunctions`),
+  WPModbusHubGateway (`WPMBGW_GetFunctions`, RS485 über Symcons ModBus-Gateway) und
+  SamsungEhs (`SAMEHS_GetFunctions`, NASA-Protokoll). Sie liefern den `heatpump`-Vertrag
+  (1.15) wie HeishaMon. GUIDs an den `module.json` der Repos gegengeprüft. Es sind
+  Beta-Quellen, an echter Hardware nur teilweise bestätigt.
+- Sie erscheinen in der Situationsanzeige (Wärmepumpe, Situation A, nicht schaltbar), in der
+  Partner-Übersicht (nur wenn vorhanden) und in der Erkennung „installiert, aber stumm“.
+  EMS steuert die Wärmepumpe weiterhin nicht, nur Monitoring.
 ## 0.43.2 (2026-09-17)
 - **`SimulateDayPlan()`/`SimulateDayPlanScenarios()`: Slot-Format an `GetDayPlan()`
   (Vertrag 1.0) angeglichen.** Jeder Slot bekommt jetzt `time` (DST-fest über

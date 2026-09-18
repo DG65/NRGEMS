@@ -47,6 +47,9 @@ define('GUID_OCPPHUB_SPLITTER', '{81D3E328-9E12-43A9-825A-F7888530868C}'); // OH
 define('GUID_METERHUB',      '{BAB8E05C-9150-43B9-9F2B-E5215FA54F0A}');
 define('GUID_INVERTERHUB',   '{BBE2C593-1A91-426D-A714-29A9C7E87589}');
 define('GUID_HEISHAMON',     '{1919151A-3C0F-4C09-B906-291638EC1469}');
+define('GUID_WPMODBUSHUB',   '{E878B4D4-8E98-4E89-AE21-8636262EBC55}'); // WPMBHUB_GetFunctions, heatpump-Vertrag wie HeishaMon/WPHub
+define('GUID_WPMODBUSGW',    '{70FBAC61-A1C0-47B7-8B56-BE047F7C0C6B}'); // WPMBGW_GetFunctions
+define('GUID_SAMSUNGEHS',    '{D2B2A1E8-2F94-426C-8761-505A2F226977}'); // SAMEHS_GetFunctions
 define('GUID_TESSIEVEHICLE', '{3F1F7E31-8BA0-4B8F-9B62-47DAD7A0B6C9}');
 define('GUID_TIBBERGRIDREWARD', '{E92F62F4-88A6-4C6E-9F0D-E76C3B1C9A01}');
 
@@ -1073,6 +1076,9 @@ class EMS extends IPSModule
         $partners['chargerhub']  = $this->discoverContract(GUID_CHARGERHUB,  'CHUB_GetFunctions');
         $partners['ocpphub']     = $this->discoverOcppHub();
         $partners['heishamon']   = $this->discoverContract(GUID_HEISHAMON,   'HEISHA_GetFunctions');
+        $partners['wpmodbushub']     = $this->discoverContract(GUID_WPMODBUSHUB, 'WPMBHUB_GetFunctions');
+        $partners['wpmodbushubgw']   = $this->discoverContract(GUID_WPMODBUSGW,  'WPMBGW_GetFunctions');
+        $partners['samsungehs']      = $this->discoverContract(GUID_SAMSUNGEHS,  'SAMEHS_GetFunctions');
         $partners['tessie']      = $this->discoverContract(GUID_TESSIEVEHICLE, 'TESSIE_GetVehicleState');
 
         // Tibber liefert keine *_GetFunctions-Liste, sondern eigene Getter
@@ -1106,6 +1112,9 @@ class EMS extends IPSModule
             'meterhub'    => GUID_METERHUB,
             'chargerhub'  => GUID_CHARGERHUB,
             'heishamon'   => GUID_HEISHAMON,
+            'wpmodbushub'   => GUID_WPMODBUSHUB,
+            'wpmodbushubgw' => GUID_WPMODBUSGW,
+            'samsungehs'    => GUID_SAMSUNGEHS,
             'tessie'      => GUID_TESSIEVEHICLE,
             'tibber'      => GUID_TIBBERGRIDREWARD,
         );
@@ -1142,6 +1151,12 @@ class EMS extends IPSModule
             count($partners['chargerhub']),  count($partners['ocpphub']), count($partners['heishamon']),
             count($partners['tessie']),      count($partners['tibber'])
         );
+        // Weitere Waermepumpen-Quellen nur nennen, wenn vorhanden (Anzeige bleibt sonst unveraendert)
+        $wpMore = count($partners['wpmodbushub']) + count($partners['wpmodbushubgw']) + count($partners['samsungehs']);
+        if ($wpMore > 0) {
+            $summary .= sprintf(' WPModbusHub=%d WPModbusHubGateway=%d SamsungEhs=%d',
+                count($partners['wpmodbushub']), count($partners['wpmodbushubgw']), count($partners['samsungehs']));
+        }
         $this->SetValue('EMS_Partners', $summary);
         $this->emsLog(EMS_LOG_BASIC, 'Discover: ' . $summary);
 
@@ -3037,7 +3052,13 @@ class EMS extends IPSModule
         // HeishaMon: keine externe Fremdsteuerung bekannt -> immer Situation A,
         // aber das EMS steuert bewusst nicht aktiv (siehe README-Sicherheitshinweis:
         // haeufige Schreibzugriffe koennen den EEPROM schaedigen).
-        foreach ((array)($partners['heishamon'] ?? array()) as $hp) {
+        $heatpumps = array_merge(
+            (array)($partners['heishamon'] ?? array()),
+            (array)($partners['wpmodbushub'] ?? array()),
+            (array)($partners['wpmodbushubgw'] ?? array()),
+            (array)($partners['samsungehs'] ?? array())
+        );
+        foreach ($heatpumps as $hp) {
             $situation[] = array(
                 'domain'     => 'heatpump',
                 'instanceID' => $hp['instanceID'] ?? 0,
