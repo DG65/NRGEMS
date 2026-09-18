@@ -31,6 +31,7 @@ define('EMS_OP_STANDBY',      4);
 define('EMS_OP_EXPORT',       5);
 define('EMS_OP_BACKUP',       6);
 define('EMS_OP_GRIDREWARDS',  7);
+define('EMS_OP_HOLD',          8); // Akku halten: AC-Export mit 0 W, Haus aus dem Netz (nichts wird eingespeist)
 
 // Logging-Level
 define('EMS_LOG_OFF',         0);
@@ -2561,7 +2562,7 @@ class EMS extends IPSModule
             // der Preis-Reserve fuer spaeter kommende teure Stunden.
             $lossKwh = $loadW / 1000.0 * 0.25;
             $soc = max(0.0, $soc - ($lossKwh / max(0.001, $ctx['capKwh']) * 100.0));
-            return array('plan' => array('op' => EMS_OP_EXPORT, 'gw' => GW_MODE_AC_EXPORT, 'power' => 0,
+            return array('plan' => array('op' => EMS_OP_HOLD, 'gw' => GW_MODE_AC_EXPORT, 'power' => 0,
                 'reason' => sprintf('Bezug %.2fct < Einspeiseverguetung %.2fct -- Batterie bleibt geschont, Haus aus dem Netz', $price * 100, $ctx['feedTariff'] * 100),
                 'price' => $price, 'soc' => round($soc, 1)), 'soc' => $soc);
         }
@@ -2971,6 +2972,7 @@ class EMS extends IPSModule
             EMS_OP_EXPORT      => 'Export',
             EMS_OP_BACKUP      => 'Inselbetrieb/Backup',
             EMS_OP_GRIDREWARDS => 'Grid Rewards (Tibber)',
+            EMS_OP_HOLD        => 'Akku halten (Netzbezug)',
         );
         $reason = (string)$this->GetValue('EMS_LastAction');
 
@@ -3135,6 +3137,7 @@ class EMS extends IPSModule
             EMS_OP_EXPORT      => 'Export',
             EMS_OP_BACKUP      => 'Notbetrieb',
             EMS_OP_GRIDREWARDS => 'Grid Rewards',
+            EMS_OP_HOLD        => 'Akku halten (Netzbezug)',
         );
         $mode     = $this->GetValue('EMS_Mode');
         $modeName = isset($modeNames[$mode]) ? $modeNames[$mode] : 'Unbekannt';
@@ -3795,7 +3798,7 @@ class EMS extends IPSModule
 
         $socMin     = (float)$this->ReadPropertyInteger('BAT_SOC_Min');
         $socReserve = (float)$this->ReadPropertyInteger('BAT_SOC_Reserve_Backup');
-        if (in_array($op, array(EMS_OP_DISCHARGE, EMS_OP_EXPORT), true) && $s['bat_soc'] <= ($socMin + $socReserve)) {
+        if (in_array($op, array(EMS_OP_DISCHARGE, EMS_OP_EXPORT, EMS_OP_HOLD), true) && $s['bat_soc'] <= ($socMin + $socReserve)) {
             return null; // Plan wollte entladen/exportieren, SOC ist aber schon an der Reserve
         }
         if ($op === EMS_OP_NET_CHARGE && $s['bat_soc'] >= 99.5) {
@@ -3955,6 +3958,7 @@ class EMS extends IPSModule
             array('op' => EMS_OP_DISCHARGE,  'name' => 'Eigenverbrauch (entladen)', 'color' => 0xFF9800),
             array('op' => EMS_OP_EXPORT,     'name' => 'Einspeisen',                'color' => 0x9C27B0),
             array('op' => EMS_OP_GRIDREWARDS, 'name' => 'Grid Rewards (Tibber)',    'color' => 0xE91E63),
+            array('op' => EMS_OP_HOLD,       'name' => 'Akku halten (Netzbezug)',   'color' => 0x00ACC1),
         );
     }
 
@@ -3965,7 +3969,7 @@ class EMS extends IPSModule
             $this->emsLog(EMS_LOG_BASIC, 'writeDayPlanEvent: ensureDayPlanEvent() lieferte keine gueltige Event-ID -- Tagesplan-Kalender NICHT geschrieben.');
             return array('ok' => 0, 'failed' => 96);
         }
-        $validOps = array(EMS_OP_AUTO, EMS_OP_PV_SELFUSE, EMS_OP_NET_CHARGE, EMS_OP_DISCHARGE, EMS_OP_EXPORT, EMS_OP_GRIDREWARDS);
+        $validOps = array(EMS_OP_AUTO, EMS_OP_PV_SELFUSE, EMS_OP_NET_CHARGE, EMS_OP_DISCHARGE, EMS_OP_EXPORT, EMS_OP_GRIDREWARDS, EMS_OP_HOLD);
         $ok = 0;
         $failed = array();
         for ($slot = 0; $slot < 96; $slot++) {

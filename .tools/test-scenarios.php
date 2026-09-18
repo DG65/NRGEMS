@@ -1140,6 +1140,19 @@ check('jedes Szenario traegt sein Label', $s['01.03.2025']['label'] === 'Solarsp
 $eigene = call($ems, 'SimulateDayPlanScenarios', [['24.10.2012', '01.03.2025']]);
 check('eigene Datumsliste: nur die angegebenen, Label = Datum selbst', count($eigene) === 2 && $eigene['01.03.2025']['label'] === '01.03.2025');
 
+echo "\n26) Modus 'Akku halten' (op 8) statt 'Einspeisen' bei 0 W\n";
+$ems = freshEms();
+$ctxH = ['negativpreisPflicht' => false, 'capKwh' => 40.0, 'chargeKw' => 10.0, 'dischargeKw' => 10.0, 'maxW' => 20000, 'feedTariff' => 0.1836,
+    'thCharge' => 0.10, 'thDischarge' => 0.25, 'socTargetDay' => 38.0, 'hystSoc' => 3.0, 'socMin' => 0.0, 'socReserve' => 10.0, 'socTargetNight' => 30.0,
+    'avgHouseW' => 400.0, 'houseLoadSlots' => [], 'fcMinPower' => 300.0, 'enwgActive' => false, 'enwgStartH' => 0, 'enwgEndH' => 0];
+$h = call($ems, 'simulateDaySlot', [12, 0.14, 0.0, 40.0, [], $ctxH, 0.0]);
+check('Bezug 14 ct < Verguetung 18,36 ct, kein PV: op = Akku halten (8), 0 W, gw AC-Export', $h['plan']['op'] === EMS_OP_HOLD && EMS_OP_HOLD === 8 && (int)$h['plan']['power'] === 0 && $h['plan']['gw'] === GW_MODE_AC_EXPORT, json_encode($h['plan']));
+check('Begruendung sagt nicht mehr "exportiert"', strpos($h['plan']['reason'], 'exportiert') === false && strpos($h['plan']['reason'], 'geschont') !== false, $h['plan']['reason']);
+$e = call($ems, 'simulateDaySlot', [50, 0.30, 8000.0, 38.4, [], $ctxH, 0.0]);
+check('Echte PV-Einspeisung (Akku am Ziel) bleibt op 5 Einspeisen mit Leistung > 0', $e['plan']['op'] === EMS_OP_EXPORT && (int)$e['plan']['power'] > 0, json_encode($e['plan']));
+$acts = array_column(call($ems, 'getPlanActions'), null, 'op');
+check('Kalender-Aktionen kennen op 8 (Name, Tuerkis)', ($acts[8]['name'] ?? '') === 'Akku halten (Netzbezug)' && ($acts[8]['color'] ?? 0) === 0x00ACC1, json_encode($acts[8] ?? null));
+
 echo "\n25) Weitere Waermepumpen-Quellen (WPModbusHub, WPModbusHubGateway, SamsungEhs) werden gefunden\n";
 $ems = freshEms();
 $hp = fn($iid, $cap) => [['contractVersion' => '1.15', 'Type' => 'heatpump', 'Caption' => $cap, 'PowerID' => 0, 'EnergyID' => 0, 'reachable' => true, 'unit' => 'W', 'Measured' => true, 'outsideTempID' => 0, 'lastSeenAt' => time()]];

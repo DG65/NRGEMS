@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.45.0 (2026-09-19)
+- **Neuer Tagesplan-Modus `op 8` „Akku halten (Netzbezug)“.** Bei Netzbezugspreis unter der
+  Einspeisevergütung bleibt die Leistung auf 0 W, das Haus läuft aus dem Netz, der Akku wird
+  geschont — dabei geht nichts ins Netz. Dieser Fall trug bisher `op 5` „Einspeisen“ und war
+  in der Grafik nicht von echter PV-Einspeisung zu unterscheiden. `op 5` bleibt ausschließlich
+  für echte Einspeisung (Leistung > 0). Wechselrichter-Modus unverändert (`gw` = AC-Export,
+  0 W), das Verhalten ist also gleich, nur die Bezeichnung stimmt jetzt. Kalender-Aktion
+  „Akku halten (Netzbezug)“ (Türkis) im Tagesplan-Wochenplan. Dashboard kennt `op 8` seit
+  0.9.36-beta.1; ältere Dashboard-Stände zeigen es grau als „op 8“.
 ## 0.44.2 (2026-09-19)
 - **Tagesplan-Begründung ehrlicher:** Bei Netzbezugspreis unter der Einspeisevergütung stand
   „Batterie exportiert, Haus aus Netz“, obwohl mit 0 W nichts ins Netz geht. Jetzt: „Batterie
