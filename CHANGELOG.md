@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.46.2 (2026-09-19)
+- `EMS_GetDayPlan()` Vertrag **1.1** (additiv): je Slot `xsetW` (Schaltleistung in W, 0 = keine
+  Sollleistung), `gwMode` (Wechselrichter-Modus) und `gwModeLabel` (deutsche Beschriftung der
+  Betriebsart, z. B. „Netz laden“). Anfrage Dietmar/Dashboard 19.09.2026: im Tagesplan soll die
+  Schaltleistung sichtbar sein. Nur Anzeige der geplanten Werte.
+
 ## 0.46.1 (2026-09-19)
 - Nachtfenster: Die Ladeleistung für die Planung wird auf die EMS-Leistungsgrenze (`EMS_Max_Power_W`)
   gedeckelt. Die BMS-Angabe kann höher sein (bei Dietmar rechnerisch ca. 41 kW) und ließ den Plan zu
