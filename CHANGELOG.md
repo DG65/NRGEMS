@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.49.0 (2026-09-19)
+- **Nachtfenster: Einkauf verlängern** (Dietmar 19.09.2026): Ist der Akku am Ende der Einkaufsphase noch nicht voll,
+  darf EMS über die Endstunde hinaus weiter laden, solange der Preis halbwegs stimmt: unter 95 % der
+  Einspeisevergütung UND höchstens `PLAN_NightGrid_ExtendTol_ct` (Standard 3 ct) über der günstigsten Viertelstunde
+  des Fensters, bis zu `PLAN_NightGrid_ExtendHours` (Standard 2 h, 0 = aus). Die Verlängerungs-Slots werden nur
+  gewählt, wenn die günstigeren Slots im Fenster nicht reichen; der SOC wird ohnehin jede Viertelstunde neu
+  gegen den Plan geprüft (Plan richtet sich je Slot am echten SOC neu aus). Begründung im Plan: „Nachtfenster
+  verlängert (Akku noch nicht voll, Preis passt)“.
+
 ## 0.48.3 (2026-09-19)
 - Tagesplan: Bei vollem Akku (Ziel erreicht) und PV-Überschuss plante EMS „Einspeisen“ (Modus 5, Xset = PV-Prognose,
   enable = true). Das leistet die WR-Automatik von selbst; der erzwungene Modus versetzt den WR in „3rd party

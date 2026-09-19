@@ -1175,6 +1175,19 @@ check('gewaehlt sind die 7 guenstigsten Slots des Fensters (10-16), nicht der bi
 $c = call($ems, 'nightWindowSlot', [12, 0.12, 80.0, $nw, $ctxN]);
 check('Ladeslot: Netz laden (op 2, Batterie-Lademodus 11, Ladegrenze als Sollleistung), Rang und Preis in der Begruendung', $c['plan']['op'] === EMS_OP_NET_CHARGE && $c['plan']['gw'] === GW_MODE_BAT_CHARGE && $c['plan']['power'] === 10000 && strpos($c['plan']['reason'], 'Rang 3 von 7') !== false && strpos($c['plan']['reason'], '12,00') === false && !empty($c['plan']['nw']), json_encode($c['plan']));
 
+// Nachtfenster verlaengern, solange Akku nicht voll und Preis halbwegs stimmt (0.49.0)
+prop('PLAN_NightGrid_ExtendHours', 2); prop('PLAN_NightGrid_ExtendTol_ct', 3.0);
+$pV = array_fill(0, 96, 0.30); $pV[2] = 0.11; $pV[3] = 0.11; $pV[4] = 0.12;
+for ($i = 24; $i < 32; $i++) { $pV[$i] = 0.13; } $pV[26] = 0.16; $pV[40] = 0.11;
+$nwV = call($ems, 'nightWindowPlan', [$pV, 0, 0.0, $ctxN]);
+check('Verlaengerung: zu wenig guenstige Slots im Fenster -> weitere direkt nach der Endstunde (<= guenstigster + 3 ct), nicht der teure Slot 26 und nicht Slot 40', isset($nwV['charge'][24], $nwV['charge'][25], $nwV['charge'][27]) && !isset($nwV['charge'][26]) && !isset($nwV['charge'][40]) && isset($nwV['charge'][2]), json_encode(array_keys($nwV['charge'])));
+$cV = call($ems, 'nightWindowSlot', [24, 0.13, 60.0, $nwV, $ctxN]);
+check('Verlaengerungs-Slot wird als Netz laden geplant und als verlaengert begruendet', $cV['plan']['op'] === EMS_OP_NET_CHARGE && strpos($cV['plan']['reason'], 'verlängert') !== false, json_encode($cV['plan']));
+prop('PLAN_NightGrid_ExtendHours', 0);
+$nwV0 = call($ems, 'nightWindowPlan', [$pV, 0, 0.0, $ctxN]);
+check('Verlaengerung aus (0 h): nichts nach der Endstunde', count(array_filter(array_keys($nwV0['charge']), function ($k) { return $k >= 24; })) === 0, json_encode(array_keys($nwV0['charge'])));
+prop('PLAN_NightGrid_ExtendHours', 2);
+
 // Plan: WR-Automatik entlaedt das Haus auch bei Preisen unter der Entladeschwelle (SOC darf nicht auf 100 % stehen)
 $ctxA = ['capKwh' => 40.0, 'chargeKw' => 24.0, 'dischargeKw' => 24.0, 'maxW' => 34500.0, 'feedTariff' => 0.1836, 'thCharge' => 0.10, 'thDischarge' => 0.25,
     'socTargetDay' => 90.0, 'hystSoc' => 2.0, 'socMin' => 0.0, 'socReserve' => 10.0, 'socTargetNight' => 100.0, 'fcMinPower' => 100.0,

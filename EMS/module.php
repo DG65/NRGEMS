@@ -204,6 +204,8 @@ class EMS extends IPSModule
         // anlagen-/rechtsabhaengig (Mischspeicher), gehoert nicht in jede Installation.
         $this->RegisterPropertyBoolean('PLAN_NightGrid_Active',    false);
         $this->RegisterPropertyBoolean('PLAN_PreDischarge_Active', false);
+        $this->RegisterPropertyInteger('PLAN_NightGrid_ExtendHours', 2);
+        $this->RegisterPropertyFloat(  'PLAN_NightGrid_ExtendTol_ct', 3.0);
         $this->RegisterPropertyFloat(  'PLAN_PreDischarge_MinGain_ct', 3.0);
         $this->RegisterPropertyInteger('PLAN_NightGrid_EndHour',   6);
         $this->RegisterPropertyInteger('BAT_SOC_Target_Day',       80);
@@ -2279,7 +2281,8 @@ class EMS extends IPSModule
         return date('Y-m-d') . '|' . md5(json_encode($prices) . '|' . json_encode($tomorrowPrices)
             . '|veh=' . round($vehicleReserveKwh, 1) . '|slot=' . $nowSlot
             . '|nw=' . ($this->ReadPropertyBoolean('PLAN_NightGrid_Active') ? $this->ReadPropertyInteger('PLAN_NightGrid_EndHour') : 0)
-            . '|pd=' . ($this->ReadPropertyBoolean('PLAN_PreDischarge_Active') ? 1 : 0));
+            . '|pd=' . ($this->ReadPropertyBoolean('PLAN_PreDischarge_Active') ? 1 : 0)
+            . '|ext=' . $this->ReadPropertyInteger('PLAN_NightGrid_ExtendHours') . '/' . $this->ReadPropertyFloat('PLAN_NightGrid_ExtendTol_ct'));
     }
 
     private function getTibberGridRewardInstance()
@@ -2467,6 +2470,21 @@ class EMS extends IPSModule
                 $cand[$i] = (float)$prices[$i];
             }
         }
+        // Verlaengerung: Ist der Akku am Ende des Fensters noch nicht voll (Ladung langsamer als geplant,
+        // Haus/Wallbox zogen Leistung), darf der Einkauf ueber die Endstunde hinaus weiterlaufen, solange
+        // der Preis halbwegs stimmt: unter der Vergueutungsgrenze UND hoechstens Toleranz ueber dem
+        // guenstigsten Preis des Fensters. Erst gewaehlt, wenn die guenstigeren Slots nicht reichen.
+        $extH = max(0, min(6, $this->ReadPropertyInteger('PLAN_NightGrid_ExtendHours')));
+        if ($extH > 0 && !empty($cand)) {
+            $tol = max(0.0, (float)$this->ReadPropertyFloat('PLAN_NightGrid_ExtendTol_ct')) / 100.0;
+            $maxExt = min($cand) + $tol;
+            for ($i = max($endSlot, $fromSlot); $i < min(96, $endSlot + $extH * 4); $i++) {
+                if (isset($prices[$i]) && $prices[$i] !== null && (float)$prices[$i] <= $maxExt
+                    && ($ctx['feedTariff'] <= 0 || (float)$prices[$i] < $ctx['feedTariff'] * 0.95)) {
+                    $cand[$i] = (float)$prices[$i];
+                }
+            }
+        }
         $missingKwh = max(0.0, ($ctx['socTargetNight'] - $soc) / 100.0 * $ctx['capKwh']);
         // Ladeleistung: BMS-Angabe, aber nie mehr als die EMS-Leistungsgrenze (Hausanschluss)
         $perSlotKwh = max(0.001, min($ctx['chargeKw'], $ctx['maxW'] / 1000.0) * 0.25);
@@ -2488,15 +2506,18 @@ class EMS extends IPSModule
      */
     private function nightWindowSlot(int $slot, $price, $soc, ?array $nw, array $ctx): ?array
     {
-        if ($nw === null || $slot >= $nw['end'] || $price === null) { return null; }
+        if ($nw === null || $price === null) { return null; }
+        if ($slot >= $nw['end'] && !isset($nw['charge'][$slot])) { return null; }
         $endLabel = sprintf('%02d:00', (int)($nw['end'] / 4));
         if (isset($nw['charge'][$slot])) {
             $missingKwh = max(0.0, ($ctx['socTargetNight'] - $soc) / 100.0 * $ctx['capKwh']);
             $gainKwh = min($missingKwh, min($ctx['chargeKw'], $ctx['maxW'] / 1000.0) * 0.25);
             $soc = min(100.0, $soc + $gainKwh / max(0.001, $ctx['capKwh']) * 100.0);
             return array('plan' => array('op' => EMS_OP_NET_CHARGE, 'gw' => GW_MODE_BAT_CHARGE, 'power' => $this->gridChargeXsetW($ctx, $missingKwh), 'nw' => 1,
-                'reason' => sprintf('Nachtfenster bis %s: günstigste Viertelstunde (Rang %d von %d, %.2fct) -- Akku wird aus dem Netz geladen (Ziel %.0f%%)',
-                    $endLabel, $nw['charge'][$slot], $nw['n'], $price * 100, $ctx['socTargetNight']),
+                'reason' => sprintf(($slot >= $nw['end'] ? 'Nachtfenster verlängert (Akku noch nicht voll, Preis passt): ' : 'Nachtfenster bis %s: ') . 'günstigste Viertelstunde (Rang %d von %d, %.2fct) -- Akku wird aus dem Netz geladen (Ziel %.0f%%)',
+                    ...($slot >= $nw['end']
+                        ? array($nw['charge'][$slot], $nw['n'], $price * 100, $ctx['socTargetNight'])
+                        : array($endLabel, $nw['charge'][$slot], $nw['n'], $price * 100, $ctx['socTargetNight']))),
                 'price' => $price, 'soc' => round($soc, 1)), 'soc' => $soc);
         }
         // Haus nur dann aus dem Netz, wenn Netzstrom inkl. 5 % Batterieverlust billiger ist als die

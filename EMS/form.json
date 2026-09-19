@@ -1367,6 +1367,23 @@
                     "caption": "Nachtfenster: bis zur Endstunde den Akku in den günstigsten Viertelstunden aus dem Netz laden und das Haus aus dem Netz versorgen, solange der Netzpreis unter der Einspeisevergütung liegt (abzüglich 5 % Batterieverlust)"
                 },
                 {
+                    "type": "NumberSpinner",
+                    "name": "PLAN_NightGrid_ExtendHours",
+                    "caption": "Einkauf verlängern: bis zu so viele Stunden nach der Endstunde weiter laden, wenn der Akku noch nicht voll ist und der Preis halbwegs stimmt (0 = aus)",
+                    "minimum": 0,
+                    "maximum": 6,
+                    "suffix": " h"
+                },
+                {
+                    "type": "NumberSpinner",
+                    "name": "PLAN_NightGrid_ExtendTol_ct",
+                    "caption": "Einkauf verlängern: höchstens so viel teurer als die günstigste Viertelstunde des Fensters (und unter der Einspeisevergütung)",
+                    "digits": 1,
+                    "minimum": 0,
+                    "maximum": 50,
+                    "suffix": " ct"
+                },
+                {
                     "type": "CheckBox",
                     "name": "PLAN_PreDischarge_Active",
                     "caption": "Vorentladen: den Akku vor einem deutlich günstigeren Nachtladefenster über das Netz entleeren (Einspeisung aus der Batterie, preisgewichtet). Nur zusammen mit dem Nachtfenster."
