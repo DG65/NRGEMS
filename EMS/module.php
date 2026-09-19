@@ -4020,7 +4020,7 @@ class EMS extends IPSModule
         if ($feed <= 0) { return null; }
         $floor = (float)$this->ReadPropertyInteger('BAT_SOC_Min');
         $soc   = (float)$s['bat_soc'];
-        if ($soc <= $floor + 1.0) { return null; }
+        if ($soc <= $floor) { return null; }
 
         $today    = $this->loadDayPlan();
         $tomorrow = json_decode($this->ReadAttributeString('DayPlanTomorrow'), true) ?: array();
@@ -4041,7 +4041,11 @@ class EMS extends IPSModule
         $capKwh = (float)$this->ReadPropertyFloat('BAT_Capacity_kWh');
         $lim    = $this->getBatteryPowerLimitsKw($this->getInverterEntry(), (float)$this->ReadPropertyInteger('EMS_Max_Power_W'), $capKwh);
         $eKwh   = ($soc - $floor) / 100.0 * $capKwh;
-        $batW   = min($eKwh * 1000.0 * ($wNow / $sum) / 0.25, $lim['dischargeKw'] * 1000.0);
+        // Zeitgenau: Von der laufenden Viertelstunde ist nur noch der Bruchteil $f uebrig. Wuerde man sie
+        // jedes Mal voll rechnen, fiele die Leistung im letzten Slot exponentiell ab und es bliebe Restenergie
+        // stehen (Dietmar 19.09.2026: "punktgenau um 00:00 ist nicht schwierig").
+        $f = max(0.02, (900 - (time() % 900)) / 900.0);
+        $batW = min($this->preDischargeBatteryW($eKwh, $wNow, $sum - $wNow, $f), $lim['dischargeKw'] * 1000.0);
         $wbW    = ((float)$s['wb1_pow_kw'] + (float)$s['wb2_pow_kw']) * 1000.0;
         $exportW = $batW * 0.95 + (float)$s['pv_total_w'] - (float)$s['house_pow_w'] - $wbW;
         $exportW = min($exportW, (float)$this->ReadPropertyInteger('EMS_Max_Power_W'));
@@ -4061,12 +4065,26 @@ class EMS extends IPSModule
     }
 
     /**
+     * Batterieleistung (W) fuer den Rest der laufenden Viertelstunde: Restenergie verteilt nach Preisgewicht
+     * auf den Rest dieses Slots ($f = Bruchteil) und alle kuenftigen Slots ($sumFuture). Im letzten Slot
+     * ($sumFuture = 0) ist das Restenergie / Restzeit -- konstant, leer genau zum Fensterbeginn.
+     */
+    private function preDischargeBatteryW(float $eKwh, float $wNow, float $sumFuture, float $f): float
+    {
+        $den = $wNow * $f + max(0.0, $sumFuture);
+        if ($den <= 0 || $f <= 0) { return 0.0; }
+        return $eKwh * 1000.0 * ($wNow / $den) / 0.25;
+    }
+
+    /**
      * Erster kuenftiger Slot (0-191 = heute+morgen, hoechstens 10 h voraus), dessen Preis so niedrig ist,
      * dass Vorentladen lohnt (Vergueltung - Mindestgewinn, nach 0,95 x 0,95). null = kein Fenster.
      */
     private function preDischargeEnd(array $price192, int $nowSlot, float $feed): ?int
     {
         $maxBuy = ($feed - (float)$this->ReadPropertyFloat('PLAN_PreDischarge_MinGain_ct') / 100.0) * 0.9025;
+        // Ist die laufende Viertelstunde selbst schon guenstig, ist das Fenster erreicht: nicht weiter entladen.
+        if (isset($price192[$nowSlot]) && $price192[$nowSlot] !== null && $price192[$nowSlot] < $maxBuy) { return null; }
         for ($j = $nowSlot + 1; $j <= $nowSlot + 40 && $j < 192; $j++) {
             if (isset($price192[$j]) && $price192[$j] !== null && $price192[$j] < $maxBuy) { return $j; }
         }

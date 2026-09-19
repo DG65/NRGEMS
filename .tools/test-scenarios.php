@@ -1175,6 +1175,12 @@ check('gewaehlt sind die 7 guenstigsten Slots des Fensters (10-16), nicht der bi
 $c = call($ems, 'nightWindowSlot', [12, 0.12, 80.0, $nw, $ctxN]);
 check('Ladeslot: Netz laden (op 2, Batterie-Lademodus 11, Ladegrenze als Sollleistung), Rang und Preis in der Begruendung', $c['plan']['op'] === EMS_OP_NET_CHARGE && $c['plan']['gw'] === GW_MODE_BAT_CHARGE && $c['plan']['power'] === 10000 && strpos($c['plan']['reason'], 'Rang 3 von 7') !== false && strpos($c['plan']['reason'], '12,00') === false && !empty($c['plan']['nw']), json_encode($c['plan']));
 
+// Vorentladen zeitgenau: im letzten Slot Restenergie / Restzeit, sonst Restenergie ueber Slots nach Preis verteilt
+check('Vorentladen letzter Slot: 2 kWh in voller Viertelstunde -> 8 kW, in halber Restzeit -> 16 kW (leer genau zum Fensterbeginn)',
+    abs(call($ems, 'preDischargeBatteryW', [2.0, 0.28, 0.0, 1.0]) - 8000.0) < 1 && abs(call($ems, 'preDischargeBatteryW', [2.0, 0.28, 0.0, 0.5]) - 16000.0) < 1);
+check('Vorentladen: mit Folgeslots gleichen Preises (3 weitere) bei vollem Slot 1/4 der Restenergie je Slot (4 kWh -> 4 kW)',
+    abs(call($ems, 'preDischargeBatteryW', [4.0, 0.28, 0.84, 1.0]) - 4000.0) < 1);
+
 // Nachtfenster verlaengern, solange Akku nicht voll und Preis halbwegs stimmt (0.49.0)
 prop('PLAN_NightGrid_ExtendHours', 2); prop('PLAN_NightGrid_ExtendTol_ct', 3.0);
 $pV = array_fill(0, 96, 0.30); $pV[2] = 0.11; $pV[3] = 0.11; $pV[4] = 0.12;
@@ -1199,6 +1205,7 @@ check('Plan: Preis 19 ct unter Entladeschwelle, kein PV -> SOC faellt (Hauslast 
 prop('PLAN_PreDischarge_MinGain_ct', 3.0);
 $p192 = array_fill(0, 192, 0.30); for ($i = 96; $i < 102; $i++) { $p192[$i] = 0.127; }
 check('Vorentladen: Fensterbeginn = erste Viertelstunde unter (Verguetung - 3 ct) x 0,9025', call($ems, 'preDischargeEnd', [$p192, 81, 0.1836]) === 96);
+check('Vorentladen endet, sobald die laufende Viertelstunde selbst im guenstigen Fenster liegt (00:00)', call($ems, 'preDischargeEnd', [$p192, 96, 0.1836]) === null);
 check('Vorentladen: zu teures Fenster (17 ct) lohnt nicht', call($ems, 'preDischargeEnd', [array_fill(0, 192, 0.17), 81, 0.1836]) === null);
 $pdS = ['end' => 96, 'endPrice' => 0.127, 'sum' => 0.30 * 15, 'avg' => 0.30, 'floor' => 0.0];
 $ctxP = ['capKwh' => 40.0, 'dischargeKw' => 24.0, 'maxW' => 34500.0];

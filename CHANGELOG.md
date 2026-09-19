@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.49.1 (2026-09-19)
+- **Vorentladen zeitgenau** (Dietmar: „punktgenau um 00:00 ist nicht schwierig“): Die laufende Viertelstunde wurde bisher
+  jedes Mal voll gerechnet, dadurch fiel die Leistung im letzten Slot exponentiell ab und es blieb Restenergie
+  (ca. 1/3 der letzten Viertelstunde) stehen. Jetzt zählt nur der Restanteil des Slots; im letzten Slot ist die
+  Leistung Restenergie / Restzeit (konstant, leer genau zum Fensterbeginn). Endet außerdem sofort, wenn die
+  laufende Viertelstunde selbst schon im günstigen Fenster liegt, und läuft bis SOC 0 statt bis 1 %.
+
 ## 0.49.0 (2026-09-19)
 - **Nachtfenster: Einkauf verlängern** (Dietmar 19.09.2026): Ist der Akku am Ende der Einkaufsphase noch nicht voll,
   darf EMS über die Endstunde hinaus weiter laden, solange der Preis halbwegs stimmt: unter 95 % der
