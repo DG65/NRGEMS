@@ -1173,7 +1173,14 @@ $nw = call($ems, 'nightWindowPlan', [$pN, 0, 60.0, $ctxN]);
 check('SOC 60 % -> 16 kWh fehlen, 2,5 kWh je Viertelstunde = 7 Ladeslots', $nw['n'] === 7 && $nw['end'] === 24, json_encode($nw));
 check('gewaehlt sind die 7 guenstigsten Slots des Fensters (10-16), nicht der billigere Slot 40 ausserhalb', array_keys($nw['charge']) === [10, 11, 12, 13, 14, 15, 16] && $nw['charge'][10] === 1, json_encode($nw['charge']));
 $c = call($ems, 'nightWindowSlot', [12, 0.12, 80.0, $nw, $ctxN]);
-check('Ladeslot: Netz laden (op 2, AC-Import, volle Leistung), Rang und Preis in der Begruendung', $c['plan']['op'] === EMS_OP_NET_CHARGE && $c['plan']['gw'] === GW_MODE_AC_IMPORT && $c['plan']['power'] === 20000 && strpos($c['plan']['reason'], 'Rang 3 von 7') !== false && strpos($c['plan']['reason'], '12,00') === false && !empty($c['plan']['nw']), json_encode($c['plan']));
+check('Ladeslot: Netz laden (op 2, Batterie-Lademodus 11, Ladegrenze als Sollleistung), Rang und Preis in der Begruendung', $c['plan']['op'] === EMS_OP_NET_CHARGE && $c['plan']['gw'] === GW_MODE_BAT_CHARGE && $c['plan']['power'] === 10000 && strpos($c['plan']['reason'], 'Rang 3 von 7') !== false && strpos($c['plan']['reason'], '12,00') === false && !empty($c['plan']['nw']), json_encode($c['plan']));
+
+// Wirtschaftlichkeit (Dietmar 19.09.2026): Netzladen nur unter Einspeiseverguetung x 0,95; letzter Slot ohne Ueberladen
+$pExp = array_fill(0, 96, 0.30); $pExp[10] = 0.10; $pExp[11] = 0.17; $pExp[12] = 0.19;
+$nwE = call($ems, 'nightWindowPlan', [$pExp, 0, 0.0, $ctxN]);
+check('Nachtfenster: nur Slots unter 95 % der Einspeiseverguetung (17,44 ct) kommen in Frage', array_keys($nwE['charge']) === [10, 11] && $nwE['cand'] === 2, json_encode($nwE));
+$cL = call($ems, 'nightWindowSlot', [11, 0.17, 97.5, $nwE, $ctxN]);
+check('Letzter Ladeslot: Sollleistung nur fuer die fehlende Energie (1 kWh -> 4 kW)', $cL['plan']['gw'] === GW_MODE_BAT_CHARGE && $cL['plan']['power'] === 4000, json_encode($cL['plan']));
 check('Ladeslot erhoeht den SOC (80 % + 2,5 kWh = 86,25 %)', abs($c['soc'] - 86.25) < 0.01, (string)$c['soc']);
 $h = call($ems, 'nightWindowSlot', [3, 0.17, 60.0, $nw, $ctxN]);
 check('uebriger Slot im Fenster, Preis 17 ct < 17,44 ct: Akku halten (op 8, AC-Export 0 W), Haus aus dem Netz, SOC unveraendert', $h['plan']['op'] === EMS_OP_HOLD && $h['plan']['gw'] === GW_MODE_AC_EXPORT && (int)$h['plan']['power'] === 0 && $h['soc'] === 60.0 && !empty($h['plan']['nw']), json_encode($h['plan']));

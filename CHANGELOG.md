@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.47.0 (2026-09-19)
+Umbau „Netz laden“ nach den Live-Tests vom 19.09.2026 (Modus für Modus am Wechselrichter geprüft).
+- **Netzladen im Batterie-Lademodus (11)** statt Stromeinkauf (4/9): Modus 11 lädt sofort mit voller Leistung,
+  die PV bleibt ungedrosselt (Modus 9 drosselte sie auf < 1 kW, ca. 5 kW mehr Einkauf). Sollleistung (Xset) =
+  Ladeleistung; im letzten Ladeslot nur die fehlende Energie. Zur Laufzeit wird sie auf den Netzanschluss
+  begrenzt: Xset ≤ Anschlussgrenze + PV − Haus − Wallbox (das Haus läuft in Modus 11 obendrauf). Bleibt
+  weniger als 500 W, schaltet EMS auf Automatik.
+- **Neue Einstellung „Reale max. Ladeleistung“** (`BAT_Charge_Max_kW`, 0 = Angabe des Batteriemanagements):
+  das BMS meldet oft mehr, als der Speicher aufnimmt (bei Dietmar 43 kW gemeldet, 23,5 kW real).
+- **Wirtschaftlichkeit:** Netzstrom wird nur noch geplant, wenn er unter 95 % der Einspeisevergütung liegt (5 %
+  Wandlungsverlust); ohne Vergütungsangabe keine Grenze. Gilt in Nachtfenster und Rang-Ladung; Negativpreis und
+  §14a bleiben unberührt. Die Halte-Regel „Haus aus dem Netz“ nutzt jetzt ebenfalls 95 % der Vergütung.
+- **Laden aus PV (Modus 2)** nur bei realem PV-Überschuss (≥ 200 W) oder wenn Netzstrom günstig ist
+  (0 < Preis < 95 % Vergütung) – sonst Automatik. In Modus 2 hat die Batterie Vorrang vor dem Haus, das Haus
+  lief sonst voll aus dem Netz (Live 19.09., 07:30–09:00).
+- **Haltesignal alle 15 s** (`EMS_KeepAlive`): der WR fällt ca. 30 s nach dem letzten Schreiben auf 255 zurück,
+  der 30-s-Zyklus war zu knapp.
+- Setzt InverterHub ≥ 0.77.0-beta.13 bzw. 0.76.0-beta.26 voraus (schreibt `ctl_ems_enable` als 1 statt 2; mit 2
+  rampte der WR nur mit ca. 250 W je 6 s).
+
 ## 0.46.2 (2026-09-19)
 - `EMS_GetDayPlan()` Vertrag **1.1** (additiv): je Slot `xsetW` (Schaltleistung in W, 0 = keine
   Sollleistung), `gwMode` (Wechselrichter-Modus) und `gwModeLabel` (deutsche Beschriftung der

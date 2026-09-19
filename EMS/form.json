@@ -686,6 +686,15 @@
                     "suffix": " kWh"
                 },
                 {
+                    "type": "NumberSpinner",
+                    "name": "BAT_Charge_Max_kW",
+                    "caption": "Reale max. Ladeleistung (kW, 0 = Angabe des Batteriemanagements)",
+                    "digits": 1,
+                    "minimum": 0,
+                    "maximum": 500,
+                    "suffix": " kW"
+                },
+                {
                     "type": "Label",
                     "caption": "── SOC-Grenzen ───────────────────────────────────────"
                 },

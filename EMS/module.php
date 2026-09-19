@@ -196,6 +196,7 @@ class EMS extends IPSModule
         $this->RegisterPropertyBoolean('BAT_Active',               false);
         $this->RegisterPropertyInteger('BAT_String_Count',         1);
         $this->RegisterPropertyFloat(  'BAT_Capacity_kWh',         10.0);
+        $this->RegisterPropertyFloat(  'BAT_Charge_Max_kW',        0.0); // 0 = BMS-Angabe, sonst reale Obergrenze der Ladeleistung
         $this->RegisterPropertyInteger('BAT_SOC_Min',              10);
         $this->RegisterPropertyInteger('BAT_SOC_Target_Night',     100);
         // Nachtfenster (Dietmar 19.09.2026): bis zur Endstunde Haus aus dem Netz und
@@ -430,6 +431,8 @@ class EMS extends IPSModule
 
         // ── Timer ───────────────────────────────────────────────────
         $this->RegisterTimer('EMS_UpdateTimer', 0, 'EMS_Update($_IPS[\'TARGET\']);');
+        // Haltesignal fuer aktive WR-Sollwerte: der WR faellt ca. 30 s nach dem letzten Schreiben auf 255 zurueck
+        $this->RegisterTimer('EMS_KeepAliveTimer', 0, 'EMS_KeepAlive($_IPS[\'TARGET\']);');
 
         // ── Interne Attribute ───────────────────────────────────────
         $this->RegisterAttributeString('InvoiceHistory', '{}'); // JSON, Key "YYYY-MM"
@@ -446,6 +449,8 @@ class EMS extends IPSModule
         $this->RegisterAttributeBoolean('DeadmanBrakeTripped', false);
         $this->RegisterAttributeInteger('LastGoodweMode',    GW_MODE_AUTO);
         $this->RegisterAttributeBoolean('LastGoodweEnable',  true);
+        $this->RegisterAttributeInteger('LastGoodwePowerW',  0);
+        $this->RegisterAttributeInteger('LastGoodweWriteAt', 0);
         $this->RegisterAttributeInteger('LastWB1Switch',     0);
         $this->RegisterAttributeInteger('LastWB2Switch',     0);
         $this->RegisterAttributeInteger('LastDecision',      0);
@@ -546,6 +551,7 @@ class EMS extends IPSModule
         // unabhaengig davon, dass BuildDayPlan() selbst schon EMS_Active-
         // unabhaengig geschrieben war).
         $this->SetTimerInterval('EMS_UpdateTimer', $interval * 1000);
+        $this->SetTimerInterval('EMS_KeepAliveTimer', $active ? 15000 : 0);
         if ($active) {
             $this->SetStatus(102);
             $this->emsLog(EMS_LOG_BASIC, 'EMS gestartet, Intervall: ' . $interval . 's');
@@ -1789,6 +1795,12 @@ class EMS extends IPSModule
         if ($chargeId > 0) {
             $result['chargeKw'] = max(0.0, (float)GetValue($chargeId) / 1000.0);
         }
+        // Reale Obergrenze der Ladeleistung (Einstellung): das BMS meldet oft mehr, als der Speicher
+        // tatsaechlich aufnimmt (Live-Befund 19.09.2026: BMS 43 kW, real 23,5 kW).
+        $capKw = (float)$this->ReadPropertyFloat('BAT_Charge_Max_kW');
+        if ($capKw > 0.0) {
+            $result['chargeKw'] = min($result['chargeKw'], $capKw);
+        }
         if ($dischargeId > 0) {
             $result['dischargeKw'] = max(0.0, (float)GetValue($dischargeId) / 1000.0);
         }
@@ -2445,7 +2457,12 @@ class EMS extends IPSModule
         $endSlot = $endHour * 4;
         $cand = array();
         for ($i = max(0, $fromSlot); $i < $endSlot; $i++) {
-            if (isset($prices[$i]) && $prices[$i] !== null) { $cand[$i] = (float)$prices[$i]; }
+            // Wirtschaftlichkeit: Netzstrom nur, wenn er inkl. 5 % Wandlungsverlust unter der
+            // Einspeiseverguetung liegt (Dietmar 19.09.2026); ohne Verguetungsangabe keine Grenze.
+            if (isset($prices[$i]) && $prices[$i] !== null
+                && ($ctx['feedTariff'] <= 0 || (float)$prices[$i] < $ctx['feedTariff'] * 0.95)) {
+                $cand[$i] = (float)$prices[$i];
+            }
         }
         $missingKwh = max(0.0, ($ctx['socTargetNight'] - $soc) / 100.0 * $ctx['capKwh']);
         // Ladeleistung: BMS-Angabe, aber nie mehr als die EMS-Leistungsgrenze (Hausanschluss)
@@ -2474,7 +2491,7 @@ class EMS extends IPSModule
             $missingKwh = max(0.0, ($ctx['socTargetNight'] - $soc) / 100.0 * $ctx['capKwh']);
             $gainKwh = min($missingKwh, min($ctx['chargeKw'], $ctx['maxW'] / 1000.0) * 0.25);
             $soc = min(100.0, $soc + $gainKwh / max(0.001, $ctx['capKwh']) * 100.0);
-            return array('plan' => array('op' => EMS_OP_NET_CHARGE, 'gw' => GW_MODE_AC_IMPORT, 'power' => (int)$ctx['maxW'], 'nw' => 1,
+            return array('plan' => array('op' => EMS_OP_NET_CHARGE, 'gw' => GW_MODE_BAT_CHARGE, 'power' => $this->gridChargeXsetW($ctx, $missingKwh), 'nw' => 1,
                 'reason' => sprintf('Nachtfenster bis %s: günstigste Viertelstunde (Rang %d von %d, %.2fct) -- Akku wird aus dem Netz geladen (Ziel %.0f%%)',
                     $endLabel, $nw['charge'][$slot], $nw['n'], $price * 100, $ctx['socTargetNight']),
                 'price' => $price, 'soc' => round($soc, 1)), 'soc' => $soc);
@@ -2489,6 +2506,18 @@ class EMS extends IPSModule
             : sprintf('Nachtfenster bis %s: Haus aus dem Netz, %s -- Akku voll (Ziel %.0f%% erreicht)', $endLabel, $why, $ctx['socTargetNight']);
         return array('plan' => array('op' => EMS_OP_HOLD, 'gw' => GW_MODE_AC_EXPORT, 'power' => 0, 'nw' => 1,
             'reason' => $reason, 'price' => $price, 'soc' => round($soc, 1)), 'soc' => $soc);
+    }
+
+    /**
+     * Sollleistung (Xset) fuer geplantes Netzladen im Batterie-Lademodus (11): reale Ladegrenze,
+     * Netzanschluss-Grenze und - im letzten Ladeslot - nur so viel, wie zum Ziel noch fehlt
+     * (kein Ueberladen, kein unnoetig gekaufter Strom).
+     */
+    private function gridChargeXsetW(array $ctx, float $missingKwh = -1.0): int
+    {
+        $w = min((float)$ctx['chargeKw'] * 1000.0, (float)$ctx['maxW']);
+        if ($missingKwh >= 0.0) { $w = min($w, $missingKwh / 0.25 * 1000.0); }
+        return (int)max(0, round($w));
     }
 
     private function simulateAutomatikSlot($slot, $pvW, $price, $soc, array $ctx): array
@@ -2547,7 +2576,7 @@ class EMS extends IPSModule
             // informativ, damit die Plan-Anzeige nicht widerspricht.
             $missingKwh = max(0.0, ($ctx['socTargetNight'] - $soc) / 100.0 * $ctx['capKwh']);
             $soc = min(100.0, $soc + (min($missingKwh, $ctx['chargeKw'] * 0.25) / max(0.001, $ctx['capKwh']) * 100.0));
-            return array('plan' => array('op' => EMS_OP_NET_CHARGE, 'gw' => GW_MODE_AC_IMPORT, 'power' => (int)$ctx['maxW'],
+            return array('plan' => array('op' => EMS_OP_NET_CHARGE, 'gw' => GW_MODE_BAT_CHARGE, 'power' => $this->gridChargeXsetW($ctx, $missingKwh),
                 'reason' => '§14a-Fenster (Vorrang vor Plan)', 'price' => $price, 'soc' => round($soc, 1)), 'soc' => $soc);
         }
 
@@ -2563,7 +2592,7 @@ class EMS extends IPSModule
             // jetzt einfach eine weitere Regel im selben Tagesplan.
             $missingKwh = max(0.0, (100.0 - $soc) / 100.0 * $ctx['capKwh']);
             $soc = min(100.0, $soc + (min($missingKwh, $ctx['chargeKw'] * 0.25) / max(0.001, $ctx['capKwh']) * 100.0));
-            return array('plan' => array('op' => EMS_OP_NET_CHARGE, 'gw' => GW_MODE_AC_IMPORT, 'power' => (int)$ctx['maxW'],
+            return array('plan' => array('op' => EMS_OP_NET_CHARGE, 'gw' => GW_MODE_BAT_CHARGE, 'power' => $this->gridChargeXsetW($ctx, $missingKwh),
                 'reason' => sprintf('Negativpreis %.2fct -- immer laden', $price * 100), 'price' => $price, 'soc' => round($soc, 1)), 'soc' => $soc);
         }
 
@@ -2640,7 +2669,7 @@ class EMS extends IPSModule
         // beim urspruenglichen Export-Bug, nur in diesem zweiten Zweig
         // versteckt: die Batterie wurde fuer 18,36ct leergezogen, obwohl
         // abends 40+ct anstanden. Jetzt: dieselbe Reserve gilt hier genauso.
-        if ($ctx['feedTariff'] > ($price + 0.001) && $soc > ($ctx['socMin'] + $ctx['socReserve'] + $ctx['hystSoc'] + $priceBonusPct)) {
+        if ($ctx['feedTariff'] * 0.95 > ($price + 0.001) && $soc > ($ctx['socMin'] + $ctx['socReserve'] + $ctx['hystSoc'] + $priceBonusPct)) {
             // Bezug ist JETZT billiger als die Einspeiseverguetung -- die
             // gespeicherte Energie ist mehr wert, wenn sie exportiert
             // wird, als wenn sie den (billigeren) Netzbezug ersetzt.
@@ -2651,16 +2680,17 @@ class EMS extends IPSModule
             $lossKwh = $loadW / 1000.0 * 0.25;
             $soc = max(0.0, $soc - ($lossKwh / max(0.001, $ctx['capKwh']) * 100.0));
             return array('plan' => array('op' => EMS_OP_HOLD, 'gw' => GW_MODE_AC_EXPORT, 'power' => 0,
-                'reason' => sprintf('Bezug %.2fct < Einspeiseverguetung %.2fct -- Batterie bleibt geschont, Haus aus dem Netz', $price * 100, $ctx['feedTariff'] * 100),
+                'reason' => sprintf('Bezug %.2fct < Einspeiseverguetung %.2fct abzueglich 5 %% Batterieverlust -- Batterie bleibt geschont, Haus aus dem Netz', $price * 100, $ctx['feedTariff'] * 95),
                 'price' => $price, 'soc' => round($soc, 1)), 'soc' => $soc);
         }
 
         $missingKwh  = max(0.0, ($ctx['socTargetNight'] - $soc) / 100.0 * $ctx['capKwh']);
         $neededSlots = ($ctx['chargeKw'] > 0) ? (int)ceil($missingKwh / ($ctx['chargeKw'] * 0.25)) : 0;
         $rank        = $cheapRank[$slot] ?? PHP_INT_MAX;
-        if ($neededSlots > 0 && $rank < $neededSlots && $price < ($ctx['thCharge'] + 0.05)) {
+        if ($neededSlots > 0 && $rank < $neededSlots && $price < ($ctx['thCharge'] + 0.05)
+            && ($ctx['feedTariff'] <= 0 || $price < $ctx['feedTariff'] * 0.95)) {
             $soc = min(100.0, $soc + (min($missingKwh, $ctx['chargeKw'] * 0.25) / max(0.001, $ctx['capKwh']) * 100.0));
-            return array('plan' => array('op' => EMS_OP_NET_CHARGE, 'gw' => GW_MODE_AC_IMPORT, 'power' => (int)$ctx['maxW'],
+            return array('plan' => array('op' => EMS_OP_NET_CHARGE, 'gw' => GW_MODE_BAT_CHARGE, 'power' => $this->gridChargeXsetW($ctx, $missingKwh),
                 'reason' => sprintf('Rang %d der guenstigsten Slots (%.2fct), Nachtziel %.0f%% noch offen', $rank + 1, $price * 100, $ctx['socTargetNight']),
                 'price' => $price, 'soc' => round($soc, 1)), 'soc' => $soc);
         }
@@ -3961,14 +3991,58 @@ class EMS extends IPSModule
             $surplusW = max(0.0, (float)$s['pv_total_w'] - (float)$s['house_pow_w']);
             $powerW   = (int)min($powerW, round($surplusW));
         }
+        $gwMode = $slot['gw'] ?? GW_MODE_AUTO;
+        $reason = 'Tagesplan: ' . ($slot['reason'] ?? '');
+
+        // Netzladen im Batterie-Lademodus (11): Xset ist die Ladeleistung, das Haus laeuft OBENDRAUF
+        // (Live-Test 19.09.2026: PV bleibt ungedrosselt, Bezug = Xset - PV + Haus). Damit der
+        // Netzanschluss (SLS) nicht ueberlastet wird, zur Laufzeit begrenzen:
+        // Xset <= Anschlussgrenze + PV - Haus - Wallbox. Bleibt zu wenig uebrig, gibt es nichts zu laden.
+        if ($op === EMS_OP_NET_CHARGE && $gwMode === GW_MODE_BAT_CHARGE) {
+            $maxW   = (float)$this->ReadPropertyInteger('EMS_Max_Power_W');
+            $lim    = $this->getBatteryPowerLimitsKw($this->getInverterEntry(), $maxW, (float)$this->ReadPropertyFloat('BAT_Capacity_kWh'));
+            $wbW    = ((float)$s['wb1_pow_kw'] + (float)$s['wb2_pow_kw']) * 1000.0;
+            $budget = $maxW + (float)$s['pv_total_w'] - (float)$s['house_pow_w'] - $wbW;
+            $xset   = (int)max(0, round(min((float)$powerW, $lim['chargeKw'] * 1000.0, $budget)));
+            if ($xset < 500) {
+                return array(
+                    'op_mode' => EMS_OP_AUTO, 'gw_mode' => GW_MODE_AUTO, 'gw_power_w' => 0, 'gw_enable' => false,
+                    'wb1_enable' => $wb1En, 'wb2_enable' => $wb2En,
+                    'reason' => 'Tagesplan: Netzladen nicht möglich (Netzanschluss/Ladegrenze ausgeschöpft) -- Automatik',
+                    'source' => 'tagesplan',
+                );
+            }
+            if ($xset < (int)$powerW) {
+                $reason .= sprintf(' [Sollleistung %.1f kW statt %.1f kW: Anschluss %.0f W, Haus %.0f W, Wallbox %.0f W, PV %.0f W]',
+                    $xset / 1000.0, $powerW / 1000.0, $maxW, $s['house_pow_w'], $wbW, $s['pv_total_w']);
+            }
+            $powerW = $xset;
+        }
+
+        // Laden aus PV (Modus 2): die Batterie hat dort Vorrang vor dem Haus -- fehlt der PV-Ueberschuss
+        // real, wuerde das Haus voll aus dem Netz laufen (Live 19.09. 07:30-09:00). Nur zulaessig bei
+        // echtem Ueberschuss oder wenn Netzstrom guenstiger als die Verguetung ist (0 < Preis < Verguetung).
+        if ($op === EMS_OP_PV_SELFUSE && $gwMode === GW_MODE_CHARGE_PV) {
+            $feed    = (float)$this->getFeedTariffEur()['eur'];
+            $surplus = (float)$s['pv_total_w'] - (float)$s['house_pow_w'];
+            $cheap   = ($price > 0 && $feed > 0 && $price < $feed * 0.95);
+            if ($surplus < 200.0 && !$cheap) {
+                return array(
+                    'op_mode' => EMS_OP_AUTO, 'gw_mode' => GW_MODE_AUTO, 'gw_power_w' => 0, 'gw_enable' => false,
+                    'wb1_enable' => $wb1En, 'wb2_enable' => $wb2En,
+                    'reason' => sprintf('Tagesplan: PV-Ladung geplant, aber kein realer Überschuss (%.0f W) und Netzstrom nicht günstig -- Automatik', $surplus),
+                    'source' => 'tagesplan',
+                );
+            }
+        }
         return array(
             'op_mode'    => $op,
-            'gw_mode'    => $slot['gw'] ?? GW_MODE_AUTO,
+            'gw_mode'    => $gwMode,
             'gw_power_w' => $powerW,
             'gw_enable'  => ($op !== EMS_OP_AUTO),
             'wb1_enable' => $wb1En,
             'wb2_enable' => $wb2En,
-            'reason'     => 'Tagesplan: ' . ($slot['reason'] ?? ''),
+            'reason'     => $reason,
             'source'     => 'tagesplan',
         );
     }
@@ -6030,6 +6104,8 @@ class EMS extends IPSModule
         }
 
         $this->setGoodweMode($d['gw_mode'], $d['gw_power_w'], $gwEnable);
+        $this->WriteAttributeInteger('LastGoodwePowerW', (int)$d['gw_power_w']);
+        $this->WriteAttributeInteger('LastGoodweWriteAt', $now);
         if ($modeChanging || $isGridRewards) {
             $this->WriteAttributeInteger('LastGoodweMode',   $d['gw_mode']);
             $this->WriteAttributeBoolean('LastGoodweEnable', $gwEnable);
@@ -6063,6 +6139,27 @@ class EMS extends IPSModule
         $this->SetValue('EMS_LastAction', $d['reason']);
         $this->SetValue('EMS_Status',     'OK: ' . $d['reason']);
         $this->WriteAttributeString('LastDecisionSource', $d['source'] ?? 'ems');
+    }
+
+    /**
+     * Haltesignal (alle 15 s): schreibt den zuletzt gesendeten aktiven Sollwert erneut, damit der WR nicht
+     * ca. 30 s nach dem letzten Schreiben auf 255 zurueckfaellt (Live-Test 19.09.2026). Der 30-s-Zyklus
+     * von Update() ist dafuer zu knapp. Nur bei aktivem EMS und aktivem Sollwert (enable), ohne
+     * Null-Schritt, ohne neue Entscheidung; Modus und Leistung wie zuletzt von applyDecision() gesendet.
+     */
+    public function KeepAlive()
+    {
+        if (!$this->ReadPropertyBoolean('EMS_Active') || !$this->ReadAttributeBoolean('LastGoodweEnable')) { return; }
+        $mode = $this->ReadAttributeInteger('LastGoodweMode');
+        if ($mode === GW_MODE_AUTO) { return; }
+        $inv = $this->getInverterEntry();
+        if ($inv === null || ($inv['source'] ?? '') !== 'inverterhub' || ($inv['controlAuthority'] ?? 'none') !== 'ems' || !($inv['controllable'] ?? false)) { return; }
+        // Nur, wenn der Zyklus in letzter Zeit lief (kein Halten eines veralteten Sollwerts nach Ausfall)
+        if (time() - $this->ReadAttributeInteger('LastGoodweWriteAt') > 3 * max(30, (int)$this->ReadPropertyInteger('EMS_Interval')) + 60) { return; }
+        $iid = $inv['instanceID'];
+        IPS_RequestAction($iid, 'ctl_ems_mode', $mode);
+        IPS_RequestAction($iid, 'ctl_ems_power', $this->ReadAttributeInteger('LastGoodwePowerW'));
+        IPS_RequestAction($iid, 'ctl_ems_enable', true);
     }
 
     /**
