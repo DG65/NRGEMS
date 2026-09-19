@@ -1175,6 +1175,13 @@ check('gewaehlt sind die 7 guenstigsten Slots des Fensters (10-16), nicht der bi
 $c = call($ems, 'nightWindowSlot', [12, 0.12, 80.0, $nw, $ctxN]);
 check('Ladeslot: Netz laden (op 2, Batterie-Lademodus 11, Ladegrenze als Sollleistung), Rang und Preis in der Begruendung', $c['plan']['op'] === EMS_OP_NET_CHARGE && $c['plan']['gw'] === GW_MODE_BAT_CHARGE && $c['plan']['power'] === 10000 && strpos($c['plan']['reason'], 'Rang 3 von 7') !== false && strpos($c['plan']['reason'], '12,00') === false && !empty($c['plan']['nw']), json_encode($c['plan']));
 
+// Plan: WR-Automatik entlaedt das Haus auch bei Preisen unter der Entladeschwelle (SOC darf nicht auf 100 % stehen)
+$ctxA = ['capKwh' => 40.0, 'chargeKw' => 24.0, 'dischargeKw' => 24.0, 'maxW' => 34500.0, 'feedTariff' => 0.1836, 'thCharge' => 0.10, 'thDischarge' => 0.25,
+    'socTargetDay' => 90.0, 'hystSoc' => 2.0, 'socMin' => 0.0, 'socReserve' => 10.0, 'socTargetNight' => 100.0, 'fcMinPower' => 100.0,
+    'enwgActive' => false, 'enwgStartH' => 0, 'enwgEndH' => 0, 'avgHouseW' => 800.0, 'houseLoadSlots' => []];
+$rA = call($ems, 'simulateDaySlot', [26, 0.19, 0.0, 100.0, [], $ctxA, 0.0]);
+check('Plan: Preis 19 ct unter Entladeschwelle, kein PV -> SOC faellt (Hauslast aus Akku), nicht 100 % eingefroren', $rA['soc'] < 100.0 && $rA['plan']['op'] === EMS_OP_AUTO, json_encode($rA['plan']));
+
 // Vorentladen (0.48.0): Fensterbeginn und Planslot
 prop('PLAN_PreDischarge_MinGain_ct', 3.0);
 $p192 = array_fill(0, 192, 0.30); for ($i = 96; $i < 102; $i++) { $p192[$i] = 0.127; }

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.48.2 (2026-09-19)
+- Tagesplan: In Viertelstunden ohne aktiven Sollwert (Automatik, Preis unter der Entladeschwelle) sank der
+  simulierte SOC nicht, obwohl die WR-Automatik das Haus real aus der Batterie versorgt (Dietmar: SOC blieb
+  morgens 06:00–08:15 auf 100 %). Jetzt rechnet der Plan dort wie die Automatik: Überschuss lädt, Hauslast
+  entlädt bis zur Reserve.
+
 ## 0.48.1 (2026-09-19)
 - Vorentladen erscheint jetzt im **Tagesplan** (heute + morgen): je Viertelstunde „Einspeisen“ mit Xset, Preis und
   simuliertem SOC-Verlauf bis zum Fensterbeginn; danach plant das Nachtfenster das Wiederladen ab dem dann

@@ -2737,9 +2737,12 @@ class EMS extends IPSModule
                 'price' => $price, 'soc' => round($soc, 1)), 'soc' => $soc);
         }
 
-        return array('plan' => array('op' => EMS_OP_AUTO, 'gw' => GW_MODE_AUTO, 'power' => 0,
-            'reason' => sprintf('Automatik: Bezug %.2fct guenstiger als Alternative', $price * 100),
-            'price' => $price, 'soc' => round($soc, 1)), 'soc' => $soc);
+        // Die WR-Automatik versorgt das Haus real aus der Batterie (Eigenverbrauch) -- der SOC muss in der
+        // Simulation deshalb auch dann fallen, wenn der Preis unter der Entladeschwelle liegt (Dietmar
+        // 19.09.2026: Plan hielt den SOC morgens 06:00-08:15 auf 100 %, obwohl Modus 1 lief).
+        $auto = $this->simulateAutomatikSlot($slot, $pvW, $price, $soc, $ctx);
+        $auto['plan']['reason'] = sprintf('Bezug %.2fct guenstiger als Alternative -- ', $price * 100) . $auto['plan']['reason'];
+        return $auto;
     }
 
     /**
