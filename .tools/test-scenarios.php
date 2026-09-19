@@ -1128,7 +1128,7 @@ $dNoPflicht = call($ems, 'simulateDaySlot', [10, -0.10, 8000.0, 99.6, [], array_
 check('ohne § 51-Pflicht bei gleicher Lage: normale Regel greift (Negativpreis -> laden, SOC schon fast voll -> kein Export-Zwang durch die Pflicht)', strpos($dNoPflicht['plan']['reason'], '§ 51') === false);
 $ctxCap = array_merge($ctxFull, ['negativpreisPflicht' => false]);
 $dCap = call($ems, 'simulateDaySlot', [50, 0.30, 8000.0, 95.0, [], $ctxCap, 0.0]);
-check('dauerhafte Einspeisegrenze kappt PV-Vollernte-Export (8000W PV, Grenze 3000W)', $dCap['plan']['op'] === EMS_OP_EXPORT && (int)$dCap['plan']['power'] === 3000 && strpos($dCap['plan']['reason'], 'Einspeisegrenze') !== false, json_encode($dCap['plan']));
+check('dauerhafte Einspeisegrenze kappt PV-Vollernte-Export (8000W PV, Grenze 3000W)', $dCap['plan']['op'] === EMS_OP_AUTO && strpos($dCap['plan']['reason'], 'Einspeisegrenze 3000W greift, 5000W gekappt') !== false, json_encode($dCap['plan']));
 
 echo "\n24) SimulateDayPlanScenarios -- mehrere Rechtslagen auf einen Schlag (Funktionsfaehigkeits-Nachweis)\n";
 $s = call($ems, 'SimulateDayPlanScenarios', [[]]);
@@ -1149,7 +1149,7 @@ $h = call($ems, 'simulateDaySlot', [12, 0.14, 0.0, 40.0, [], $ctxH, 0.0]);
 check('Bezug 14 ct < Verguetung 18,36 ct, kein PV: op = Akku halten (8), 0 W, gw AC-Export', $h['plan']['op'] === EMS_OP_HOLD && EMS_OP_HOLD === 8 && (int)$h['plan']['power'] === 0 && $h['plan']['gw'] === GW_MODE_AC_EXPORT, json_encode($h['plan']));
 check('Begruendung sagt nicht mehr "exportiert"', strpos($h['plan']['reason'], 'exportiert') === false && strpos($h['plan']['reason'], 'geschont') !== false, $h['plan']['reason']);
 $e = call($ems, 'simulateDaySlot', [50, 0.30, 8000.0, 38.4, [], $ctxH, 0.0]);
-check('Echte PV-Einspeisung (Akku am Ziel) bleibt op 5 Einspeisen mit Leistung > 0', $e['plan']['op'] === EMS_OP_EXPORT && (int)$e['plan']['power'] > 0, json_encode($e['plan']));
+check('PV-Einspeisung bei vollem Akku: Automatik (op 0, Modus 1, 0 W) -- die WR-Automatik speist selbst ein, kein erzwungener Modus 5', $e['plan']['op'] === EMS_OP_AUTO && $e['plan']['gw'] === GW_MODE_AUTO && (int)$e['plan']['power'] === 0 && strpos($e['plan']['reason'], 'eingespeist') !== false, json_encode($e['plan']));
 $acts = array_column(call($ems, 'getPlanActions'), null, 'op');
 check('Kalender-Aktionen kennen op 8 (Name, Tuerkis)', ($acts[8]['name'] ?? '') === 'Akku halten (Netzbezug)' && ($acts[8]['color'] ?? 0) === 0x00ACC1, json_encode($acts[8] ?? null));
 

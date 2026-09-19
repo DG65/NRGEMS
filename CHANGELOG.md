@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.48.3 (2026-09-19)
+- Tagesplan: Bei vollem Akku (Ziel erreicht) und PV-Überschuss plante EMS „Einspeisen“ (Modus 5, Xset = PV-Prognose,
+  enable = true). Das leistet die WR-Automatik von selbst; der erzwungene Modus versetzt den WR in „3rd party
+  EMS“ und regelt bei ungenauer Prognose stärker als nötig. Der Plan zeigt diese Viertelstunden jetzt als
+  **Automatik** (Modus 1, enable aus, 0 W) mit dem Text „PV-Überschuss wird von der WR-Automatik eingespeist“.
+  Verbund-Regel: Was die Automatik von selbst leistet, wird nie per Sollwert-Modus erzwungen. Modus 5 bleibt nur
+  für das gewollte Vorentladen (0.48.0).
+
 ## 0.48.2 (2026-09-19)
 - Tagesplan: In Viertelstunden ohne aktiven Sollwert (Automatik, Preis unter der Entladeschwelle) sank der
   simulierte SOC nicht, obwohl die WR-Automatik das Haus real aus der Batterie versorgt (Dietmar: SOC blieb

@@ -2642,8 +2642,12 @@ class EMS extends IPSModule
                 $capped = sprintf(' -- Einspeisegrenze %.0fW greift, %.0fW gekappt', $ctx['feedInLimitW'], $exportW - $ctx['feedInLimitW']);
                 $exportW = $ctx['feedInLimitW'];
             }
-            return array('plan' => array('op' => EMS_OP_EXPORT, 'gw' => GW_MODE_AC_EXPORT, 'power' => (int)$exportW,
-                'reason' => sprintf('Akku am Ziel (SOC=%.0f%%), PV-Vollernte %.0fW exportieren%s', $soc, $pvW, $capped),
+            // Akku voll: Die WR-Automatik speist den PV-Ueberschuss von selbst ein (PV -> Haus -> Netz).
+            // Verbund-Regel: Was die Automatik von selbst leistet, wird nie per Sollwert-Modus erzwungen
+            // (Modus 5 mit enable=true haette den WR in "3rd party EMS" versetzt und bei ungenauer Prognose
+            // staerker geregelt als noetig; Dietmar 19.09.2026). Der Plan zeigt es deshalb als Automatik.
+            return array('plan' => array('op' => EMS_OP_AUTO, 'gw' => GW_MODE_AUTO, 'power' => 0,
+                'reason' => sprintf('Automatik: Akku am Ziel (SOC=%.0f%%), PV-Überschuss (Ernte %.0fW) wird von der WR-Automatik eingespeist%s', $soc, $pvW, $capped),
                 'price' => $price, 'soc' => round($soc, 1)), 'soc' => $soc);
         }
 
