@@ -2740,14 +2740,41 @@ class EMS extends IPSModule
         foreach ($today as $slot => $entry) {
             $entry['time'] = $this->slotTimestamp($baseToday, $slot);
             if (isset($entry['price']) && $entry['price'] !== null) { $entry['price'] = round($entry['price'] * 100, 2); }
-            $out[] = $entry;
+            $out[] = $this->addDayPlanSwitching($entry);
         }
         foreach ($tomorrow as $slot => $entry) {
             $entry['time'] = $this->slotTimestamp($baseTomorrow, $slot);
             if (isset($entry['price']) && $entry['price'] !== null) { $entry['price'] = round($entry['price'] * 100, 2); }
-            $out[] = $entry;
+            $out[] = $this->addDayPlanSwitching($entry);
         }
-        return array('contractVersion' => '1.0', 'priceUnit' => 'ct/kWh', 'slots' => $out);
+        return array('contractVersion' => '1.1', 'priceUnit' => 'ct/kWh', 'slots' => $out);
+    }
+
+    /**
+     * Additive Felder je Plan-Slot (Vertrag 1.1, Dashboard-Anfrage 19.09.2026):
+     * `xsetW` (Schaltleistung in W, 0 = keine Sollleistung), `gwMode` (Modus des
+     * Wechselrichters) und `gwModeLabel` (deutsche Beschriftung der EMS-Betriebsart,
+     * damit Konsumenten keine Modi hart verdrahten). Reine Anzeige der schon
+     * geplanten Werte; Konsumenten lesen die Felder defensiv (Major 1).
+     */
+    private function addDayPlanSwitching(array $entry): array
+    {
+        $labels = array(
+            EMS_OP_AUTO        => 'Automatik',
+            EMS_OP_PV_SELFUSE  => 'PV-Eigenverbrauch',
+            EMS_OP_NET_CHARGE  => 'Netz laden',
+            EMS_OP_DISCHARGE   => 'Entladen',
+            EMS_OP_STANDBY     => 'Bereitschaft',
+            EMS_OP_EXPORT      => 'Einspeisen',
+            EMS_OP_BACKUP      => 'Notstrom',
+            EMS_OP_GRIDREWARDS => 'Grid Rewards',
+            EMS_OP_HOLD        => 'Akku halten',
+        );
+        $op = isset($entry['op']) ? (int)$entry['op'] : EMS_OP_AUTO;
+        $entry['xsetW']       = (int)($entry['power'] ?? 0);
+        $entry['gwMode']      = (int)($entry['gw'] ?? GW_MODE_AUTO);
+        $entry['gwModeLabel'] = $labels[$op] ?? 'Automatik';
+        return $entry;
     }
 
     /**
