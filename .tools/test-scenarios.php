@@ -1175,6 +1175,16 @@ check('gewaehlt sind die 7 guenstigsten Slots des Fensters (10-16), nicht der bi
 $c = call($ems, 'nightWindowSlot', [12, 0.12, 80.0, $nw, $ctxN]);
 check('Ladeslot: Netz laden (op 2, Batterie-Lademodus 11, Ladegrenze als Sollleistung), Rang und Preis in der Begruendung', $c['plan']['op'] === EMS_OP_NET_CHARGE && $c['plan']['gw'] === GW_MODE_BAT_CHARGE && $c['plan']['power'] === 10000 && strpos($c['plan']['reason'], 'Rang 3 von 7') !== false && strpos($c['plan']['reason'], '12,00') === false && !empty($c['plan']['nw']), json_encode($c['plan']));
 
+// Vorentladen (0.48.0): Fensterbeginn und Planslot
+prop('PLAN_PreDischarge_MinGain_ct', 3.0);
+$p192 = array_fill(0, 192, 0.30); for ($i = 96; $i < 102; $i++) { $p192[$i] = 0.127; }
+check('Vorentladen: Fensterbeginn = erste Viertelstunde unter (Verguetung - 3 ct) x 0,9025', call($ems, 'preDischargeEnd', [$p192, 81, 0.1836]) === 96);
+check('Vorentladen: zu teures Fenster (17 ct) lohnt nicht', call($ems, 'preDischargeEnd', [array_fill(0, 192, 0.17), 81, 0.1836]) === null);
+$pdS = ['end' => 96, 'endPrice' => 0.127, 'sum' => 0.30 * 15, 'avg' => 0.30, 'floor' => 0.0];
+$ctxP = ['capKwh' => 40.0, 'dischargeKw' => 24.0, 'maxW' => 34500.0];
+$rP = call($ems, 'preDischargePlanSlot', [81, &$pdS, 90.0, 0.30, 0.0, 1500.0, $ctxP]);
+check('Vorentladen-Planslot: Einspeisen (op 5) mit Xset, SOC faellt', $rP['plan']['op'] === EMS_OP_EXPORT && $rP['plan']['power'] > 5000 && $rP['soc'] < 90.0, json_encode($rP['plan']));
+
 // Wirtschaftlichkeit (Dietmar 19.09.2026): Netzladen nur unter Einspeiseverguetung x 0,95; letzter Slot ohne Ueberladen
 $pExp = array_fill(0, 96, 0.30); $pExp[10] = 0.10; $pExp[11] = 0.17; $pExp[12] = 0.19;
 $nwE = call($ems, 'nightWindowPlan', [$pExp, 0, 0.0, $ctxN]);

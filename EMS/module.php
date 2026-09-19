@@ -2278,7 +2278,8 @@ class EMS extends IPSModule
     {
         return date('Y-m-d') . '|' . md5(json_encode($prices) . '|' . json_encode($tomorrowPrices)
             . '|veh=' . round($vehicleReserveKwh, 1) . '|slot=' . $nowSlot
-            . '|nw=' . ($this->ReadPropertyBoolean('PLAN_NightGrid_Active') ? $this->ReadPropertyInteger('PLAN_NightGrid_EndHour') : 0));
+            . '|nw=' . ($this->ReadPropertyBoolean('PLAN_NightGrid_Active') ? $this->ReadPropertyInteger('PLAN_NightGrid_EndHour') : 0)
+            . '|pd=' . ($this->ReadPropertyBoolean('PLAN_PreDischarge_Active') ? 1 : 0));
     }
 
     private function getTibberGridRewardInstance()
@@ -3627,6 +3628,21 @@ class EMS extends IPSModule
         $archivedGridRewards = ($nowSlot > 0)
             ? $this->getArchivedSlotsToday($this->GetIDForIdent('EMS_GridRewards')) : array();
 
+        // Vorentladen (0.48.0): gleiche Rechnung wie zur Laufzeit, damit der Plan zeigt, was passiert
+        $pd = null;
+        if ($this->ReadPropertyBoolean('PLAN_PreDischarge_Active') && $this->ReadPropertyBoolean('PLAN_NightGrid_Active') && $feedTariff > 0) {
+            $p192 = array();
+            for ($i = 0; $i < 96; $i++) { $p192[$i] = $prices[$i] ?? null; $p192[96 + $i] = $tomorrowPrices[$i] ?? null; }
+            $pdEnd = $this->preDischargeEnd($p192, $nowSlot, $feedTariff);
+            if ($pdEnd !== null) {
+                $sum = 0.0; $cnt = 0;
+                for ($k = $nowSlot; $k < $pdEnd; $k++) { if ($p192[$k] !== null) { $sum += max(0.01, (float)$p192[$k]); $cnt++; } }
+                if ($cnt > 0 && $sum > 0) {
+                    $pd = array('end' => $pdEnd, 'endPrice' => (float)$p192[$pdEnd], 'sum' => $sum, 'avg' => $sum / $cnt, 'floor' => $socMin);
+                }
+            }
+        }
+
         $plan = array();
         $nwToday = false; // beim ersten kuenftigen Slot mit dem dann gueltigen SOC berechnet
         for ($slot = 0; $slot < 96; $slot++) {
@@ -3648,6 +3664,13 @@ class EMS extends IPSModule
             }
             $price = $prices[$slot];
             $pvW   = (float)($pvfSlots[$slot] ?? 0.0);
+            if ($pd !== null && $slot < $pd['end'] && $soc > $pd['floor'] + 0.5) {
+                $plan[$slot] = null;
+                $r = $this->preDischargePlanSlot($slot, $pd, $soc, $price, $pvW, (float)($houseLoadSlotsToday[$slot] ?? $avgHouseW), $ctx);
+                $plan[$slot] = $r['plan'];
+                $soc = $r['soc'];
+                continue;
+            }
             if ($nwToday === false) { $nwToday = $this->nightWindowPlan($prices, $slot, $soc, $ctx); }
             $result = $this->nightWindowSlot($slot, $price, $soc, $nwToday, $ctx);
             if ($result === null) {
@@ -3698,6 +3721,12 @@ class EMS extends IPSModule
         for ($slot = 0; $slot < 96; $slot++) {
             $price = $tomorrowPrices[$slot];
             $pvW   = (float)($pvfSlots[96 + $slot] ?? 0.0);
+            if ($pd !== null && (96 + $slot) < $pd['end'] && $soc > $pd['floor'] + 0.5) {
+                $r = $this->preDischargePlanSlot(96 + $slot, $pd, $soc, $price, $pvW, (float)($houseLoadSlotsTomorrow[$slot] ?? $avgHouseWTomorrow), $ctxTomorrow);
+                $tomorrowPlan[$slot] = $r['plan'];
+                $soc = $r['soc'];
+                continue;
+            }
             $result = $this->nightWindowSlot($slot, $price, $soc, $nwTomorrow, $ctxTomorrow);
             if ($result === null) {
                 $result = $hasArbitrageTomorrow
@@ -3973,11 +4002,7 @@ class EMS extends IPSModule
             $price[96 + $i] = isset($tomorrow[$i]['price']) ? $tomorrow[$i]['price'] : null;
         }
         $nowSlot = (int)(((int)date('H') * 60 + (int)date('i')) / 15);
-        $maxBuy  = ($feed - (float)$this->ReadPropertyFloat('PLAN_PreDischarge_MinGain_ct') / 100.0) * 0.9025;
-        $end = null;
-        for ($j = $nowSlot + 1; $j <= $nowSlot + 40 && $j < 192; $j++) {
-            if ($price[$j] !== null && $price[$j] < $maxBuy) { $end = $j; break; }
-        }
+        $end = $this->preDischargeEnd($price, $nowSlot, $feed);
         if ($end === null) { return null; }
 
         $sum = 0.0; $n = 0;
@@ -4005,6 +4030,44 @@ class EMS extends IPSModule
                 intdiv($end % 96, 4), ($end % 4) * 15, $price[$end] * 100, $feed * 100, $soc, $floor, $wNow / $sum * 100, $wNow * 100, $exportW / 1000.0),
             'source'     => 'vorentladen',
         );
+    }
+
+    /**
+     * Erster kuenftiger Slot (0-191 = heute+morgen, hoechstens 10 h voraus), dessen Preis so niedrig ist,
+     * dass Vorentladen lohnt (Vergueltung - Mindestgewinn, nach 0,95 x 0,95). null = kein Fenster.
+     */
+    private function preDischargeEnd(array $price192, int $nowSlot, float $feed): ?int
+    {
+        $maxBuy = ($feed - (float)$this->ReadPropertyFloat('PLAN_PreDischarge_MinGain_ct') / 100.0) * 0.9025;
+        for ($j = $nowSlot + 1; $j <= $nowSlot + 40 && $j < 192; $j++) {
+            if (isset($price192[$j]) && $price192[$j] !== null && $price192[$j] < $maxBuy) { return $j; }
+        }
+        return null;
+    }
+
+    /**
+     * Ein Vorentlade-Slot fuer den SICHTBAREN Tagesplan (gleiche Rechnung wie applyPreDischarge():
+     * Anteil dieser Viertelstunde = Preis / Summe der Preise bis zum Fensterbeginn). $pd haelt den
+     * Zustand ueber die Slots ('end', 'sum' = Preissumme ab dem aktuellen Slot, 'avg', 'floor').
+     */
+    private function preDischargePlanSlot(int $g, array &$pd, float $soc, $price, float $pvW, float $loadW, array $ctx): array
+    {
+        $w = ($price !== null) ? max(0.01, (float)$price) : $pd['avg'];
+        $eKwh  = max(0.0, ($soc - $pd['floor']) / 100.0 * $ctx['capKwh']);
+        $batKwh = ($pd['sum'] > 0) ? min($eKwh * ($w / $pd['sum']), $ctx['dischargeKw'] * 0.25) : 0.0;
+        $pd['sum'] = max(0.0, $pd['sum'] - $w);
+        $batW = $batKwh / 0.25 * 1000.0;
+        $exportW = min($batW * 0.95 + $pvW - $loadW, (float)$ctx['maxW']);
+        $soc2 = max($pd['floor'], $soc - $batKwh / max(0.001, $ctx['capKwh']) * 100.0);
+        if ($exportW < 500 || $batKwh <= 0) {
+            return array('plan' => array('op' => EMS_OP_AUTO, 'gw' => GW_MODE_AUTO, 'power' => 0,
+                'reason' => sprintf('Vorentladen: Haus aus dem Akku (%.1fct), kein Überschuss zum Einspeisen', $w * 100),
+                'price' => $price, 'soc' => round($soc2, 1), 'pd' => 1), 'soc' => $soc2);
+        }
+        return array('plan' => array('op' => EMS_OP_EXPORT, 'gw' => GW_MODE_AC_EXPORT, 'power' => (int)round($exportW),
+            'reason' => sprintf('Vorentladen bis %02d:%02d (Wiederkauf %.1fct): Anteil %.1fct dieser Viertelstunde, Einspeisung %.1f kW aus dem Akku',
+                intdiv($pd['end'] % 96, 4), ($pd['end'] % 4) * 15, $pd['endPrice'] * 100, $w * 100, $exportW / 1000.0),
+            'price' => $price, 'soc' => round($soc2, 1), 'pd' => 1), 'soc' => $soc2);
     }
 
     private function applyPlanSlot($s)

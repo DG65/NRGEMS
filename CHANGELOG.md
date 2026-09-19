@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.48.1 (2026-09-19)
+- Vorentladen erscheint jetzt im **Tagesplan** (heute + morgen): je Viertelstunde „Einspeisen“ mit Xset, Preis und
+  simuliertem SOC-Verlauf bis zum Fensterbeginn; danach plant das Nachtfenster das Wiederladen ab dem dann
+  erwarteten SOC. Bisher wirkte Vorentladen nur zur Laufzeit und stand nicht im Plan (Dietmar-Rückfrage).
+  Gleiche Rechnung wie zur Laufzeit (`preDischargeEnd()`/`preDischargePlanSlot()`).
+
 ## 0.48.0 (2026-09-19)
 - **Neu: Vorentladen** (`PLAN_PreDischarge_Active`, Standard aus, nur zusammen mit dem Nachtfenster; Dietmar
   19.09.2026): Vor einem deutlich günstigeren Nachtladefenster wird der Akku über Modus 5 (AC-Export, Xset =
