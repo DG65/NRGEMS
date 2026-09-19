@@ -203,6 +203,8 @@ class EMS extends IPSModule
         // Akku in den guenstigsten Viertelstunden laden. Standard aus: Netzladung ist
         // anlagen-/rechtsabhaengig (Mischspeicher), gehoert nicht in jede Installation.
         $this->RegisterPropertyBoolean('PLAN_NightGrid_Active',    false);
+        $this->RegisterPropertyBoolean('PLAN_PreDischarge_Active', false);
+        $this->RegisterPropertyFloat(  'PLAN_PreDischarge_MinGain_ct', 3.0);
         $this->RegisterPropertyInteger('PLAN_NightGrid_EndHour',   6);
         $this->RegisterPropertyInteger('BAT_SOC_Target_Day',       80);
         $this->RegisterPropertyBoolean('BAT_SOC_Dynamic_Target',   true);
@@ -3943,6 +3945,68 @@ class EMS extends IPSModule
      * Realitaet der Plan-Annahme sichtbar widerspricht (dann faellt
      * optimize() auf die Automatik zurueck statt stur weiterzumachen).
      */
+    /**
+     * Vorentladen vor einem guenstigen Netzladefenster (Dietmar 19.09.2026): Der Akku wird bis zum
+     * Beginn des Fensters ueber Modus 5 (AC-Export, Xset = Netzabgabe am Anschlusspunkt) auf den
+     * Mindest-SOC entladen, das Haus versorgt er dabei zuerst. Die Leistung folgt dem Preis: je Viertelstunde
+     * Anteil = Preis / Summe der Preise bis zum Fensterbeginn (teure Zeiten bekommen mehr, das Haus wird
+     * dort sicher aus dem Akku versorgt). Wirtschaftlich nur, wenn Einspeiseverguetung x Wirkungsgrad
+     * (0,95 x 0,95) den Wiederkaufspreis des Fensters uebersteigt, mit Mindestgewinn je kWh.
+     * Ausdruecklich vom Nutzer gewollt: Die Batterie speist damit ins Netz ein (rechtliche Folgen bei
+     * Mischspeichern, siehe Formular). Nur mit Nachtfenster, sonst wuerde nichts guenstig nachgeladen.
+     */
+    private function applyPreDischarge($s)
+    {
+        if (!$this->ReadPropertyBoolean('PLAN_PreDischarge_Active') || !$this->ReadPropertyBoolean('PLAN_NightGrid_Active')) { return null; }
+        if (empty($s['bat_active'])) { return null; }
+        $feed = (float)$this->getFeedTariffEur()['eur'];
+        if ($feed <= 0) { return null; }
+        $floor = (float)$this->ReadPropertyInteger('BAT_SOC_Min');
+        $soc   = (float)$s['bat_soc'];
+        if ($soc <= $floor + 1.0) { return null; }
+
+        $today    = $this->loadDayPlan();
+        $tomorrow = json_decode($this->ReadAttributeString('DayPlanTomorrow'), true) ?: array();
+        $price = array();
+        for ($i = 0; $i < 96; $i++) {
+            $price[$i]      = isset($today[$i]['price']) ? $today[$i]['price'] : null;
+            $price[96 + $i] = isset($tomorrow[$i]['price']) ? $tomorrow[$i]['price'] : null;
+        }
+        $nowSlot = (int)(((int)date('H') * 60 + (int)date('i')) / 15);
+        $maxBuy  = ($feed - (float)$this->ReadPropertyFloat('PLAN_PreDischarge_MinGain_ct') / 100.0) * 0.9025;
+        $end = null;
+        for ($j = $nowSlot + 1; $j <= $nowSlot + 40 && $j < 192; $j++) {
+            if ($price[$j] !== null && $price[$j] < $maxBuy) { $end = $j; break; }
+        }
+        if ($end === null) { return null; }
+
+        $sum = 0.0; $n = 0;
+        for ($k = $nowSlot; $k < $end; $k++) { if ($price[$k] !== null) { $sum += max(0.01, (float)$price[$k]); $n++; } }
+        if ($n === 0 || $sum <= 0) { return null; }
+        $wNow = ($price[$nowSlot] !== null) ? max(0.01, (float)$price[$nowSlot]) : ($sum / $n);
+
+        $capKwh = (float)$this->ReadPropertyFloat('BAT_Capacity_kWh');
+        $lim    = $this->getBatteryPowerLimitsKw($this->getInverterEntry(), (float)$this->ReadPropertyInteger('EMS_Max_Power_W'), $capKwh);
+        $eKwh   = ($soc - $floor) / 100.0 * $capKwh;
+        $batW   = min($eKwh * 1000.0 * ($wNow / $sum) / 0.25, $lim['dischargeKw'] * 1000.0);
+        $wbW    = ((float)$s['wb1_pow_kw'] + (float)$s['wb2_pow_kw']) * 1000.0;
+        $exportW = $batW * 0.95 + (float)$s['pv_total_w'] - (float)$s['house_pow_w'] - $wbW;
+        $exportW = min($exportW, (float)$this->ReadPropertyInteger('EMS_Max_Power_W'));
+        if ($exportW < 500) { return null; }
+
+        return array(
+            'op_mode'    => EMS_OP_EXPORT,
+            'gw_mode'    => GW_MODE_AC_EXPORT,
+            'gw_power_w' => (int)round($exportW),
+            'gw_enable'  => true,
+            'wb1_enable' => false,
+            'wb2_enable' => false,
+            'reason'     => sprintf('Vorentladen bis %02d:%02d (Wiederkauf %.1fct, Vergütung %.1fct): SOC %.0f%% -> %.0f%%, Anteil %.0f%% dieser Viertelstunde (%.1fct), Einspeisung %.1f kW',
+                intdiv($end % 96, 4), ($end % 4) * 15, $price[$end] * 100, $feed * 100, $soc, $floor, $wNow / $sum * 100, $wNow * 100, $exportW / 1000.0),
+            'source'     => 'vorentladen',
+        );
+    }
+
     private function applyPlanSlot($s)
     {
         $plan = $this->loadDayPlan();
@@ -4802,6 +4866,9 @@ class EMS extends IPSModule
         // Hausversorgung aus der Batterie von selbst, ohne dass EMS aktiv
         // eingreifen muss (Dietmars Beispieltag: guenstigster Preis >25ct
         // liegt ueber 18,36ct Eigenoekonomie -- nichts zu optimieren).
+        $pre = $this->applyPreDischarge($s);
+        if ($pre !== null) { return $pre; }
+
         if ($this->hasArbitrageToday()) {
 
         // ── 1. §14a Nacht-Laden ──────────────────────────────────────
@@ -5120,7 +5187,7 @@ class EMS extends IPSModule
             $this->SetValue('EMS_ExportOverlapToday_Min', round((float)$this->GetValue('EMS_ExportOverlapToday_Min') + $dt / 60.0, 2));
         }
 
-        $protected  = in_array($d['source'] ?? 'ems', array('netzbetreiber', 'tibber'), true);
+        $protected  = in_array($d['source'] ?? 'ems', array('netzbetreiber', 'tibber', 'vorentladen'), true);
         $emsActive  = !empty($d['gw_enable']);
 
         $holdUntil = $this->ReadAttributeInteger('ExpOvlHoldUntil');

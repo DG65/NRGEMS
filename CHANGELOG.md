@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.48.0 (2026-09-19)
+- **Neu: Vorentladen** (`PLAN_PreDischarge_Active`, Standard aus, nur zusammen mit dem Nachtfenster; Dietmar
+  19.09.2026): Vor einem deutlich günstigeren Nachtladefenster wird der Akku über Modus 5 (AC-Export, Xset =
+  Abgabe am Netzanschluss) bis zum Mindest-SOC entleert; das Haus versorgt der Akku dabei zuerst. Die Leistung
+  folgt dem Preis (Anteil je Viertelstunde = Preis / Summe der Preise bis zum Fensterbeginn). Lohnt nur, wenn
+  Einspeisevergütung × 0,9025 den Wiederkaufspreis + Mindestgewinn (`PLAN_PreDischarge_MinGain_ct`, Standard
+  3 ct, deckt Zyklenverschleiß) übersteigt. Die Einspeise-Überwachung lässt diese gewollte Einspeisung zu.
+  Achtung: Einspeisung aus der Batterie kann bei Mischspeichern die Vergütung gefährden (Hinweis im Formular).
+
 ## 0.47.0 (2026-09-19)
 Umbau „Netz laden“ nach den Live-Tests vom 19.09.2026 (Modus für Modus am Wechselrichter geprüft).
 - **Netzladen im Batterie-Lademodus (11)** statt Stromeinkauf (4/9): Modus 11 lädt sofort mit voller Leistung,

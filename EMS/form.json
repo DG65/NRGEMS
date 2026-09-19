@@ -1367,6 +1367,24 @@
                     "caption": "Nachtfenster: bis zur Endstunde den Akku in den günstigsten Viertelstunden aus dem Netz laden und das Haus aus dem Netz versorgen, solange der Netzpreis unter der Einspeisevergütung liegt (abzüglich 5 % Batterieverlust)"
                 },
                 {
+                    "type": "CheckBox",
+                    "name": "PLAN_PreDischarge_Active",
+                    "caption": "Vorentladen: den Akku vor einem deutlich günstigeren Nachtladefenster über das Netz entleeren (Einspeisung aus der Batterie, preisgewichtet). Nur zusammen mit dem Nachtfenster."
+                },
+                {
+                    "type": "NumberSpinner",
+                    "name": "PLAN_PreDischarge_MinGain_ct",
+                    "caption": "Vorentladen: Mindestgewinn je kWh nach Wandlungsverlusten (ct, deckt auch den Zyklenverschleiß)",
+                    "digits": 1,
+                    "minimum": 0,
+                    "maximum": 50,
+                    "suffix": " ct"
+                },
+                {
+                    "type": "Label",
+                    "caption": "Achtung: Vorentladen speist Batterieenergie ins Netz. Bei Mischspeichern mit fester Einspeisevergütung und Netzladung kann das die Vergütung gefährden (Ausschließlichkeit, MiSpeL-Alternative) — nur einschalten, wenn das für Ihre Anlage geklärt ist."
+                },
+                {
                     "type": "NumberSpinner",
                     "name": "PLAN_NightGrid_EndHour",
                     "caption": "Nachtfenster endet um (Uhr)",
