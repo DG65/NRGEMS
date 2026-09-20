@@ -584,6 +584,8 @@ check('gemischt: eingetragen bleibt, 0 wird automatisch', $thMix['charge'] === 0
 echo "\n8l) Wallbox bei PV-Ueberschuss auch ueber der Preisschwelle\n";
 $ems = freshEms();
 $sW = state(['tib_active' => true, 'pv_total_w' => 3000.0, 'house_pow_w' => 800.0, 'wb1_pow_kw' => 0.0]);
+check('Standard-Mindestleistung 4140 W (3-phasig, vorsichtig): 2,2 kW Ueberschuss genuegen nicht', call($ems, 'wallboxPriceAllowed', [1, $sW, 0.25, 0.20]) === false);
+prop('WB1_Min_Power_W', 1380); // einphasige Wallbox
 check('Preis 25 ct ueber Schwelle 20 ct, aber 2,2 kW PV-Ueberschuss (>= 1380 W): Wallbox darf laden', call($ems, 'wallboxPriceAllowed', [1, $sW, 0.25, 0.20]) === true);
 check('kein PV-Ueberschuss (nur 500 W): Preis entscheidet, Wallbox gesperrt', call($ems, 'wallboxPriceAllowed', [1, array_merge($sW, ['pv_total_w' => 1300.0]), 0.25, 0.20]) === false);
 check('Preis unter Schwelle: erlaubt, auch ohne PV', call($ems, 'wallboxPriceAllowed', [1, array_merge($sW, ['pv_total_w' => 0.0]), 0.15, 0.20]) === true);
