@@ -1,7 +1,7 @@
 # Changelog
 
 ## 0.58.0 (2026-09-20)
-- **Symcon-Strompreis als Preisquelle** (Modul „Strompreis“ von paresy, Anbieter aWATTar, ENTSO-E oder Tibber): Wer weder Tibber Grid
+- **Symcon-Strompreis als Preisquelle** (Symcon-Bibliothek „Strompreis“, Modul PowerPrice, Anbieter aWATTar, EPEX Spot oder Tibber): Wer weder Tibber Grid
   Rewards noch das Börsenpreis-Modul hat, aber den Symcon-Strompreis, bekommt jetzt den Tagesplan aus dessen Preisen. Das EMS liest
   die Variable `MarketData` (Liste aus `start`, `end`, `price`, ct/kWh) automatisch, wenn genau eine Instanz vorhanden ist; bei
   mehreren wählt man die Instanz im Formular. Reihenfolge: Tibber Grid Rewards, dann ein ausdrücklich verknüpftes Preisfeld,

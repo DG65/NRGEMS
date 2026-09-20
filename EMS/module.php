@@ -87,7 +87,7 @@ define('GUID_STEUERBOXHUB', '{B76BE0BA-DF99-4B81-81BD-636A610011EE}');
 // Day-Ahead-Boersenpreis netto -- NUR fuer § 51 EEG (negative Preise) und
 // netzdienliche Signale, NIE als Bezugspreis (Dietmar 13.09.2026).
 define('GUID_SPOTPRICE', '{11BBF147-16A1-4332-82A3-29BB31154D03}');
-define('GUID_POWERPRICE', '{ECDB5E6D-DB8F-0DBF-CE56-E796FC48FEA7}'); // Symcon-Strompreis (paresy PowerPrice, Anbieter aWATTar/ENTSO-E/Tibber)
+define('GUID_POWERPRICE', '{9354E28B-4E62-AEE5-8F88-BECA9F3F4F8F}'); // Symcon-Strompreis (Bibliothek "Strompreis", Modul PowerPrice, Praefix SPX; Anbieter aWATTar/EPEX Spot/Tibber)
 
 // WebFront-Modul (Konfigurator) -- fuer WFC_PushNotification() Ziel-InstanceID.
 // Verwechslungsgefahr: Symcons Kern-GUID {B5B875BB-...} heisst "Tile
@@ -2419,7 +2419,7 @@ class EMS extends IPSModule
     }
 
     /**
-     * Symcon-Strompreis (paresy PowerPrice): Instanz finden. Automatisch nur bei GENAU einer Instanz; bei mehreren
+     * Symcon-Strompreis (Bibliothek Strompreis, Modul PowerPrice): Instanz finden. Automatisch nur bei GENAU einer Instanz; bei mehreren
      * entscheidet die Einstellung PRICE_Source_Instance (nicht raten). 0 = keine Quelle.
      */
     private function getPowerPriceInstance(): int
