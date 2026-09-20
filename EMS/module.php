@@ -315,9 +315,6 @@ class EMS extends IPSModule
         $this->RegisterPropertyInteger('BOOST_Duration_Min',   30);
         $this->RegisterPropertyInteger('SITE_Max_Grid_Import_W', 0);
 
-        // ── Gruenste Ladezeit (optional, Vorbild evcc) ──────────────
-        $this->RegisterPropertyBoolean('GREEN_Charge_Enabled',  false);
-        $this->RegisterPropertyInteger('GREEN_GSI_Threshold',   66);
         for ($i = 1; $i <= 2; $i++) {
             $this->RegisterPropertyInteger('WB' . $i . '_Instance',   0);
             $this->RegisterPropertyInteger('WB' . $i . '_Max_Power_W',11000);
@@ -2154,28 +2151,6 @@ class EMS extends IPSModule
         if (!function_exists('SGW_GetState')) { return 0; }
         $list = IPS_GetInstanceListByModuleID(GUID_STROMGEDACHT);
         return !empty($list) ? $list[0] : 0;
-    }
-
-    /**
-     * Aktueller Gruenstrom-Score (0-100, hoeher=gruener), aus StromGedachts
-     * GSI-Momentaufnahme (SGW_GetState()['gsi']). Bewusst NUR der Ist-Wert
-     * (v1, 29.07.2026) -- StromGedachts SGW_GetForecast() liefert seit heute
-     * zwar auch source='gsi' als Zeitfenster-Vorschau, aber genau wie unsere
-     * bestehende Preis-Schwellwertlogik (kein volles Preis-Optimierungsmodell)
-     * reicht fuer den Anfang ein einfacher Schwellwert auf den Ist-Zustand.
-     * Ausbau auf echte Vorausschau (analog PVF/LFC) waere ein spaeterer,
-     * separater Schritt. Liefert null, wenn kein StromGedacht installiert
-     * ist oder gsi nicht verfuegbar ist (Quelle deaktiviert o.ae.).
-     */
-    private function getCurrentGreenScore()
-    {
-        $sgwId = $this->getStromGedachtInstance();
-        if ($sgwId <= 0) { return null; }
-        $state = SGW_GetState($sgwId);
-        if (!is_array($state) || !isset($state['gsi']) || $state['gsi'] === null) {
-            return null;
-        }
-        return (float)$state['gsi'];
     }
 
     /**
@@ -5208,35 +5183,9 @@ class EMS extends IPSModule
             return $d;
         }
 
-        // ── 2b. Gruenste Ladezeit → Netz laden (optional, Vorbild evcc) ──
-        // Bleibt reaktiv statt Teil des Tagesplans: StromGedacht liefert nur
-        // den JETZIGEN Gruenstrom-Index (GSI), keine Prognose fuer kuenftige
-        // Slots -- kann also nicht vorausgeplant werden (Grundregel "keine
-        // eigene Anlage als Norm" -- nicht raten ohne Datengrundlage).
-        // Bewusst standardmaessig deaktiviert (GREEN_Charge_Enabled=false).
-        if ($this->ReadPropertyBoolean('GREEN_Charge_Enabled') && $s['bat_active'] && $soc < ($socTargetNight - $hystSoc)) {
-            $greenScore = $this->getCurrentGreenScore();
-            $greenThreshold = (float)$this->ReadPropertyInteger('GREEN_GSI_Threshold');
-            // Wirtschaftlichkeit (Dietmar 19.09.2026): Netzstrom nur, wenn er inkl. 5 % Verlust unter der
-            // Einspeiseverguetung liegt; der gruene Strom allein rechtfertigt keinen teureren Einkauf.
-            $greenFeed  = $this->planFeedTariffEur();
-            // Grünstrom allein rechtfertigt keinen Einkauf: nur mit bekannter Vergütung und Preis unter der Grenze
-            $greenPrice = ($this->chargeReferenceMode() === 0 && $greenFeed > 0 && $price < $greenFeed * 0.95 - max(0.0, (float)$this->ReadPropertyFloat('BAT_CycleCost_ct')) / 100.0);
-            $greenW     = $greenPrice ? $this->runtimeGridChargeW($s, (float)$maxW) : 0;
-            if ($greenScore !== null && $greenScore >= $greenThreshold && $greenW >= 500) {
-                $d['op_mode']    = EMS_OP_NET_CHARGE;
-                $d['gw_mode']    = GW_MODE_BAT_CHARGE;
-                $d['gw_power_w'] = $greenW;
-                $d['wb1_enable'] = ($s['wb1_cable'] > 0 && $s['wb1_error'] === 0);
-                $d['wb2_enable'] = ($s['wb_count'] >= 2 && $s['wb2_cable'] > 0 && $s['wb2_error'] === 0);
-                $d['reason']     = sprintf(
-                    'Gruenste Ladezeit: GSI=%.0f >= %.0f, Netz laden',
-                    $greenScore, $greenThreshold
-                );
-                $d['source'] = 'stromgedacht';
-                return $d;
-            }
-        }
+        // (Der frueher hier liegende reaktive Zweig "Gruenste Ladezeit" wurde am 20.09.2026 entfernt: Er entschied nur nach
+        // dem aktuellen Gruenstrom-Index ohne Preis- und Speicherbezug und drosselte dabei die PV. Gruenstrom soll kuenftig,
+        // falls gewuenscht, als Zusatzkriterium in den Plan, nicht als eigener Modus.)
 
         // ── 3. Tagesplan: was hat BuildDayPlan() fuer den aktuellen
         // Viertelstunden-Slot vorgesehen? (PT15M-Preise + PVF-Prognose +

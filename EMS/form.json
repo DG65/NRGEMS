@@ -1247,57 +1247,6 @@
                 },
                 {
                     "type": "Label",
-                    "caption": "── 🌱 Grünste Ladezeit (optional, unabhängig von Preis) ─"
-                },
-                {
-                    "type": "RowLayout",
-                    "items": [
-                        {
-                            "type": "CheckBox",
-                            "name": "GREEN_Charge_Enabled",
-                            "caption": "Bei sehr grünem Strommix zusätzlich aus dem Netz laden (braucht StromGedacht)"
-                        },
-                        {
-                            "type": "PopupButton",
-                            "caption": "Was macht die grünste Ladezeit?",
-                            "width": "480px",
-                            "popup": {
-                                "caption": "Was macht die grünste Ladezeit?",
-                                "items": [
-                                    {
-                                        "type": "Label",
-                                        "caption": "Standardmäßig AUS. Braucht eine installierte StromGedacht-Instanz mit aktiviertem GrünstromIndex (GSI). Wenn aktiviert, lädt EMS zusätzlich zur normalen Preislogik aus dem Netz, sobald der GSI über dem eingestellten Schwellwert liegt -- unabhängig vom Strompreis."
-                                    },
-                                    {
-                                        "type": "Label",
-                                        "caption": "v1: reine Momentaufnahme (aktueller GSI-Wert), keine Vorausschau über mehrere Stunden. Der GSI-Wert (0-100, höher=grüner) kommt von der Corrently GrünstromIndex-API über StromGedacht."
-                                    }
-                                ],
-                                "buttons": [
-                                    {
-                                        "type": "Button",
-                                        "caption": "Verstanden",
-                                        "onClick": ""
-                                    }
-                                ]
-                            }
-                        }
-                    ]
-                },
-                {
-                    "type": "NumberSpinner",
-                    "name": "GREEN_GSI_Threshold",
-                    "caption": "GSI-Schwellwert (ab wann \"grün genug\")",
-                    "minimum": 0,
-                    "maximum": 100,
-                    "visible": {
-                        "type": "PropertyCondition",
-                        "property": "GREEN_Charge_Enabled",
-                        "value": true
-                    }
-                },
-                {
-                    "type": "Label",
                     "caption": "── Tibber Variablen ──────────────────────────────────"
                 },
                 {
@@ -1317,7 +1266,7 @@
                 },
                 {
                     "type": "Label",
-                    "caption": "Leer = Platzhalter 0,1836 EUR/kWh wird verwendet -- für die eigene Anlage anpassen, sonst kann die Preis-Arbitrage-Einschätzung falsch liegen."
+                    "caption": "Leer = die Vergütung ist unbekannt (oder wird aus Inbetriebnahmedatum und Anlagengröße berechnet, siehe Panel Anlage). EMS rechnet dann mit dem Ersatz-Bezugspreis statt mit einem Vorgabewert. Wer keine Vergütung bekommt, setzt dort das Häkchen \"keine Einspeisevergütung\"."
                 },
                 {
                     "type": "NumberSpinner",

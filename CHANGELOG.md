@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.53.0 (2026-09-20)
+- **Entfernt: „Grünste Ladezeit“** (Einstellungen `GREEN_Charge_Enabled`, `GREEN_GSI_Threshold`, Formularblock, reaktiver
+  Zweig). Er entschied nur nach dem aktuellen StromGedacht-Grünstrom-Index, ohne Preis- und Speicherbezug, und drosselte
+  dabei die PV (Vorfall 20.09.2026, ca. 9–14 kWh entgangen). Grünstrom kommt, falls gewünscht, künftig als
+  Zusatzkriterium in den Tagesplan (bei gleichem Preis die grünere Viertelstunde), nicht als eigener Modus.
+  Gespeicherte Werte dieser Einstellungen werden nicht mehr gelesen. Migrationsvergleich: zwei entfernte Properties.
+- Formulartext zur Einspeisevergütung aktualisiert (kein Platzhalterwert mehr).
+
 ## 0.52.1 (2026-09-20)
 - **Wallbox lädt bei PV-Überschuss auch über der Preisschwelle** (`WB_PV_Ueberschuss`, Standard an; Dietmar 20.09.2026).
   Bei aktivem dynamischen Tarif entschied bisher nur der Preis. Jetzt genügt echter PV-Überschuss (PV minus Hauslast ohne
