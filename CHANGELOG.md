@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.56.0 (2026-09-20)
+- **Vertragsfelder fürs Dashboard (additiv, Wunsch NRGDashboard):** `EMS_GetCurrentDecision()` 1.1 liefert `dryRun` (Trockenlauf),
+  `observeOnly` und `observeReason` (EMS kann mangels Stellglied/Steuerhoheit nichts schreiben, mit Grund), damit kein Konsument
+  den Statustext auswerten muss. `EMS_GetDayPlan()` 1.2 liefert `savingsEur` (Tagessumme) und `windows[]` je Netz-Ladefenster
+  (`start`, `end`, `kWh`, `avgPriceCt`, `referenceCt`, `savingsEur`). Ersparnis = (Ø-Preis des Planzeitraums − Ø-Preis des Fensters)
+  × geladene Energie; nur Anzeige, ändert nichts an der Steuerung.
+
 ## 0.55.0 (2026-09-20)
 - **Ladeleistung nach SOC im Plan** (gelernt, bei jedem Nutzer neu und laufend): Viele Batterien drosseln die Ladeleistung nahe voll
   stark; der Plan rechnete die ganze Nacht mit der BMS-Grenze des aktuellen SOC (bei der Entwicklungsanlage 2,1 kW bei 100 %

@@ -622,6 +622,27 @@ prop('BAT_Charge_Max_kW', 10.0);
 $cv2 = call($ems, 'chargeCurveKw');
 check('reale Obergrenze BAT_Charge_Max_kW deckelt die gelernte Kurve', $cv2[10] <= 10.0 + 1e-9, json_encode($cv2));
 
+echo "\n8o) Vertragsfelder fuer das Dashboard: dryRun/observeOnly und Ladefenster mit Ersparnis\n";
+$ems = freshEms();
+$cd = call($ems, 'GetCurrentDecision');
+check('Entscheidung 1.1: dryRun false, observeOnly false, observeReason leer', $cd['contractVersion'] === '1.1' && $cd['dryRun'] === false && $cd['observeOnly'] === false && $cd['observeReason'] === '', json_encode($cd));
+prop('EMS_DryRun', true); attr('NoControlReason', 'Wechselrichter ohne EMS-Stellglieder');
+$cd = call($ems, 'GetCurrentDecision');
+check('Trockenlauf und nur beobachtend werden als eigene Felder geliefert', $cd['dryRun'] === true && $cd['observeOnly'] === true && $cd['observeReason'] === 'Wechselrichter ohne EMS-Stellglieder', json_encode($cd));
+prop('EMS_DryRun', false); attr('NoControlReason', '');
+$planW = [];
+for ($i = 0; $i < 96; $i++) { $planW[$i] = ['op' => EMS_OP_AUTO, 'gw' => GW_MODE_AUTO, 'power' => 0, 'reason' => '', 'price' => 0.30, 'soc' => 50.0]; }
+for ($i = 8; $i < 12; $i++) { $planW[$i] = ['op' => EMS_OP_NET_CHARGE, 'gw' => GW_MODE_BAT_CHARGE, 'power' => 8000, 'reason' => '', 'price' => 0.10, 'soc' => 60.0]; }
+attr('DayPlan', json_encode($planW)); attr('DayPlanTomorrow', '[]');
+$gp = call($ems, 'GetDayPlan');
+check('Tagesplan 1.2: ein Ladefenster, 8 kWh (4 x 8 kW x 0,25 h)', $gp['contractVersion'] === '1.2' && count($gp['windows']) === 1 && abs($gp['windows'][0]['kWh'] - 8.0) < 0.05, json_encode($gp['windows']));
+$refExp = (92 * 30.0 + 4 * 10.0) / 96; $saveExp = round(($refExp - 10.0) * 8.0 / 100.0, 2);
+check('Ersparnis = (Oe-Planpreis - Fensterpreis) x kWh, Tagessumme = Fenstersumme', abs($gp['windows'][0]['savingsEur'] - $saveExp) < 0.011 && abs($gp['savingsEur'] - $saveExp) < 0.011, "erwartet $saveExp: " . json_encode($gp));
+check('Fenster hat Start < Ende und Preis in ct', $gp['windows'][0]['end'] - $gp['windows'][0]['start'] === 3600 && abs($gp['windows'][0]['avgPriceCt'] - 10.0) < 0.01, json_encode($gp['windows'][0]));
+attr('DayPlan', json_encode(array_fill(0, 96, ['op' => EMS_OP_AUTO, 'gw' => GW_MODE_AUTO, 'power' => 0, 'reason' => '', 'price' => 0.2, 'soc' => 50.0])));
+$gp = call($ems, 'GetDayPlan');
+check('Ohne Ladefenster: leere Liste, Ersparnis 0', $gp['windows'] === [] && $gp['savingsEur'] == 0, json_encode($gp['windows']));
+
 echo "\n9) Regression 12.09.2026 -- Tagesplan darf die Batterie nicht per Sollwert-Modus ins Netz ziehen\n";
 $ems = freshEms();
 $ctx = ['enwgActive' => false, 'enwgStartH' => 0, 'enwgEndH' => 0, 'avgHouseW' => 300.0, 'houseLoadSlots' => [],

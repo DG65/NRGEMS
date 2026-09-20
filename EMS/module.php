@@ -2978,7 +2978,50 @@ class EMS extends IPSModule
             if (isset($entry['price']) && $entry['price'] !== null) { $entry['price'] = round($entry['price'] * 100, 2); }
             $out[] = $this->addDayPlanSwitching($entry);
         }
-        return array('contractVersion' => '1.1', 'priceUnit' => 'ct/kWh', 'slots' => $out);
+        $win = $this->dayPlanWindows($out);
+        return array('contractVersion' => '1.2', 'priceUnit' => 'ct/kWh', 'slots' => $out,
+            'savingsEur' => $win['savingsEur'], 'windows' => $win['windows']);
+    }
+
+    /**
+     * Ladefenster des Plans und ihre Ersparnis (Vertrag 1.2, Dashboard-Anfrage 20.09.2026).
+     * Fenster = zusammenhaengende Viertelstunden mit Netzladen (auch ueber Mitternacht). Ersparnis =
+     * (Oe-Preis des Planzeitraums - Oe-Preis des Fensters) x geladene Energie; Energie = Sollleistung x 0,25 h.
+     * Bezugspreis ist der Durchschnitt aller Plan-Slots mit Preis (heute + morgen), damit die Zahl fuer jeden
+     * Nutzer gleich zu lesen ist. Nur kuenftige/laufende Slots (vergangene tragen keinen Sollwert). Rein Anzeige.
+     */
+    private function dayPlanWindows(array $slots): array
+    {
+        $sum = 0.0; $cnt = 0;
+        foreach ($slots as $e) {
+            if (isset($e['price']) && $e['price'] !== null) { $sum += (float)$e['price']; $cnt++; }
+        }
+        $ref = $cnt > 0 ? $sum / $cnt : null;
+        $windows = array(); $cur = null; $total = 0.0;
+        $flush = function () use (&$cur, &$windows, &$total, $ref) {
+            if ($cur === null) { return; }
+            $kwh = $cur['wh'] / 1000.0;
+            $avg = $cur['pn'] > 0 ? $cur['ps'] / $cur['pn'] : null;
+            if ($kwh > 0 && $avg !== null && $ref !== null) {
+                $eur = round(($ref - $avg) * $kwh / 100.0, 2);
+                $windows[] = array('start' => $cur['start'], 'end' => $cur['end'], 'kWh' => round($kwh, 1),
+                    'avgPriceCt' => round($avg, 2), 'referenceCt' => round($ref, 2), 'savingsEur' => $eur);
+                $total += $eur;
+            }
+            $cur = null;
+        };
+        foreach ($slots as $e) {
+            $t = (int)($e['time'] ?? 0);
+            $isCharge = ((int)($e['op'] ?? 0) === EMS_OP_NET_CHARGE) && (int)($e['xsetW'] ?? 0) > 0;
+            if ($isCharge && $cur !== null && $cur['end'] !== $t) { $flush(); }
+            if (!$isCharge) { $flush(); continue; }
+            if ($cur === null) { $cur = array('start' => $t, 'end' => $t, 'wh' => 0.0, 'ps' => 0.0, 'pn' => 0); }
+            $cur['end'] = $t + 900;
+            $cur['wh'] += (float)$e['xsetW'] * 0.25;
+            if (isset($e['price']) && $e['price'] !== null) { $cur['ps'] += (float)$e['price']; $cur['pn']++; }
+        }
+        $flush();
+        return array('savingsEur' => round($total, 2), 'windows' => $windows);
     }
 
     /**
@@ -3347,14 +3390,21 @@ class EMS extends IPSModule
             }
         }
 
+        // Vertrag 1.1 (additiv, Dashboard-Anfrage 20.09.2026): Bewertung beim Anbieter, kein Text-Vergleich
+        // beim Konsumenten. dryRun = Trockenlauf (EMS rechnet, schreibt nichts); observeOnly = EMS kann mangels
+        // Stellglied/Steuerhoheit nichts schreiben, observeReason nennt den Grund.
+        $observeWhy = $this->ReadAttributeString('NoControlReason');
         return array(
-            'contractVersion' => '1.0',
+            'contractVersion' => '1.1',
             'active'          => $this->ReadPropertyBoolean('EMS_Active'),
             'mode'            => $opModeLabels[$opMode] ?? 'unbekannt',
             'modeCode'        => $opMode,
             'reason'          => $reason,
             'source'          => $this->ReadAttributeString('LastDecisionSource'),
             'since'           => $this->ReadAttributeInteger('LastDecision'),
+            'dryRun'          => $this->ReadPropertyBoolean('EMS_DryRun'),
+            'observeOnly'     => ($observeWhy !== ''),
+            'observeReason'   => $observeWhy,
         );
     }
 
