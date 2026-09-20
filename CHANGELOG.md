@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.49.2 (2026-09-20)
+- „Grünste Ladezeit“ (optional, StromGedacht): lud bei GSI ≥ Schwelle im alten Modus 4 mit voller Anschlussleistung,
+  unabhängig vom Preis (live 20.09., SOC 95 %, ca. 18 ct). Jetzt nur, wenn der Netzpreis unter 95 % der
+  Einspeisevergütung liegt, im Batterie-Lademodus 11 mit auf Netzanschluss und Ladegrenze begrenztem Xset.
+
 ## 0.49.1 (2026-09-19)
 - **Vorentladen zeitgenau** (Dietmar: „punktgenau um 00:00 ist nicht schwierig“): Die laufende Viertelstunde wurde bisher
   jedes Mal voll gerechnet, dadurch fiel die Leistung im letzten Slot exponentiell ab und es blieb Restenergie

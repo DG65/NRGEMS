@@ -2533,6 +2533,20 @@ class EMS extends IPSModule
     }
 
     /**
+     * Laufzeit-Sollleistung fuers Netzladen im Modus 11: gewuenschte Leistung, begrenzt durch die reale
+     * Ladegrenze und den Netzanschluss (Anschlussgrenze + PV - Haus - Wallbox). Modus 11 laesst das Haus
+     * obendrauf laufen (Live-Test 19.09.2026), Modus 4/9 mit voller Anschlussleistung drosselt dagegen die PV.
+     */
+    private function runtimeGridChargeW(array $s, float $wantW): int
+    {
+        $maxW   = (float)$this->ReadPropertyInteger('EMS_Max_Power_W');
+        $lim    = $this->getBatteryPowerLimitsKw($this->getInverterEntry(), $maxW, (float)$this->ReadPropertyFloat('BAT_Capacity_kWh'));
+        $wbW    = ((float)$s['wb1_pow_kw'] + (float)$s['wb2_pow_kw']) * 1000.0;
+        $budget = $maxW + (float)$s['pv_total_w'] - (float)$s['house_pow_w'] - $wbW;
+        return (int)max(0, round(min($wantW, $lim['chargeKw'] * 1000.0, $budget)));
+    }
+
+    /**
      * Sollleistung (Xset) fuer geplantes Netzladen im Batterie-Lademodus (11): reale Ladegrenze,
      * Netzanschluss-Grenze und - im letzten Ladeslot - nur so viel, wie zum Ziel noch fehlt
      * (kein Ueberladen, kein unnoetig gekaufter Strom).
@@ -5003,10 +5017,15 @@ class EMS extends IPSModule
         if ($this->ReadPropertyBoolean('GREEN_Charge_Enabled') && $s['bat_active'] && $soc < ($socTargetNight - $hystSoc)) {
             $greenScore = $this->getCurrentGreenScore();
             $greenThreshold = (float)$this->ReadPropertyInteger('GREEN_GSI_Threshold');
-            if ($greenScore !== null && $greenScore >= $greenThreshold) {
+            // Wirtschaftlichkeit (Dietmar 19.09.2026): Netzstrom nur, wenn er inkl. 5 % Verlust unter der
+            // Einspeiseverguetung liegt; der gruene Strom allein rechtfertigt keinen teureren Einkauf.
+            $greenFeed  = (float)$this->getFeedTariffEur()['eur'];
+            $greenPrice = ($greenFeed <= 0 || $price < $greenFeed * 0.95);
+            $greenW     = $greenPrice ? $this->runtimeGridChargeW($s, (float)$maxW) : 0;
+            if ($greenScore !== null && $greenScore >= $greenThreshold && $greenW >= 500) {
                 $d['op_mode']    = EMS_OP_NET_CHARGE;
-                $d['gw_mode']    = GW_MODE_AC_IMPORT;
-                $d['gw_power_w'] = (int)$maxW;
+                $d['gw_mode']    = GW_MODE_BAT_CHARGE;
+                $d['gw_power_w'] = $greenW;
                 $d['wb1_enable'] = ($s['wb1_cable'] > 0 && $s['wb1_error'] === 0);
                 $d['wb2_enable'] = ($s['wb_count'] >= 2 && $s['wb2_cable'] > 0 && $s['wb2_error'] === 0);
                 $d['reason']     = sprintf(
