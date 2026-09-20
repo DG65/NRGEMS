@@ -643,6 +643,18 @@ attr('DayPlan', json_encode(array_fill(0, 96, ['op' => EMS_OP_AUTO, 'gw' => GW_M
 $gp = call($ems, 'GetDayPlan');
 check('Ohne Ladefenster: leere Liste, Ersparnis 0', $gp['windows'] === [] && $gp['savingsEur'] == 0, json_encode($gp['windows']));
 
+echo "\n8p) Ladeslots zusammenhaengend waehlen (kleiner Aufschlag je Ladeblock)\n";
+$ems = freshEms();
+$pk = call($ems, 'pickChargeSlots', [[0 => 0.10, 1 => 0.10, 2 => 0.102, 3 => 0.10, 4 => 0.10], 4]);
+check('Zwischenslot nur 0,2 ct teurer: Luecke wird geschlossen (Slot 2 gewaehlt, ein Block)', isset($pk[2]) && count($pk) === 4, json_encode($pk));
+$pk = call($ems, 'pickChargeSlots', [[0 => 0.10, 1 => 0.10, 2 => 0.12, 3 => 0.10, 4 => 0.10], 4]);
+check('Zwischenslot 2 ct teurer: Luecke bleibt, guenstigste Slots gewaehlt', !isset($pk[2]) && count($pk) === 4, json_encode($pk));
+$pk = call($ems, 'pickChargeSlots', [[0 => 0.10, 1 => 0.11, 5 => 0.09], 5]);
+check('Mehr Bedarf als Kandidaten: alle Kandidaten, Rang nach Preis', count($pk) === 3 && $pk[5] === 1 && $pk[0] === 2 && $pk[1] === 3, json_encode($pk));
+check('Kein Bedarf: keine Slots', call($ems, 'pickChargeSlots', [[0 => 0.10], 0]) === []);
+$pk = call($ems, 'pickChargeSlots', [[0 => 0.10, 1 => 0.10, 2 => 0.10, 3 => 0.10, 4 => 0.10, 5 => 0.10], 3]);
+check('Gleiche Preise: ein zusammenhaengender Block', count($pk) === 3 && (max(array_keys($pk)) - min(array_keys($pk))) === 2, json_encode($pk));
+
 echo "\n9) Regression 12.09.2026 -- Tagesplan darf die Batterie nicht per Sollwert-Modus ins Netz ziehen\n";
 $ems = freshEms();
 $ctx = ['enwgActive' => false, 'enwgStartH' => 0, 'enwgEndH' => 0, 'avgHouseW' => 300.0, 'houseLoadSlots' => [],

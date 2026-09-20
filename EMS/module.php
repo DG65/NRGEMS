@@ -2541,14 +2541,68 @@ class EMS extends IPSModule
         $missingKwh = max(0.0, ($ctx['socTargetNight'] - $soc) / 100.0 * $ctx['capKwh']);
         // Ladeleistung je SOC-Stufe (vom BMS gemeldet und gelernt), nie mehr als die EMS-Leistungsgrenze (Hausanschluss)
         $needed = ($missingKwh > 0.0) ? $this->chargeSlotsNeeded($ctx, $soc, $ctx['socTargetNight']) : 0;
-        asort($cand);
-        $charge = array();
-        $rank = 0;
-        foreach ($cand as $slotIdx => $p) {
-            if ($rank >= $needed) { break; }
-            $charge[$slotIdx] = ++$rank;
-        }
+        $charge = $this->pickChargeSlots($cand, $needed);
         return array('end' => $endSlot, 'charge' => $charge, 'n' => count($charge), 'cand' => count($cand));
+    }
+
+    /**
+     * Waehlt aus den zulaessigen Viertelstunden ($cand: Slot => Preis in EUR/kWh) genau $needed aus, mit dem
+     * geringsten Preis-Summen-Aufschlag, aber bevorzugt zusammenhaengend: Jeder neue Ladeblock kostet einen kleinen
+     * Aufschlag (0,5 ct), weil jeder Wechsel Moduswechsel und Schreibzugriffe bedeutet. Ein Zwischenraum wird
+     * also geschlossen, wenn die Mehrkosten unter dem Aufschlag liegen (bei 5 Slots Zwischenpreis 0,3 ct hoeher: ja).
+     * Rueckgabe: Slot => Rang (1 = guenstigster gewaehlter Slot), wie bisher.
+     */
+    private function pickChargeSlots(array $cand, int $needed): array
+    {
+        if ($needed <= 0 || empty($cand)) { return array(); }
+        $slots = array_keys($cand); sort($slots);
+        $n = count($slots);
+        if ($needed >= $n) {
+            $all = $cand; asort($all); $r = 0; $out = array();
+            foreach ($all as $sl => $p) { $out[$sl] = ++$r; }
+            return $out;
+        }
+        $pen = 0.005; // 0,5 ct/kWh je zusaetzlichem Ladeblock
+        $INF = 1e18;
+        // f[i][k][s]: bestes Ergebnis nach i Slots, k gewaehlt, s = letzter Slot gewaehlt
+        $f = array_fill(0, $n + 1, array_fill(0, $needed + 1, array($INF, $INF)));
+        $from = array_fill(0, $n + 1, array_fill(0, $needed + 1, array(array(-1, -1), array(-1, -1))));
+        $f[0][0][0] = 0.0;
+        for ($i = 0; $i < $n; $i++) {
+            $adjacent = ($i > 0 && $slots[$i] === $slots[$i - 1] + 1);
+            for ($k = 0; $k <= $needed; $k++) {
+                for ($sp = 0; $sp <= 1; $sp++) {
+                    $cur = $f[$i][$k][$sp];
+                    if ($cur >= $INF) { continue; }
+                    // Slot i nicht waehlen
+                    if ($cur < $f[$i + 1][$k][0]) { $f[$i + 1][$k][0] = $cur; $from[$i + 1][$k][0] = array($k, $sp); }
+                    // Slot i waehlen
+                    if ($k < $needed) {
+                        $add = $cand[$slots[$i]] + (($sp === 1 && $adjacent) ? 0.0 : $pen);
+                        if ($cur + $add < $f[$i + 1][$k + 1][1]) { $f[$i + 1][$k + 1][1] = $cur + $add; $from[$i + 1][$k + 1][1] = array($k, $sp); }
+                    }
+                }
+            }
+        }
+        $s = ($f[$n][$needed][1] < $f[$n][$needed][0]) ? 1 : 0;
+        if ($f[$n][$needed][$s] >= $INF) {
+            // Rueckfall: einfach die guenstigsten
+            $all = $cand; asort($all); $r = 0; $out = array();
+            foreach ($all as $sl => $p) { if ($r >= $needed) { break; } $out[$sl] = ++$r; }
+            return $out;
+        }
+        $k = $needed; $chosen = array();
+        for ($i = $n; $i > 0; $i--) {
+            if ($s === 1) { $chosen[] = $slots[$i - 1]; }
+            $prev = $from[$i][$k][$s];
+            $k = $prev[0]; $s = $prev[1];
+        }
+        $byPrice = array();
+        foreach ($chosen as $sl) { $byPrice[$sl] = $cand[$sl]; }
+        asort($byPrice); // stabil: gleicher Preis -> Reihenfolge der Slots
+        $r = 0; $out = array();
+        foreach ($byPrice as $sl => $p) { $out[$sl] = ++$r; }
+        return $out;
     }
 
     /**

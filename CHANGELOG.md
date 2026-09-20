@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.57.0 (2026-09-20)
+- **Zusammenhängende Ladefenster:** Die Nachtladung wählte die günstigsten Viertelstunden einzeln und zerstückelte das Fenster
+  (Live-Plan 20.09.: zwei Blöcke, getrennt durch drei Halte-Slots zum praktisch gleichen Preis). Jetzt kostet jeder zusätzliche
+  Ladeblock einen kleinen Aufschlag (0,5 ct/kWh); eine Lücke wird geschlossen, wenn die Mehrkosten darunter liegen. Anzahl der Slots
+  und Wirtschaftlichkeitsgrenze bleiben unverändert, weniger Moduswechsel und Schreibzugriffe.
+
 ## 0.56.0 (2026-09-20)
 - **Vertragsfelder fürs Dashboard (additiv, Wunsch NRGDashboard):** `EMS_GetCurrentDecision()` 1.1 liefert `dryRun` (Trockenlauf),
   `observeOnly` und `observeReason` (EMS kann mangels Stellglied/Steuerhoheit nichts schreiben, mit Grund), damit kein Konsument
