@@ -308,6 +308,7 @@ class EMS extends IPSModule
         $this->RegisterPropertyInteger('WB_Count',             1);
         // Dieselben Wallboxen koennen ueber ChargerHub UND OCPPHub erscheinen
         // (Dietmar 13.09.2026) -- nie doppelt zaehlen.
+        $this->RegisterPropertyBoolean('WB_PV_Ueberschuss',     true);  // Wallbox darf bei echtem PV-Ueberschuss auch ueber der Preisschwelle laden
         $this->RegisterPropertyInteger('WB_Quelle',            0);   // 0 automatisch, 1 ChargerHub, 2 OCPPHub, 3 beide (verschiedene Geraete)
         $this->RegisterPropertyInteger('WB_Cooldown_Sec',      120);
         $this->RegisterPropertyInteger('WB_Min_Charge_Min',    5);
@@ -320,7 +321,7 @@ class EMS extends IPSModule
         for ($i = 1; $i <= 2; $i++) {
             $this->RegisterPropertyInteger('WB' . $i . '_Instance',   0);
             $this->RegisterPropertyInteger('WB' . $i . '_Max_Power_W',11000);
-            $this->RegisterPropertyInteger('WB' . $i . '_Min_Power_W',1380);
+            $this->RegisterPropertyInteger('WB' . $i . '_Min_Power_W',4140); // kleinste Ladeleistung (W) fuer die PV-Freigabe: 3-phasig 6 A = 4140 (vorsichtig), 1-phasig 1380
             $this->RegisterPropertyInteger('WB' . $i . '_Priority',   $i);
             $this->RegisterPropertyInteger('VAR_WB' . $i . '_Status', 0);
             $this->RegisterPropertyInteger('VAR_WB' . $i . '_Power',  0);
@@ -4256,8 +4257,8 @@ class EMS extends IPSModule
 
         $thWB  = $this->priceThresholds()['wb'];
         $price = $s['tib_price_eff'];
-        $wb1En = ($s['wb_active'] && $s['wb1_cable'] > 0 && $s['wb1_error'] === 0 && (!$s['tib_active'] || $price < $thWB));
-        $wb2En = ($s['wb_active'] && $s['wb_count'] >= 2 && $s['wb2_cable'] > 0 && $s['wb2_error'] === 0 && (!$s['tib_active'] || $price < $thWB));
+        $wb1En = ($s['wb_active'] && $s['wb1_cable'] > 0 && $s['wb1_error'] === 0 && $this->wallboxPriceAllowed(1, $s, $price, $thWB));
+        $wb2En = ($s['wb_active'] && $s['wb_count'] >= 2 && $s['wb2_cable'] > 0 && $s['wb2_error'] === 0 && $this->wallboxPriceAllowed(2, $s, $price, $thWB));
 
         // Live-Fund 10.09.2026 (Dietmars Verdacht "WR im Standby?" fuehrte
         // drauf): gw_enable stand hier HART auf true, auch fuer op=EMS_OP_AUTO
@@ -4589,6 +4590,23 @@ class EMS extends IPSModule
         for ($i = $now; $i < 96; $i++) { $out[] = $today[$i]['price'] ?? null; }
         for ($i = 0; $i < $now; $i++)  { $out[] = $tomorrow[$i]['price'] ?? null; }
         return $out;
+    }
+
+    /**
+     * Darf Wallbox $n jetzt laden, was den PREIS angeht? Ja, wenn kein dynamischer Tarif aktiv ist, der Preis unter der
+     * Schwelle liegt, oder (bei aktivierter Option) echter PV-Ueberschuss vorhanden ist: PV minus Hauslast (ohne Wallbox)
+     * mindestens die kleinste sinnvolle Ladeleistung der Wallbox; eine bereits ladende Wallbox darf bis zur halben
+     * Mindestleistung weiterlaufen (Hysterese, kein Flackern bei Wolken). PV-Strom kostet nichts extra: der Preis
+     * des Netzstroms ist dafuer nicht der richtige Massstab.
+     */
+    private function wallboxPriceAllowed(int $n, array $s, float $price, float $thWB): bool
+    {
+        if (empty($s['tib_active']) || $price < $thWB) { return true; }
+        if (!$this->ReadPropertyBoolean('WB_PV_Ueberschuss')) { return false; }
+        $minW    = max(500.0, (float)$this->ReadPropertyInteger('WB' . $n . '_Min_Power_W'));
+        $surplus = (float)($s['pv_total_w'] ?? 0.0) - (float)($s['house_pow_w'] ?? 0.0);
+        $charging = ((float)($s['wb' . $n . '_pow_kw'] ?? 0.0) * 1000.0) > 100.0;
+        return $surplus >= ($charging ? 0.5 * $minW : $minW);
     }
 
     private function computeExpensiveReserveKwh(array $prices, $thDischarge, $avgHouseW)
@@ -5254,8 +5272,8 @@ class EMS extends IPSModule
         // auf expliziten Sollwert), waehrend enable=false die volle autonome
         // Selbstverbrauchslogik des WR aktiviert -- genau das, was der Fallback
         // eigentlich will.
-        $wb1En = ($s['wb_active'] && $s['wb1_cable'] > 0 && $s['wb1_error'] === 0 && (!$s['tib_active'] || $price < $thWB));
-        $wb2En = ($s['wb_active'] && $s['wb_count'] >= 2 && $s['wb2_cable'] > 0 && $s['wb2_error'] === 0 && (!$s['tib_active'] || $price < $thWB));
+        $wb1En = ($s['wb_active'] && $s['wb1_cable'] > 0 && $s['wb1_error'] === 0 && $this->wallboxPriceAllowed(1, $s, $price, $thWB));
+        $wb2En = ($s['wb_active'] && $s['wb_count'] >= 2 && $s['wb2_cable'] > 0 && $s['wb2_error'] === 0 && $this->wallboxPriceAllowed(2, $s, $price, $thWB));
 
         $d['op_mode']    = EMS_OP_AUTO;
         $d['gw_mode']    = GW_MODE_AUTO;

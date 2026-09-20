@@ -581,6 +581,18 @@ prop('TIB_Threshold_WB', 0.0);
 $thMix = call($ems, 'priceThresholds', [$pTh]);
 check('gemischt: eingetragen bleibt, 0 wird automatisch', $thMix['charge'] === 0.15 && $thMix['wb'] > 0.2 && $thMix['wb'] < 0.3, json_encode($thMix));
 
+echo "\n8l) Wallbox bei PV-Ueberschuss auch ueber der Preisschwelle\n";
+$ems = freshEms();
+$sW = state(['tib_active' => true, 'pv_total_w' => 3000.0, 'house_pow_w' => 800.0, 'wb1_pow_kw' => 0.0]);
+check('Preis 25 ct ueber Schwelle 20 ct, aber 2,2 kW PV-Ueberschuss (>= 1380 W): Wallbox darf laden', call($ems, 'wallboxPriceAllowed', [1, $sW, 0.25, 0.20]) === true);
+check('kein PV-Ueberschuss (nur 500 W): Preis entscheidet, Wallbox gesperrt', call($ems, 'wallboxPriceAllowed', [1, array_merge($sW, ['pv_total_w' => 1300.0]), 0.25, 0.20]) === false);
+check('Preis unter Schwelle: erlaubt, auch ohne PV', call($ems, 'wallboxPriceAllowed', [1, array_merge($sW, ['pv_total_w' => 0.0]), 0.15, 0.20]) === true);
+check('Hysterese: ladende Wallbox darf bis zur halben Mindestleistung weiterlaufen (800 W Ueberschuss)', call($ems, 'wallboxPriceAllowed', [1, array_merge($sW, ['pv_total_w' => 1600.0, 'wb1_pow_kw' => 1.4]), 0.25, 0.20]) === true && call($ems, 'wallboxPriceAllowed', [1, array_merge($sW, ['pv_total_w' => 1600.0, 'wb1_pow_kw' => 0.0]), 0.25, 0.20]) === false);
+prop('WB_PV_Ueberschuss', false);
+check('Option aus: nur der Preis entscheidet (wie bisher)', call($ems, 'wallboxPriceAllowed', [1, $sW, 0.25, 0.20]) === false);
+prop('WB_PV_Ueberschuss', true);
+check('ohne dynamischen Tarif immer erlaubt', call($ems, 'wallboxPriceAllowed', [1, array_merge($sW, ['tib_active' => false, 'pv_total_w' => 0.0]), 0.99, 0.20]) === true);
+
 echo "\n9) Regression 12.09.2026 -- Tagesplan darf die Batterie nicht per Sollwert-Modus ins Netz ziehen\n";
 $ems = freshEms();
 $ctx = ['enwgActive' => false, 'enwgStartH' => 0, 'enwgEndH' => 0, 'avgHouseW' => 300.0, 'houseLoadSlots' => [],

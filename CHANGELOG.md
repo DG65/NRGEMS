@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.52.1 (2026-09-20)
+- **Wallbox lädt bei PV-Überschuss auch über der Preisschwelle** (`WB_PV_Ueberschuss`, Standard an; Dietmar 20.09.2026).
+  Bei aktivem dynamischen Tarif entschied bisher nur der Preis. Jetzt genügt echter PV-Überschuss (PV minus Hauslast ohne
+  Wallbox mindestens `WBn_Min_Power_W`); eine bereits ladende Wallbox darf bis zur halben Mindestleistung weiterlaufen
+  (kein Flackern bei Wolken). PV-Strom kostet nichts extra, der Netzpreis ist dafür nicht der richtige Maßstab.
+- `WBn_Min_Power_W` (bisher ungenutzt) ist jetzt die kleinste Ladeleistung für diese Freigabe; Standard 4140 W
+  (3-phasig, 6 A, vorsichtig; einphasige Wallboxen 1380 W eintragen).
+
 ## 0.52.0 (2026-09-20)
 - **Preisschwellen automatisch** (`TIB_Threshold_Charge/_Discharge/_WB`, Standard jetzt 0 = automatisch). Die festen
   Vorgaben 15/25/20 ct waren Preisniveaus der Entwicklungsanlage 2026: bei anderem Tarif war „teuer“ oder

@@ -885,6 +885,11 @@
                     "maximum": 2
                 },
                 {
+                    "type": "CheckBox",
+                    "name": "WB_PV_Ueberschuss",
+                    "caption": "Wallbox darf bei echtem PV-Überschuss auch über der Preisschwelle laden (PV minus Hauslast mindestens die Mindestleistung der Wallbox)"
+                },
+                {
                     "type": "Select",
                     "name": "WB_Quelle",
                     "caption": "Wallbox-Quelle (wenn Wallboxen über ChargerHub und OCPPHub erscheinen)",
