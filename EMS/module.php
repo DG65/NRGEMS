@@ -459,6 +459,7 @@ class EMS extends IPSModule
         $this->RegisterAttributeBoolean('LastGoodweEnable',  true);
         $this->RegisterAttributeInteger('LastGoodwePowerW',  0);
         $this->RegisterAttributeInteger('NoControlLoggedAt', 0);
+        $this->RegisterAttributeString('ChargeLimitCurve', '{}'); // gelernte BMS-Ladegrenze je SOC-Stufe {stufe: [kW, Zeitstempel]}
         $this->RegisterAttributeString('NoControlReason', ''); // leer = EMS kann schreiben; sonst Grund, warum es nur beobachtet
         $this->RegisterAttributeInteger('ChargeNoEffectSince', 0);
         $this->RegisterAttributeInteger('ChargeNoEffectHoldUntil', 0);
@@ -1826,6 +1827,7 @@ class EMS extends IPSModule
         $dischargeId = $this->findChildVariableIdByIdent($inv['instanceID'], 'bat_discharge_max_w');
         if ($chargeId > 0) {
             $result['chargeKw'] = max(0.0, (float)GetValue($chargeId) / 1000.0);
+            $result['bmsChargeKw'] = $result['chargeKw']; // vom BMS gemeldet (vor der Begrenzung durch BAT_Charge_Max_kW)
         }
         // Reale Obergrenze der Ladeleistung (Einstellung): das BMS meldet oft mehr, als der Speicher
         // tatsaechlich aufnimmt (Live-Befund 19.09.2026: BMS 43 kW, real 23,5 kW).
@@ -2537,9 +2539,8 @@ class EMS extends IPSModule
             }
         }
         $missingKwh = max(0.0, ($ctx['socTargetNight'] - $soc) / 100.0 * $ctx['capKwh']);
-        // Ladeleistung: BMS-Angabe, aber nie mehr als die EMS-Leistungsgrenze (Hausanschluss)
-        $perSlotKwh = max(0.001, min($ctx['chargeKw'], $ctx['maxW'] / 1000.0) * 0.25);
-        $needed = ($missingKwh > 0.0) ? (int)ceil($missingKwh / $perSlotKwh) : 0;
+        // Ladeleistung je SOC-Stufe (vom BMS gemeldet und gelernt), nie mehr als die EMS-Leistungsgrenze (Hausanschluss)
+        $needed = ($missingKwh > 0.0) ? $this->chargeSlotsNeeded($ctx, $soc, $ctx['socTargetNight']) : 0;
         asort($cand);
         $charge = array();
         $rank = 0;
@@ -2562,9 +2563,10 @@ class EMS extends IPSModule
         $endLabel = sprintf('%02d:00', (int)($nw['end'] / 4));
         if (isset($nw['charge'][$slot])) {
             $missingKwh = max(0.0, ($ctx['socTargetNight'] - $soc) / 100.0 * $ctx['capKwh']);
-            $gainKwh = min($missingKwh, min($ctx['chargeKw'], $ctx['maxW'] / 1000.0) * 0.25);
+            $socStart = $soc;
+            $gainKwh = $this->chargeGainKwh($ctx, $soc, $missingKwh);
             $soc = min(100.0, $soc + $gainKwh / max(0.001, $ctx['capKwh']) * 100.0);
-            return array('plan' => array('op' => EMS_OP_NET_CHARGE, 'gw' => GW_MODE_BAT_CHARGE, 'power' => $this->gridChargeXsetW($ctx, $missingKwh), 'nw' => 1,
+            return array('plan' => array('op' => EMS_OP_NET_CHARGE, 'gw' => GW_MODE_BAT_CHARGE, 'power' => $this->gridChargeXsetW($ctx, $missingKwh, $socStart), 'nw' => 1,
                 'reason' => sprintf(($slot >= $nw['end'] ? 'Nachtfenster verlängert (Akku noch nicht voll, Preis passt): ' : 'Nachtfenster bis %s: ') . 'günstigste Viertelstunde (Rang %d von %d, %.2fct) -- Akku wird aus dem Netz geladen (Ziel %.0f%%)',
                     ...($slot >= $nw['end']
                         ? array($nw['charge'][$slot], $nw['n'], $price * 100, $ctx['socTargetNight'])
@@ -2609,6 +2611,80 @@ class EMS extends IPSModule
      * Obergrenze fuer Netzstrom, der in die Batterie geladen wird (EUR/kWh): Einspeiseverguetung x 0,95
      * (Wandlungsverlust) abzueglich Verschleisskosten je kWh. 0 Verguetung = keine Grenze (PHP_FLOAT_MAX).
      */
+    /**
+     * Lernt die vom BMS gemeldete Ladegrenze je SOC-Stufe (5 %) aus dem laufenden Betrieb, bei jedem Nutzer neu und laufend
+     * (gleitender Mittelwert): Viele Batterien drosseln die Ladeleistung nahe voll stark (bei Dietmar 2,1 kW bei 100 %
+     * gegen 24 kW bei 50 %). Ohne diese Kurve rechnet der Plan die ganze Nacht mit dem Wert des aktuellen SOC. Nur Werte,
+     * die das BMS wirklich meldet; ohne Meldung bleibt die Kurve leer und der Plan rechnet wie bisher.
+     */
+    private function learnChargeLimit(float $soc, float $kw): void
+    {
+        if ($kw <= 0.0 || $soc < 0.0 || $soc > 100.0) { return; }
+        $c = json_decode($this->ReadAttributeString('ChargeLimitCurve'), true);
+        if (!is_array($c)) { $c = array(); }
+        $b = (string)min(19, (int)floor($soc / 5.0));
+        $now = time();
+        $old = $c[$b] ?? null;
+        $new = ($old !== null && ($now - (int)$old[1]) < 30 * 86400) ? (0.7 * (float)$old[0] + 0.3 * $kw) : $kw;
+        if ($old !== null && abs($new - (float)$old[0]) < 0.02 * max(0.1, (float)$old[0]) && ($now - (int)$old[1]) < 3600) { return; }
+        $c[$b] = array(round($new, 3), $now);
+        $this->WriteAttributeString('ChargeLimitCurve', json_encode($c));
+    }
+
+    /** Gelernte Ladegrenze je SOC-Stufe (kW, hoechstens 30 Tage alt), begrenzt durch BAT_Charge_Max_kW und Anschluss. Leer = keine Daten. */
+    private function chargeCurveKw(): array
+    {
+        $c = json_decode($this->ReadAttributeString('ChargeLimitCurve'), true);
+        if (!is_array($c)) { return array(); }
+        $cap = (float)$this->ReadPropertyFloat('BAT_Charge_Max_kW');
+        $maxKw = (float)$this->ReadPropertyInteger('EMS_Max_Power_W') / 1000.0;
+        $out = array();
+        foreach ($c as $b => $e) {
+            if ((time() - (int)$e[1]) > 30 * 86400) { continue; }
+            $kw = (float)$e[0];
+            if ($cap > 0.0) { $kw = min($kw, $cap); }
+            $out[(int)$b] = max(0.1, min($kw, $maxKw));
+        }
+        ksort($out);
+        return $out;
+    }
+
+    /** Ladeleistung (kW) bei diesem SOC: linear zwischen den gelernten Stufenmitten, sonst der feste Wert des Kontexts. */
+    private function ctxChargeKw(array $ctx, float $soc): float
+    {
+        $curve = $ctx['chargeCurve'] ?? array();
+        if (empty($curve)) { return (float)$ctx['chargeKw']; }
+        $x = max(0.0, min(100.0, $soc)) / 5.0 - 0.5;   // Position in Stufenmitten
+        $lo = null; $hi = null;
+        foreach ($curve as $b => $kw) {
+            if ($b <= $x && ($lo === null || $b > $lo)) { $lo = $b; }
+            if ($b >= $x && ($hi === null || $b < $hi)) { $hi = $b; }
+        }
+        if ($lo === null && $hi === null) { return (float)$ctx['chargeKw']; }
+        if ($lo === null) { return (float)$curve[$hi]; }
+        if ($hi === null || $hi === $lo) { return (float)$curve[$lo]; }
+        return (float)$curve[$lo] + ((float)$curve[$hi] - (float)$curve[$lo]) * (($x - $lo) / ($hi - $lo));
+    }
+
+    /** Ladeenergie einer Viertelstunde (kWh) bei diesem SOC, hoechstens die fehlende Energie. */
+    private function chargeGainKwh(array $ctx, float $soc, float $missingKwh): float
+    {
+        return min($missingKwh, min($this->ctxChargeKw($ctx, $soc), $ctx['maxW'] / 1000.0) * 0.25);
+    }
+
+    /** Anzahl Viertelstunden, die das Laden von $soc auf $target braucht (SOC-abhaengige Ladeleistung, 1-%-Schritte). */
+    private function chargeSlotsNeeded(array $ctx, float $soc, float $target): int
+    {
+        if ($target <= $soc) { return 0; }
+        $hours = 0.0;
+        for ($x = $soc; $x < $target; $x += 1.0) {
+            $step = min(1.0, $target - $x);
+            $kw = max(0.3, min($this->ctxChargeKw($ctx, $x + $step / 2.0), $ctx['maxW'] / 1000.0));
+            $hours += ($ctx['capKwh'] * $step / 100.0) / $kw;
+        }
+        return (int)ceil($hours / 0.25 - 1e-9);
+    }
+
     /** Wirkungsgrad je AC/DC-Wandlung (Einstellung BAT_Conv_Eff_Pct, 70-100 %), z. B. 0,95. */
     private function convEff(): float
     {
@@ -2627,9 +2703,10 @@ class EMS extends IPSModule
         return $ctx['feedTariff'] * $this->convEff() - ($ctx['cycleCost'] ?? 0.0);
     }
 
-    private function gridChargeXsetW(array $ctx, float $missingKwh = -1.0): int
+    private function gridChargeXsetW(array $ctx, float $missingKwh = -1.0, ?float $soc = null): int
     {
-        $w = min((float)$ctx['chargeKw'] * 1000.0, (float)$ctx['maxW']);
+        $kw = ($soc === null) ? (float)$ctx['chargeKw'] : $this->ctxChargeKw($ctx, $soc);
+        $w = min($kw * 1000.0, (float)$ctx['maxW']);
         if ($missingKwh >= 0.0) { $w = min($w, $missingKwh / 0.25 * 1000.0); }
         return (int)max(0, round($w));
     }
@@ -2645,7 +2722,7 @@ class EMS extends IPSModule
         $floor    = $ctx['socMin'] + $ctx['socReserve'];
 
         if ($surplusW > 0 && $soc < 99.5) {
-            $gainKwh = min($surplusW, $ctx['chargeKw'] * 1000.0) / 1000.0 * 0.25;
+            $gainKwh = min($surplusW, $this->ctxChargeKw($ctx, $soc) * 1000.0) / 1000.0 * 0.25;
             $soc = min(100.0, $soc + ($gainKwh / max(0.001, $ctx['capKwh']) * 100.0));
             $reason = ($soc >= 99.5)
                 ? sprintf('Automatik: PV-Überschuss %.0fW, Batterie erreicht Vollladung', $surplusW)
@@ -2689,8 +2766,9 @@ class EMS extends IPSModule
             // 1, Netzbetreiber-Pflicht, kein Preis-Vorschlag) -- hier nur
             // informativ, damit die Plan-Anzeige nicht widerspricht.
             $missingKwh = max(0.0, ($ctx['socTargetNight'] - $soc) / 100.0 * $ctx['capKwh']);
-            $soc = min(100.0, $soc + (min($missingKwh, $ctx['chargeKw'] * 0.25) / max(0.001, $ctx['capKwh']) * 100.0));
-            return array('plan' => array('op' => EMS_OP_NET_CHARGE, 'gw' => GW_MODE_BAT_CHARGE, 'power' => $this->gridChargeXsetW($ctx, $missingKwh),
+            $socStart = $soc;
+            $soc = min(100.0, $soc + ($this->chargeGainKwh($ctx, $soc, $missingKwh) / max(0.001, $ctx['capKwh']) * 100.0));
+            return array('plan' => array('op' => EMS_OP_NET_CHARGE, 'gw' => GW_MODE_BAT_CHARGE, 'power' => $this->gridChargeXsetW($ctx, $missingKwh, $socStart),
                 'reason' => '§14a-Fenster (Vorrang vor Plan)', 'price' => $price, 'soc' => round($soc, 1)), 'soc' => $soc);
         }
 
@@ -2705,8 +2783,9 @@ class EMS extends IPSModule
             // die alte separate PlanNegativePriceExport()-Funktion, ist
             // jetzt einfach eine weitere Regel im selben Tagesplan.
             $missingKwh = max(0.0, (100.0 - $soc) / 100.0 * $ctx['capKwh']);
-            $soc = min(100.0, $soc + (min($missingKwh, $ctx['chargeKw'] * 0.25) / max(0.001, $ctx['capKwh']) * 100.0));
-            return array('plan' => array('op' => EMS_OP_NET_CHARGE, 'gw' => GW_MODE_BAT_CHARGE, 'power' => $this->gridChargeXsetW($ctx, $missingKwh),
+            $socStart = $soc;
+            $soc = min(100.0, $soc + ($this->chargeGainKwh($ctx, $soc, $missingKwh) / max(0.001, $ctx['capKwh']) * 100.0));
+            return array('plan' => array('op' => EMS_OP_NET_CHARGE, 'gw' => GW_MODE_BAT_CHARGE, 'power' => $this->gridChargeXsetW($ctx, $missingKwh, $socStart),
                 'reason' => sprintf('Negativpreis %.2fct -- immer laden', $price * 100), 'price' => $price, 'soc' => round($soc, 1)), 'soc' => $soc);
         }
 
@@ -2803,12 +2882,13 @@ class EMS extends IPSModule
         }
 
         $missingKwh  = max(0.0, ($ctx['socTargetNight'] - $soc) / 100.0 * $ctx['capKwh']);
-        $neededSlots = ($ctx['chargeKw'] > 0) ? (int)ceil($missingKwh / ($ctx['chargeKw'] * 0.25)) : 0;
+        $neededSlots = ($ctx['chargeKw'] > 0 || !empty($ctx['chargeCurve'])) ? $this->chargeSlotsNeeded($ctx, $soc, $ctx['socTargetNight']) : 0;
         $rank        = $cheapRank[$slot] ?? PHP_INT_MAX;
         if ($neededSlots > 0 && $rank < $neededSlots && $price < ($ctx['thCharge'] + 0.05)
             && $price < $this->gridChargeLimitEur($ctx)) {
-            $soc = min(100.0, $soc + (min($missingKwh, $ctx['chargeKw'] * 0.25) / max(0.001, $ctx['capKwh']) * 100.0));
-            return array('plan' => array('op' => EMS_OP_NET_CHARGE, 'gw' => GW_MODE_BAT_CHARGE, 'power' => $this->gridChargeXsetW($ctx, $missingKwh),
+            $socStart = $soc;
+            $soc = min(100.0, $soc + ($this->chargeGainKwh($ctx, $soc, $missingKwh) / max(0.001, $ctx['capKwh']) * 100.0));
+            return array('plan' => array('op' => EMS_OP_NET_CHARGE, 'gw' => GW_MODE_BAT_CHARGE, 'power' => $this->gridChargeXsetW($ctx, $missingKwh, $socStart),
                 'reason' => sprintf('Rang %d der guenstigsten Slots (%.2fct), Nachtziel %.0f%% noch offen', $rank + 1, $price * 100, $ctx['socTargetNight']),
                 'price' => $price, 'soc' => round($soc, 1)), 'soc' => $soc);
         }
@@ -3706,7 +3786,7 @@ class EMS extends IPSModule
             'avgHouseW' => $avgHouseW, 'houseLoadSlots' => $houseLoadSlotsToday, 'fcMinPower' => $fcMinPower,
             'socTargetDay' => $socTargetDay, 'hystSoc' => $hystSoc,
             'socMin' => $socMin, 'socReserve' => $socReserve, 'socTargetNight' => $socTargetNight,
-            'capKwh' => $capKwh, 'chargeKw' => $chargeKw, 'dischargeKw' => $dischargeKw, 'maxW' => $maxW,
+            'capKwh' => $capKwh, 'chargeKw' => $chargeKw, 'chargeCurve' => $this->chargeCurveKw(), 'dischargeKw' => $dischargeKw, 'maxW' => $maxW,
             'feedTariff' => $feedTariff, 'thCharge' => $thCharge, 'thDischarge' => $thDischarge,
             'cycleCost' => max(0.0, (float)$this->ReadPropertyFloat('BAT_CycleCost_ct')) / 100.0,
             'refMode' => $this->chargeReferenceMode(),
@@ -4914,6 +4994,12 @@ class EMS extends IPSModule
                 $s['bat_unavailable'] = ($socVarId <= 0) ? 'Kein Batterie-SOC verfuegbar' : 'Batterie-SOC veraltet (Wechselrichter/Verbindung)';
                 $this->emsLog(EMS_LOG_VERBOSE, 'Batteriesteuerung ausgesetzt: ' . $s['bat_unavailable']);
             }
+        }
+
+        // BMS-Ladegrenze je SOC lernen (nur bei aktueller Batterie und wenn das BMS sie meldet)
+        if ($s['bat_active'] && $fromIhub) {
+            $limLearn = $this->getBatteryPowerLimitsKw($inv, (float)$this->ReadPropertyInteger('EMS_Max_Power_W'), $this->batteryCapacityKwh());
+            if (isset($limLearn['bmsChargeKw'])) { $this->learnChargeLimit((float)$s['bat_soc'], (float)$limLearn['bmsChargeKw']); }
         }
 
         // Wallboxen

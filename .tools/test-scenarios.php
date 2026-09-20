@@ -607,6 +607,21 @@ check('Statuszeile normal: OK', call($ems, 'statusText', ['Test']) === 'OK: Test
 attr('NoControlReason', 'Wechselrichter ohne EMS-Stellglieder');
 check('Statuszeile ohne Stellglied: nur beobachtend, mit Grund', call($ems, 'statusText', ['Test']) === 'Nur beobachtend (Wechselrichter ohne EMS-Stellglieder): Test');
 
+echo "\n8n) Ladeleistung nach SOC (vom BMS gemeldet und gelernt, bei jedem Nutzer)\n";
+$ems = freshEms(); prop('EMS_Max_Power_W', 34500);
+call($ems, 'learnChargeLimit', [50.0, 24.0]); call($ems, 'learnChargeLimit', [92.0, 6.0]); call($ems, 'learnChargeLimit', [100.0, 2.1]);
+$cv = call($ems, 'chargeCurveKw');
+check('drei SOC-Stufen gelernt (50 %, 92 %, 100 %)', isset($cv[10], $cv[18], $cv[19]) && abs($cv[10] - 24.0) < 1e-6 && abs($cv[19] - 2.1) < 1e-6, json_encode($cv));
+$ctxT = ['capKwh' => 40.0, 'chargeKw' => 2.1, 'maxW' => 34500, 'chargeCurve' => $cv, 'socTargetNight' => 100.0];
+check('bei SOC 50 % ist die Ladeleistung 24 kW, bei 100 % nur 2,1 kW', abs(call($ems, 'ctxChargeKw', [$ctxT, 50.0]) - 24.0) < 0.5 && abs(call($ems, 'ctxChargeKw', [$ctxT, 100.0]) - 2.1) < 0.3);
+$nFlat = call($ems, 'chargeSlotsNeeded', [array_merge($ctxT, ['chargeCurve' => []]), 20.0, 100.0]);
+$nCurve = call($ems, 'chargeSlotsNeeded', [$ctxT, 20.0, 100.0]);
+check('20 -> 100 %: mit fester 2,1 kW (alter Wert) sehr viele Slots, mit gelernter Kurve deutlich weniger', $nFlat > $nCurve && $nCurve >= 6 && $nCurve <= 20, "flach=$nFlat kurve=$nCurve");
+check('ohne gelernte Kurve rechnet der Plan wie bisher (fester Wert)', abs(call($ems, 'ctxChargeKw', [['chargeKw' => 7.5, 'chargeCurve' => []], 30.0]) - 7.5) < 1e-9);
+prop('BAT_Charge_Max_kW', 10.0);
+$cv2 = call($ems, 'chargeCurveKw');
+check('reale Obergrenze BAT_Charge_Max_kW deckelt die gelernte Kurve', $cv2[10] <= 10.0 + 1e-9, json_encode($cv2));
+
 echo "\n9) Regression 12.09.2026 -- Tagesplan darf die Batterie nicht per Sollwert-Modus ins Netz ziehen\n";
 $ems = freshEms();
 $ctx = ['enwgActive' => false, 'enwgStartH' => 0, 'enwgEndH' => 0, 'avgHouseW' => 300.0, 'houseLoadSlots' => [],

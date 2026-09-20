@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.55.0 (2026-09-20)
+- **Ladeleistung nach SOC im Plan** (gelernt, bei jedem Nutzer neu und laufend): Viele Batterien drosseln die Ladeleistung nahe voll
+  stark; der Plan rechnete die ganze Nacht mit der BMS-Grenze des aktuellen SOC (bei der Entwicklungsanlage 2,1 kW bei 100 %
+  gegen 24 kW bei 50 %) und plante dadurch zu viele Ladeslots. Das EMS lernt jetzt die vom BMS gemeldete Ladegrenze je 5-%-SOC-Stufe
+  aus dem laufenden Betrieb (gleitender Mittelwert, höchstens 30 Tage alt, begrenzt durch `BAT_Charge_Max_kW` und Anschluss) und
+  nutzt sie für Slotzahl und SOC-Verlauf im Plan. Keine Abhängigkeit vom Archiv oder von bestimmter Hardware: Meldet das BMS
+  nichts (oder fehlen Stufen), rechnet der Plan wie bisher mit dem festen Wert; fehlende Stufen nehmen die nächste bekannte.
+  Zur Laufzeit ändert sich nichts (der Sollwert richtet sich weiter nach der aktuellen BMS-Grenze), so kann die Kurve nicht auf
+  einem zu niedrigen Wert einrasten.
+
 ## 0.54.0 (2026-09-20)
 - **Wirkungsgrad einstellbar** (`BAT_Conv_Eff_Pct`, Standard 95 %): Der Wandlungsverlust stand an zehn Stellen fest als 5 % im Code
   (Preisgrenzen fürs Netzladen, Halten, Vorentladen, Ersatzpreis, Batterie-Einstandspreis). Jetzt eine Einstellung (70–100 %).
