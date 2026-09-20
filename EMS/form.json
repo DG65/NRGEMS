@@ -1287,6 +1287,11 @@
                     "suffix": " ct/kWh"
                 },
                 {
+                    "type": "SelectInstance",
+                    "name": "PRICE_Source_Instance",
+                    "caption": "Symcon-Strompreis-Instanz (nur nötig, wenn mehrere vorhanden sind)"
+                },
+                {
                     "type": "SelectVariable",
                     "name": "VAR_TIB_PT15M_Today",
                     "caption": "15-Min-Preise Heute JSON (nur Fallback, siehe unten)"

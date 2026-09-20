@@ -87,6 +87,7 @@ define('GUID_STEUERBOXHUB', '{B76BE0BA-DF99-4B81-81BD-636A610011EE}');
 // Day-Ahead-Boersenpreis netto -- NUR fuer § 51 EEG (negative Preise) und
 // netzdienliche Signale, NIE als Bezugspreis (Dietmar 13.09.2026).
 define('GUID_SPOTPRICE', '{11BBF147-16A1-4332-82A3-29BB31154D03}');
+define('GUID_POWERPRICE', '{ECDB5E6D-DB8F-0DBF-CE56-E796FC48FEA7}'); // Symcon-Strompreis (paresy PowerPrice, Anbieter aWATTar/ENTSO-E/Tibber)
 
 // WebFront-Modul (Konfigurator) -- fuer WFC_PushNotification() Ziel-InstanceID.
 // Verwechslungsgefahr: Symcons Kern-GUID {B5B875BB-...} heisst "Tile
@@ -343,6 +344,7 @@ class EMS extends IPSModule
         $this->RegisterPropertyInteger('VAR_TIB_Price',            0);
         $this->RegisterPropertyInteger('VAR_TIB_Level',            0);
         $this->RegisterPropertyInteger('VAR_TIB_Feed_Tariff',      0);
+        $this->RegisterPropertyInteger('PRICE_Source_Instance',    0);  // Symcon-Strompreis: 0 = automatisch (nur bei genau einer Instanz)
         $this->RegisterPropertyInteger('VAR_TIB_PT15M_Today',      0);
         $this->RegisterPropertyInteger('VAR_TIB_PT15M_Tomorrow',   0);
         $this->RegisterPropertyInteger('VAR_TIB_PT60M_Today',      0);
@@ -2411,7 +2413,40 @@ class EMS extends IPSModule
     {
         $combined = $this->getTibberCombinedCurveJson();
         if (!empty($combined)) { return $combined; }
-        return (string)$this->readVar('VAR_TIB_PT15M_Today', '');
+        $manual = (string)$this->readVar('VAR_TIB_PT15M_Today', '');
+        if ($manual !== '') { return $manual; }   // ausdrueckliche Nutzerwahl schlaegt die Automatik
+        return $this->getPowerPriceCurveJson();
+    }
+
+    /**
+     * Symcon-Strompreis (paresy PowerPrice): Instanz finden. Automatisch nur bei GENAU einer Instanz; bei mehreren
+     * entscheidet die Einstellung PRICE_Source_Instance (nicht raten). 0 = keine Quelle.
+     */
+    private function getPowerPriceInstance(): int
+    {
+        $sel = (int)$this->ReadPropertyInteger('PRICE_Source_Instance');
+        if ($sel > 0) {
+            return (@IPS_InstanceExists($sel)) ? $sel : 0;
+        }
+        $list = @IPS_GetInstanceListByModuleID(GUID_POWERPRICE);
+        return (is_array($list) && count($list) === 1) ? (int)$list[0] : 0;
+    }
+
+    /**
+     * Preiskurve aus dem Symcon-Strompreis (Variable MarketData: JSON-Liste {start, end, price}, Unix-Sekunden, ct/kWh).
+     * Auflösung 15 oder 60 Minuten; der Preis enthaelt die dort eingestellten Aufschlaege des Nutzers (Grundpreis,
+     * Aufschlag, MwSt) und gilt hier als Endkundenpreis. Leer = keine brauchbare Kurve.
+     */
+    private function getPowerPriceCurveJson(): string
+    {
+        $iid = $this->getPowerPriceInstance();
+        if ($iid <= 0) { return ''; }
+        $vid = @IPS_GetObjectIDByIdent('MarketData', $iid);
+        if (!$vid) { return ''; }
+        $json = (string)@GetValue($vid);
+        $d = json_decode($json, true);
+        if (!is_array($d) || empty($d) || !is_array($d[0]) || !isset($d[0]['start'], $d[0]['end'], $d[0]['price'])) { return ''; }
+        return $json;
     }
 
     /**
@@ -2463,7 +2498,9 @@ class EMS extends IPSModule
     {
         $combined = $this->getTibberCombinedCurveJson();
         if (!empty($combined)) { return $combined; }
-        return (string)$this->readVar('VAR_TIB_PT15M_Tomorrow', '');
+        $manual = (string)$this->readVar('VAR_TIB_PT15M_Tomorrow', '');
+        if ($manual !== '') { return $manual; }
+        return $this->getPowerPriceCurveJson();
     }
 
     /**
@@ -3286,7 +3323,16 @@ class EMS extends IPSModule
     {
         $tibberId = $this->getTibberGridRewardInstance();
         if ($tibberId <= 0) {
-            return 'ℹ️ Keine Tibber-Grid-Reward-Instanz gefunden — Feld unten wird benötigt.';
+            $ppList = @IPS_GetInstanceListByModuleID(GUID_POWERPRICE);
+            $ppList = is_array($ppList) ? $ppList : array();
+            if ($this->getPowerPriceInstance() > 0 && $this->getPowerPriceCurveJson() !== '' && (int)$this->ReadPropertyInteger('VAR_TIB_PT15M_Today') === 0) {
+                $ppId = $this->getPowerPriceInstance();
+                return sprintf('✅ Automatisch verbunden: Symcon-Strompreis #%d ("%s") — Preis inklusive der dort eingestellten Aufschläge. Feld unten wird ignoriert.', $ppId, IPS_GetName($ppId));
+            }
+            if (count($ppList) > 1 && (int)$this->ReadPropertyInteger('PRICE_Source_Instance') === 0) {
+                return '⚠️ Mehrere Symcon-Strompreis-Instanzen gefunden — bitte unten die zu verwendende auswählen (oder das Feld verknüpfen).';
+            }
+            return 'ℹ️ Keine Tibber-Grid-Reward-Instanz und kein Symcon-Strompreis gefunden — Feld unten wird benötigt.';
         }
         try {
             $curve = TIBBERGR_GetPriceCurve($tibberId);
@@ -4955,10 +5001,15 @@ class EMS extends IPSModule
             }
 
             if ($ts !== null) {
-                if ($ts < $dayStartTs || $ts >= $dayEndTs) { continue; } // gehoert zu einem anderen Kalendertag
-                $slot = $this->slotIndexForTs($ts, $dayStartTs);
-                if ($slot >= 0 && $slot < count($prices) && $prices[$slot] === null) {
-                    $prices[$slot] = $price; // doppelte Stunde: erster Preis gilt
+                // Eintraege laenger als eine Viertelstunde (z. B. Stundenpreise, `end` exklusiv) gelten fuer alle
+                // Viertelstunden im Zeitraum; ohne `end` genau eine Viertelstunde (wie bisher).
+                $endTs = (isset($entry['end']) && is_numeric($entry['end']) && (int)$entry['end'] > $ts) ? (int)$entry['end'] : $ts + 900;
+                for ($t = $ts; $t < $endTs; $t += 900) {
+                    if ($t < $dayStartTs || $t >= $dayEndTs) { continue; } // gehoert zu einem anderen Kalendertag
+                    $slot = $this->slotIndexForTs($t, $dayStartTs);
+                    if ($slot >= 0 && $slot < count($prices) && $prices[$slot] === null) {
+                        $prices[$slot] = $price; // doppelte Stunde: erster Preis gilt
+                    }
                 }
             } elseif ($i >= 0 && $i < 96) {
                 $prices[$i] = $price;

@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.58.0 (2026-09-20)
+- **Symcon-Strompreis als Preisquelle** (Modul „Strompreis“ von paresy, Anbieter aWATTar, ENTSO-E oder Tibber): Wer weder Tibber Grid
+  Rewards noch das Börsenpreis-Modul hat, aber den Symcon-Strompreis, bekommt jetzt den Tagesplan aus dessen Preisen. Das EMS liest
+  die Variable `MarketData` (Liste aus `start`, `end`, `price`, ct/kWh) automatisch, wenn genau eine Instanz vorhanden ist; bei
+  mehreren wählt man die Instanz im Formular. Reihenfolge: Tibber Grid Rewards, dann ein ausdrücklich verknüpftes Preisfeld,
+  dann Symcon-Strompreis. Der Preis enthält die dort eingestellten Aufschläge (Grundpreis, Aufschlag, MwSt) und gilt als
+  Endkundenpreis; die Einstellungen müssen dort stimmen.
+- **Stundenpreise:** Preiseinträge mit `end` gelten für alle Viertelstunden ihres Zeitraums (bisher nur für die erste). Ohne
+  `end` unverändert eine Viertelstunde. Die Preisquellen-Statuszeile im Formular nennt die gefundene Quelle.
+- Der Schalter „Tibber & Tarif aktiv“ (Panel „Tibber & Tarif“) muss weiter eingeschaltet sein, damit der Tagesplan rechnet.
+
 ## 0.57.0 (2026-09-20)
 - **Zusammenhängende Ladefenster:** Die Nachtladung wählte die günstigsten Viertelstunden einzeln und zerstückelte das Fenster
   (Live-Plan 20.09.: zwei Blöcke, getrennt durch drei Halte-Slots zum praktisch gleichen Preis). Jetzt kostet jeder zusätzliche

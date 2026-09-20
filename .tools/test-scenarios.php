@@ -655,6 +655,36 @@ check('Kein Bedarf: keine Slots', call($ems, 'pickChargeSlots', [[0 => 0.10], 0]
 $pk = call($ems, 'pickChargeSlots', [[0 => 0.10, 1 => 0.10, 2 => 0.10, 3 => 0.10, 4 => 0.10, 5 => 0.10], 3]);
 check('Gleiche Preise: ein zusammenhaengender Block', count($pk) === 3 && (max(array_keys($pk)) - min(array_keys($pk))) === 2, json_encode($pk));
 
+echo "\n8q) Symcon-Strompreis als automatische Preisquelle (Stundenpreise, ohne Tibber)\n";
+$ems = freshEms();
+$d0 = strtotime('today'); $md = [];
+for ($h = 0; $h < 24; $h++) { $md[] = ['start' => $d0 + $h * 3600, 'end' => $d0 + ($h + 1) * 3600, 'price' => 20.0 + $h]; }
+$md2 = []; $d1 = strtotime('tomorrow');
+for ($h = 0; $h < 24; $h++) { $md2[] = ['start' => $d1 + $h * 3600, 'end' => $d1 + ($h + 1) * 3600, 'price' => 50.0 + $h]; }
+$GLOBALS['INSTMOD'][7001] = GUID_POWERPRICE; obj(7001, 1, 'aWATTar', 0);
+$mdVar = vari('Marktdaten', 7001, 'MarketData', json_encode(array_merge($md, $md2)), 3);
+$GLOBALS['TIBBER_CURVE'] = [];
+$j = call($ems, 'getPT15MTodayJson');
+check('ohne Tibber und ohne eigenes Feld: Kurve kommt aus dem Symcon-Strompreis', $j !== '' && strpos($j, '"price"') !== false);
+$pt = call($ems, 'parsePT15M', [$j, 0]); $pm = call($ems, 'parsePT15M', [call($ems, 'getPT15MTomorrowJson'), 1]);
+check('Stundenpreis gilt fuer alle vier Viertelstunden (08:00-08:59 = Slot 32..35 = 28 ct)', abs($pt[32] - 0.28) < 1e-9 && abs($pt[35] - 0.28) < 1e-9 && abs($pt[36] - 0.29) < 1e-9, json_encode(array_slice($pt, 32, 5)));
+check('alle 96 Slots heute belegt', count(array_filter($pt, fn($v) => $v !== null)) === 96);
+check('Morgen: Slot 0 = 50 ct (Tageswechsel richtig einsortiert)', abs($pm[0] - 0.50) < 1e-9 && abs($pm[95] - 0.73) < 1e-9, json_encode([$pm[0], $pm[95]]));
+$GLOBALS['INSTMOD'][7002] = GUID_POWERPRICE; obj(7002, 1, 'zweite', 0);
+check('Zwei Strompreis-Instanzen ohne Auswahl: nicht raten, keine Quelle', call($ems, 'getPowerPriceInstance') === 0 && call($ems, 'getPT15MTodayJson') === '');
+prop('PRICE_Source_Instance', 7001);
+check('Mit ausdruecklicher Auswahl wieder die gewaehlte Instanz', call($ems, 'getPowerPriceInstance') === 7001 && call($ems, 'getPT15MTodayJson') !== '');
+prop('PRICE_Source_Instance', 0); unset($GLOBALS['INSTMOD'][7002]);
+$GLOBALS['VAL'][$mdVar] = '[]';
+check('Leere Marktdaten: keine Quelle', call($ems, 'getPT15MTodayJson') === '');
+$GLOBALS['VAL'][$mdVar] = json_encode($md);
+$GLOBALS['INSTMOD'][7003] = GUID_TIBBERGRIDREWARD; $GLOBALS['TIBBER_CURVE'] = [['start' => $d0, 'end' => $d0 + 900, 'price' => 12.0]];
+check('Tibber hat weiter Vorrang', strpos(call($ems, 'getPT15MTodayJson'), '"price":12') !== false);
+$GLOBALS['TIBBER_CURVE'] = []; unset($GLOBALS['INSTMOD'][7001], $GLOBALS['INSTMOD'][7003]);
+check('Ohne Instanz keine Quelle', call($ems, 'getPT15MTodayJson') === '');
+$pOld = call($ems, 'parsePT15M', [json_encode([['start' => $d0, 'price' => 10.0], ['start' => $d0 + 900, 'price' => 20.0]]), 0]);
+check('Alte Kurven ohne end-Feld: unveraendert eine Viertelstunde je Eintrag', abs($pOld[0] - 0.10) < 1e-9 && abs($pOld[1] - 0.20) < 1e-9 && $pOld[2] === null, json_encode(array_slice($pOld, 0, 3)));
+
 echo "\n9) Regression 12.09.2026 -- Tagesplan darf die Batterie nicht per Sollwert-Modus ins Netz ziehen\n";
 $ems = freshEms();
 $ctx = ['enwgActive' => false, 'enwgStartH' => 0, 'enwgEndH' => 0, 'avgHouseW' => 300.0, 'houseLoadSlots' => [],
