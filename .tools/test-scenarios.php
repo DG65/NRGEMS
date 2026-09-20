@@ -565,6 +565,22 @@ $GLOBALS['ACTIONS'] = [];
 call($ems, 'controlWallboxViaChargerHub', [1, $entryNoRead, false]);
 check('Wallbox ohne chargeEnableID: erst freigeben, danach wird das Sperren wirklich gesendet', $freigabe > 0 && count($GLOBALS['ACTIONS']) > 0 && end($GLOBALS['ACTIONS'])[1] === 'ctl_enable' && end($GLOBALS['ACTIONS'])[2] === false, json_encode($GLOBALS['ACTIONS']));
 
+echo "\n8k) Preisschwellen: eingetragen gilt, 0 = automatisch aus dem Preisverlauf\n";
+$ems = freshEms();
+$pTh = []; for ($i = 0; $i < 96; $i++) { $pTh[] = 0.10 + $i * 0.004; } // 10 ct ... 48 ct steigend
+$th = call($ems, 'priceThresholds', [$pTh]);
+check('automatisch: charge ~ unteres Viertel, wb ~ Median, discharge ~ oberes Viertel', $th['charge'] < $th['wb'] && $th['wb'] < $th['discharge'] && abs($th['wb'] - 0.10 - 47.5 * 0.004) < 0.006, json_encode($th));
+$thFlat = call($ems, 'priceThresholds', [array_fill(0, 96, 0.30)]);
+check('flacher Tarif (Festpreis): keine Preissteuerung (Wallbox immer erlaubt, nichts gilt als teuer)', $thFlat['wb'] >= 1e8 && $thFlat['discharge'] >= 1e8 && $thFlat['charge'] >= 1e8, json_encode($thFlat));
+$thNone = call($ems, 'priceThresholds', [array_fill(0, 96, null)]);
+check('ohne Preise: keine Preissteuerung', $thNone['wb'] >= 1e8);
+prop('TIB_Threshold_Charge', 0.15); prop('TIB_Threshold_Discharge', 0.25); prop('TIB_Threshold_WB', 0.20);
+$thFix = call($ems, 'priceThresholds', [$pTh]);
+check('eingetragene Schwellen gelten unveraendert (0,15 / 0,25 / 0,20)', $thFix === ['charge' => 0.15, 'discharge' => 0.25, 'wb' => 0.20], json_encode($thFix));
+prop('TIB_Threshold_WB', 0.0);
+$thMix = call($ems, 'priceThresholds', [$pTh]);
+check('gemischt: eingetragen bleibt, 0 wird automatisch', $thMix['charge'] === 0.15 && $thMix['wb'] > 0.2 && $thMix['wb'] < 0.3, json_encode($thMix));
+
 echo "\n9) Regression 12.09.2026 -- Tagesplan darf die Batterie nicht per Sollwert-Modus ins Netz ziehen\n";
 $ems = freshEms();
 $ctx = ['enwgActive' => false, 'enwgStartH' => 0, 'enwgEndH' => 0, 'avgHouseW' => 300.0, 'houseLoadSlots' => [],

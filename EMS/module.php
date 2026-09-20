@@ -350,9 +350,10 @@ class EMS extends IPSModule
         $this->RegisterPropertyInteger('VAR_TIB_Ahead_15M',        0);
         // Einheit EUR/kWh (nicht ct/kWh) -- passend zu Tibbers CurrentPrice-Vertrag,
         // siehe readState()/tib_feed-Fallback und SUITE.md-Historie 25.07.2026.
-        $this->RegisterPropertyFloat(  'TIB_Threshold_Charge',     0.15);
-        $this->RegisterPropertyFloat(  'TIB_Threshold_Discharge',  0.25);
-        $this->RegisterPropertyFloat(  'TIB_Threshold_WB',         0.20);
+        // Preisschwellen (EUR/kWh): 0 = automatisch aus dem Preisverlauf der naechsten 24 Stunden (Viertel/Median/Dreiviertel-Quantil)
+        $this->RegisterPropertyFloat(  'TIB_Threshold_Charge',     0.0);
+        $this->RegisterPropertyFloat(  'TIB_Threshold_Discharge',  0.0);
+        $this->RegisterPropertyFloat(  'TIB_Threshold_WB',         0.0);
         // TIB_Threshold_Export ENTFERNT 20.08.2026 -- war ein wirtschaftlich
         // rueckwaertiger Export-Ausloeser bei fester Einspeiseverguetung,
         // siehe Kommentar in simulateDaySlot(). Kein Ersatz noetig: der
@@ -3679,8 +3680,9 @@ class EMS extends IPSModule
         $hystSoc        = (float)$this->ReadPropertyInteger('OPT_Hysteresis_SOC');
         $socTargetDay   = $this->getDynamicSocTargetDay();
         $socTargetNight = (float)$this->ReadPropertyInteger('BAT_SOC_Target_Night');
-        $thCharge       = (float)$this->ReadPropertyFloat('TIB_Threshold_Charge');
-        $thDischarge    = (float)$this->ReadPropertyFloat('TIB_Threshold_Discharge');
+        $thr            = $this->priceThresholds(array_merge(array_slice(array_values($prices), $nowSlot), array_slice(array_values($tomorrowPrices), 0, $nowSlot)));
+        $thCharge       = $thr['charge'];
+        $thDischarge    = $thr['discharge'];
         $fcMinPower     = (float)$this->ReadPropertyInteger('FORECAST_Min_Power_W');
         $feedTariff     = $this->planFeedTariffEur();
         $enwgActive     = $this->ReadPropertyBoolean('ENWG14A_Active');
@@ -3975,8 +3977,8 @@ class EMS extends IPSModule
             'socReserve' => (float)$this->ReadPropertyInteger('BAT_SOC_Reserve_Backup'),
             'socTargetNight' => (float)$this->ReadPropertyInteger('BAT_SOC_Target_Night'),
             'capKwh' => $capKwh, 'chargeKw' => $batLimits['chargeKw'], 'dischargeKw' => $batLimits['dischargeKw'], 'maxW' => $maxW,
-            'feedTariff' => $tarif['eur'], 'thCharge' => (float)$this->ReadPropertyFloat('TIB_Threshold_Charge'),
-            'thDischarge' => (float)$this->ReadPropertyFloat('TIB_Threshold_Discharge'),
+            'feedTariff' => $tarif['eur'], 'thCharge' => $this->priceThresholds($prices)['charge'],
+            'thDischarge' => $this->priceThresholds($prices)['discharge'],
             'negativpreisPflicht' => $negativpreisPflicht,
             'cycleCost' => max(0.0, (float)$this->ReadPropertyFloat('BAT_CycleCost_ct')) / 100.0,
         );
@@ -4252,7 +4254,7 @@ class EMS extends IPSModule
             return null; // schon voll -- Plan-Annahme ueberholt
         }
 
-        $thWB  = (float)$this->ReadPropertyFloat('TIB_Threshold_WB');
+        $thWB  = $this->priceThresholds()['wb'];
         $price = $s['tib_price_eff'];
         $wb1En = ($s['wb_active'] && $s['wb1_cable'] > 0 && $s['wb1_error'] === 0 && (!$s['tib_active'] || $price < $thWB));
         $wb2En = ($s['wb_active'] && $s['wb_count'] >= 2 && $s['wb2_cable'] > 0 && $s['wb2_error'] === 0 && (!$s['tib_active'] || $price < $thWB));
@@ -4548,6 +4550,47 @@ class EMS extends IPSModule
      * einer geratenen Prozentzahl. `null`-Preisslots (keine Daten) zaehlen
      * nicht als teuer (Stolperfalle 15).
      */
+    /**
+     * Preisschwellen (EUR/kWh) fuer "guenstig laden" (charge), "teuer" (discharge) und "Wallbox darf laden" (wb).
+     * Eingetragene Werte (> 0) gelten unveraendert. 0 = automatisch aus dem Preisverlauf der naechsten 24 Stunden:
+     * charge = unteres Viertel, wb = Median, discharge = oberes Viertel. Bei zu wenig Preisen oder flachem Verlauf
+     * (Spanne unter 2 ct, z. B. Festpreis) bedeutet automatisch "keine Preissteuerung": Laden nie preislich
+     * eingeschraenkt, nichts gilt als teuer, Wallbox immer erlaubt.
+     */
+    private function priceThresholds(?array $prices24 = null): array
+    {
+        $fixed = array(
+            'charge'    => (float)$this->ReadPropertyFloat('TIB_Threshold_Charge'),
+            'discharge' => (float)$this->ReadPropertyFloat('TIB_Threshold_Discharge'),
+            'wb'        => (float)$this->ReadPropertyFloat('TIB_Threshold_WB'),
+        );
+        if ($fixed['charge'] > 0 && $fixed['discharge'] > 0 && $fixed['wb'] > 0) { return $fixed; }
+        if ($prices24 === null) { $prices24 = $this->planPrices24(); }
+        $v = array();
+        foreach ($prices24 as $p) { if ($p !== null) { $v[] = (float)$p; } }
+        sort($v);
+        $off = array('charge' => 1.0e9, 'discharge' => 1.0e9, 'wb' => 1.0e9);
+        if (count($v) < 8 || ($v[count($v) - 1] - $v[0]) < 0.02) { $auto = $off; }
+        else {
+            $q = function (float $f) use ($v) { $i = (int)round($f * (count($v) - 1)); return $v[max(0, min(count($v) - 1, $i))]; };
+            $auto = array('charge' => $q(0.25), 'wb' => $q(0.50), 'discharge' => $q(0.75));
+        }
+        foreach ($fixed as $k => $val) { if ($val <= 0) { $fixed[$k] = $auto[$k]; } }
+        return $fixed;
+    }
+
+    /** Preise der naechsten 24 Stunden aus dem gespeicherten Tagesplan (heute ab jetzt, dann morgen). */
+    private function planPrices24(): array
+    {
+        $today    = $this->loadDayPlan();
+        $tomorrow = json_decode($this->ReadAttributeString('DayPlanTomorrow'), true) ?: array();
+        $now = (int)(((int)date('H') * 60 + (int)date('i')) / 15);
+        $out = array();
+        for ($i = $now; $i < 96; $i++) { $out[] = $today[$i]['price'] ?? null; }
+        for ($i = 0; $i < $now; $i++)  { $out[] = $tomorrow[$i]['price'] ?? null; }
+        return $out;
+    }
+
     private function computeExpensiveReserveKwh(array $prices, $thDischarge, $avgHouseW)
     {
         // $out[$i] = kWh-Bedarf fuer teure Slots NACH Slot $i (exklusive $i
@@ -5110,7 +5153,7 @@ class EMS extends IPSModule
         $socTargetNight = (float)$this->ReadPropertyInteger('BAT_SOC_Target_Night');
         $hystSoc        = (float)$this->ReadPropertyInteger('OPT_Hysteresis_SOC');
         $maxW           = (float)$this->ReadPropertyInteger('EMS_Max_Power_W');
-        $thWB           = (float)$this->ReadPropertyFloat('TIB_Threshold_WB');
+        $thWB           = $this->priceThresholds()['wb'];
 
         $price          = $s['tib_price_eff'];
         $soc            = $s['bat_soc'];

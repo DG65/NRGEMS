@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.52.0 (2026-09-20)
+- **Preisschwellen automatisch** (`TIB_Threshold_Charge/_Discharge/_WB`, Standard jetzt 0 = automatisch). Die festen
+  Vorgaben 15/25/20 ct waren Preisniveaus der Entwicklungsanlage 2026: bei anderem Tarif war „teuer“ oder
+  „günstig“ dauerhaft wahr. Automatisch (0) leitet aus dem Preisverlauf der nächsten 24 Stunden ab: laden = unteres
+  Viertel, Fahrzeugladung erlaubt = untere Hälfte (Median), teuer = oberes Viertel. Bei zu wenigen Preisen oder
+  flachem Verlauf (unter 2 ct Spanne, z. B. Festpreis) gilt „keine Preissteuerung“: nichts wird preislich
+  eingeschränkt, nichts gilt als teuer, die Wallbox ist immer erlaubt. Eingetragene Werte (> 0) gelten unverändert,
+  je Schwelle einzeln. An der Entwicklungsanlage sind die bisherigen Werte ausdrücklich gesetzt (Verhalten unverändert).
+
 ## 0.51.4 (2026-09-20)
 - **Mehrere Wechselrichter:** Statt der ersten InverterHub-Instanz (Reihenfolge der Instanz-IDs) wählt EMS den
   Wechselrichter mit Batterie und Steuerbarkeit. Die PV-Leistung der übrigen Wechselrichter wird zur PV-Summe
