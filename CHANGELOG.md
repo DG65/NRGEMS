@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.49.3 (2026-09-20)
+- **Tibber steuert die Batterie (Grid Rewards): EMS beobachtet nur.** Meldet `TIBBERGR_GetActiveControls` (Vertrag 2.0)
+  einen Eintrag vom Typ `battery`, gibt das EMS den Wechselrichter einmal an die Automatik zurück (Modus 1, enable
+  aus) und schreibt danach nicht mehr, solange der Eintrag besteht (Situation B, kein Zwei-Regler-Betrieb).
+  Bisher hätte die Grid-Rewards-Logik (Stromeinkauf in Höhe der Wallbox-Leistung) auch bei Batterie-Steuerung
+  geschrieben. Hintergrund: Tibber hat im Juni 2026 GoodWe als Partner für Speicher/Wechselrichter angekündigt.
+  Vorbereitung nach Schema: ein echter Batterie-Eintrag wurde im Datenstrom noch nie beobachtet (Tibber 20.09.2026);
+  ohne Zuordnung Tibber-Batterie zu Wechselrichter gilt der gefundene Wechselrichter als betroffen.
+
 ## 0.49.2 (2026-09-20)
 - „Grünste Ladezeit“ (optional, StromGedacht): lud bei GSI ≥ Schwelle im alten Modus 4 mit voller Anschlussleistung,
   unabhängig vom Preis (live 20.09., SOC 95 %, ca. 18 ct). Jetzt nur, wenn der Netzpreis unter 95 % der

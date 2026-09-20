@@ -400,6 +400,20 @@ check('Attribute nachgezogen (LastGoodweMode=1, LastGoodweEnable=false)', $ems->
 check('Grund landet in EMS_LastAction', $ems->GetValue('EMS_LastAction') === 'normal');
 
 // ===========================================================================
+echo "\n8b) Tibber steuert die Batterie (Grid Rewards, type battery): EMS gibt frei und schreibt nicht mehr\n";
+$ems = freshEms();
+$GLOBALS['INSTMOD'][IHUB_IID] = GUID_INVERTERHUB;
+attr('PartnerCache', json_encode(['inverterhub' => [['instanceID' => IHUB_IID, 'controlAuthority' => 'ems', 'controllable' => true]]]));
+$dT = call($ems, 'optimize', [state(['tibber_battery' => true])]);
+check('optimize: Tibber steuert Batterie -> Automatik, no_write, Quelle tibber', $dT['op_mode'] === EMS_OP_AUTO && !empty($dT['no_write']) && $dT['gw_enable'] === false && $dT['source'] === 'tibber', json_encode($dT));
+attr('LastGoodweMode', GW_MODE_BAT_CHARGE); attr('LastGoodweEnable', true);
+$GLOBALS['ACTIONS'] = [];
+call($ems, 'applyDecision', [$dT, state(['tibber_battery' => true])]);
+check('erste Freigabe: Modus 1 und enable=false werden einmal geschrieben', $GLOBALS['CTL']['ctl_ems_mode'] === GW_MODE_AUTO && $GLOBALS['CTL']['ctl_ems_enable'] === false && count($GLOBALS['ACTIONS']) > 0, json_encode($GLOBALS['ACTIONS']));
+$GLOBALS['ACTIONS'] = [];
+call($ems, 'applyDecision', [$dT, state(['tibber_battery' => true])]);
+check('danach nichts mehr geschrieben (Tibber besitzt den Schreibkanal)', count($GLOBALS['ACTIONS']) === 0, json_encode($GLOBALS['ACTIONS']));
+
 echo "\n9) Regression 12.09.2026 -- Tagesplan darf die Batterie nicht per Sollwert-Modus ins Netz ziehen\n";
 $ems = freshEms();
 $ctx = ['enwgActive' => false, 'enwgStartH' => 0, 'enwgEndH' => 0, 'avgHouseW' => 300.0, 'houseLoadSlots' => [],

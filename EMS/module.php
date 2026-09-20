@@ -2306,6 +2306,27 @@ class EMS extends IPSModule
      * gemessenen Wallbox-Leistung berechnet wird (0W beim Ladestopp ergibt
      * automatisch 0W Sollwert, kein Sonderfall noetig).
      */
+    /**
+     * Steuert Tibber gerade eine BATTERIE (Grid Rewards, Vertrag 2.0, Eintrag type 'battery')? Dann besitzt
+     * Tibber den Schreibkanal am Speicher (Situation B): das EMS gibt den Wechselrichter einmal an die Automatik
+     * zurueck und schreibt nicht mehr, solange der Eintrag besteht. Zuordnung Tibber-Batterie zu Wechselrichter
+     * gibt es nicht (deviceId ist Tibbers interne ID); bei Batterie-Steuerung gilt deshalb der Speicher des
+     * gefundenen Wechselrichters als betroffen. An einem echten Batterie-Eintrag noch nie beobachtet (Tibber
+     * 20.09.2026): Vorbereitung nach Schema, nicht verifiziert.
+     */
+    private function detectTibberBatteryControl(): bool
+    {
+        if (!function_exists('TIBBERGR_GetActiveControls')) { return false; }
+        $tibberId = $this->getTibberGridRewardInstance();
+        if ($tibberId <= 0) { return false; }
+        $controls = @TIBBERGR_GetActiveControls($tibberId);
+        if (!is_array($controls)) { return false; }
+        foreach ($controls as $c) {
+            if (is_array($c) && (($c['type'] ?? '') === 'battery')) { return true; }
+        }
+        return false;
+    }
+
     private function detectGridRewardsActive(): bool
     {
         if (!function_exists('TIBBERGR_GetActiveControls')) { return false; }
@@ -4755,6 +4776,7 @@ class EMS extends IPSModule
         // Status stehen (Tagesplan-Farbmarkierung 0.29.2 liest sie historisch),
         // wird aber jetzt von EMS selbst gesetzt statt vom Nutzer.
         $s['grid_rewards']  = $this->detectGridRewardsActive();
+        $s['tibber_battery'] = $this->detectTibberBatteryControl();
         $this->SetValue('EMS_GridRewards', $s['grid_rewards']);
         $s['wb1_pow_kw']    = $this->readChargerPowerKw(1);
         $s['wb1_status']    = (int)  $this->readVar('VAR_WB1_Status', 0);
@@ -4952,6 +4974,18 @@ class EMS extends IPSModule
         // laufend nachgefuehrt werden muss (EMS' 30s-Zyklus reicht dafuer,
         // deutlich unter dem 60-70s-Reassert-Fenster). Tibber steuert
         // die Wallbox(en) weiterhin komplett direkt (wb*_enable=false).
+        // Tibber steuert die Batterie selbst: EMS beobachtet nur (kein Zwei-Regler-Betrieb am Wechselrichter).
+        if (!empty($s['tibber_battery'])) {
+            $d['op_mode']    = EMS_OP_AUTO;
+            $d['gw_mode']    = GW_MODE_AUTO;
+            $d['gw_power_w'] = 0;
+            $d['gw_enable']  = false;
+            $d['no_write']   = true;
+            $d['reason']     = 'Tibber steuert die Batterie (Grid Rewards): EMS gibt den Wechselrichter frei und beobachtet nur';
+            $d['source']     = 'tibber';
+            return $d;
+        }
+
         if ($s['grid_rewards']) {
             $wbTotalW = (int)round(($s['wb1_pow_kw'] + $s['wb2_pow_kw']) * 1000);
             $d['op_mode']    = EMS_OP_GRIDREWARDS;
@@ -6288,6 +6322,24 @@ class EMS extends IPSModule
         // 'force' (Plausibilitaetswaechter, 11.09.2026): ein Sicherheits-
         // Rueckfall darf nicht am Moduswechsel-Cooldown haengen bleiben --
         // gleiche Sonderstellung wie Grid Rewards.
+        // Fremd-Regler besitzt den Schreibkanal (z. B. Tibber steuert die Batterie): einmal an die Automatik
+        // zurueckgeben, danach nichts mehr schreiben.
+        if (!empty($d['no_write'])) {
+            if ($lastMode !== GW_MODE_AUTO || $lastEnable) {
+                $this->setGoodweMode(GW_MODE_AUTO, 0, false);
+                $this->WriteAttributeInteger('LastGoodweMode',   GW_MODE_AUTO);
+                $this->WriteAttributeBoolean('LastGoodweEnable', false);
+                $this->WriteAttributeInteger('LastGoodwePowerW', 0);
+                $this->WriteAttributeInteger('LastDecision',     $now);
+                $this->emsLog(EMS_LOG_BASIC, 'Goodwe -> Automatik (Freigabe, ' . ($d['reason'] ?? '') . ')');
+            }
+            $this->SetValue('EMS_Mode',       $d['op_mode']);
+            $this->SetValue('EMS_LastAction', $d['reason']);
+            $this->SetValue('EMS_Status',     'OK: ' . $d['reason']);
+            $this->WriteAttributeString('LastDecisionSource', $d['source'] ?? 'tibber');
+            return;
+        }
+
         $isGridRewards  = ($d['op_mode'] === EMS_OP_GRIDREWARDS) || !empty($d['force']);
         $gwEnable       = $d['gw_enable'] ?? true;
         $modeChanging   = ($d['gw_mode'] !== $lastMode || $gwEnable !== $lastEnable);
