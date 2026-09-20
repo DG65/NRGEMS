@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.50.0 (2026-09-20)
+Anregungen aus dem Vergleich mit anderen Energiemanagement-Projekten (Quellcode gelesen).
+- **Neu: Verschleißkosten der Batterie** (`BAT_CycleCost_ct`, Standard 0 = wie bisher). Je entladener kWh, einmal
+  angesetzt (Verluste nicht doppelt gezählt). Senkt die Preisgrenze für Netzladung von 95 % der Einspeisevergütung
+  auf 95 % − Verschleiß (Nachtfenster, Verlängerung, Rang-Ladung, „Grünste Ladezeit“, Laden aus PV bei günstigem
+  Netzstrom) und verlangt beim Vorentladen entsprechend mehr Abstand zum Wiederkaufspreis. Richtwert:
+  Anschaffungspreis / (Zyklenzahl × nutzbare kWh).
+- **Neu: Trockenlauf** (`EMS_DryRun`, Standard aus). EMS rechnet und zeigt Plan, Betriebsart und Begründung wie im
+  Betrieb (Kennzeichnung „Trockenlauf (nichts geschrieben)“), schreibt aber nichts an Wechselrichter, Wallboxen
+  und Netzdienlich-Pfad; ein bereits aktiver Sollwert wird einmal an die Automatik zurückgegeben. Was geschrieben
+  würde, steht im Protokoll (bei jeder Änderung). Gesetzliche Einspeisegrenzen (Netzbetreiber, Negativpreis,
+  dauerhafte Grenze) bleiben aktiv.
+
 ## 0.49.3 (2026-09-20)
 - **Tibber steuert die Batterie (Grid Rewards): EMS beobachtet nur.** Meldet `TIBBERGR_GetActiveControls` (Vertrag 2.0)
   einen Eintrag vom Typ `battery`, gibt das EMS den Wechselrichter einmal an die Automatik zurück (Modus 1, enable

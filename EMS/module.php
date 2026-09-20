@@ -196,6 +196,8 @@ class EMS extends IPSModule
         $this->RegisterPropertyBoolean('BAT_Active',               false);
         $this->RegisterPropertyInteger('BAT_String_Count',         1);
         $this->RegisterPropertyFloat(  'BAT_Capacity_kWh',         10.0);
+        $this->RegisterPropertyFloat(  'BAT_CycleCost_ct',         0.0); // Verschleisskosten je entladene kWh (0 = nicht beruecksichtigen)
+        $this->RegisterPropertyBoolean('EMS_DryRun',               false);
         $this->RegisterPropertyFloat(  'BAT_Charge_Max_kW',        0.0); // 0 = BMS-Angabe, sonst reale Obergrenze der Ladeleistung
         $this->RegisterPropertyInteger('BAT_SOC_Min',              10);
         $this->RegisterPropertyInteger('BAT_SOC_Target_Night',     100);
@@ -454,6 +456,7 @@ class EMS extends IPSModule
         $this->RegisterAttributeInteger('LastGoodweMode',    GW_MODE_AUTO);
         $this->RegisterAttributeBoolean('LastGoodweEnable',  true);
         $this->RegisterAttributeInteger('LastGoodwePowerW',  0);
+        $this->RegisterAttributeString('DryRunLast', '');
         $this->RegisterAttributeInteger('LastGoodweWriteAt', 0);
         $this->RegisterAttributeInteger('LastWB1Switch',     0);
         $this->RegisterAttributeInteger('LastWB2Switch',     0);
@@ -2487,7 +2490,7 @@ class EMS extends IPSModule
             // Wirtschaftlichkeit: Netzstrom nur, wenn er inkl. 5 % Wandlungsverlust unter der
             // Einspeiseverguetung liegt (Dietmar 19.09.2026); ohne Verguetungsangabe keine Grenze.
             if (isset($prices[$i]) && $prices[$i] !== null
-                && ($ctx['feedTariff'] <= 0 || (float)$prices[$i] < $ctx['feedTariff'] * 0.95)) {
+                && (float)$prices[$i] < $this->gridChargeLimitEur($ctx)) {
                 $cand[$i] = (float)$prices[$i];
             }
         }
@@ -2501,7 +2504,7 @@ class EMS extends IPSModule
             $maxExt = min($cand) + $tol;
             for ($i = max($endSlot, $fromSlot); $i < min(96, $endSlot + $extH * 4); $i++) {
                 if (isset($prices[$i]) && $prices[$i] !== null && (float)$prices[$i] <= $maxExt
-                    && ($ctx['feedTariff'] <= 0 || (float)$prices[$i] < $ctx['feedTariff'] * 0.95)) {
+                    && (float)$prices[$i] < $this->gridChargeLimitEur($ctx)) {
                     $cand[$i] = (float)$prices[$i];
                 }
             }
@@ -2572,6 +2575,16 @@ class EMS extends IPSModule
      * Netzanschluss-Grenze und - im letzten Ladeslot - nur so viel, wie zum Ziel noch fehlt
      * (kein Ueberladen, kein unnoetig gekaufter Strom).
      */
+    /**
+     * Obergrenze fuer Netzstrom, der in die Batterie geladen wird (EUR/kWh): Einspeiseverguetung x 0,95
+     * (Wandlungsverlust) abzueglich Verschleisskosten je kWh. 0 Verguetung = keine Grenze (PHP_FLOAT_MAX).
+     */
+    private function gridChargeLimitEur(array $ctx): float
+    {
+        if (($ctx['feedTariff'] ?? 0) <= 0) { return PHP_FLOAT_MAX; }
+        return $ctx['feedTariff'] * 0.95 - ($ctx['cycleCost'] ?? 0.0);
+    }
+
     private function gridChargeXsetW(array $ctx, float $missingKwh = -1.0): int
     {
         $w = min((float)$ctx['chargeKw'] * 1000.0, (float)$ctx['maxW']);
@@ -2751,7 +2764,7 @@ class EMS extends IPSModule
         $neededSlots = ($ctx['chargeKw'] > 0) ? (int)ceil($missingKwh / ($ctx['chargeKw'] * 0.25)) : 0;
         $rank        = $cheapRank[$slot] ?? PHP_INT_MAX;
         if ($neededSlots > 0 && $rank < $neededSlots && $price < ($ctx['thCharge'] + 0.05)
-            && ($ctx['feedTariff'] <= 0 || $price < $ctx['feedTariff'] * 0.95)) {
+            && $price < $this->gridChargeLimitEur($ctx)) {
             $soc = min(100.0, $soc + (min($missingKwh, $ctx['chargeKw'] * 0.25) / max(0.001, $ctx['capKwh']) * 100.0));
             return array('plan' => array('op' => EMS_OP_NET_CHARGE, 'gw' => GW_MODE_BAT_CHARGE, 'power' => $this->gridChargeXsetW($ctx, $missingKwh),
                 'reason' => sprintf('Rang %d der guenstigsten Slots (%.2fct), Nachtziel %.0f%% noch offen', $rank + 1, $price * 100, $ctx['socTargetNight']),
@@ -3652,6 +3665,7 @@ class EMS extends IPSModule
             'socMin' => $socMin, 'socReserve' => $socReserve, 'socTargetNight' => $socTargetNight,
             'capKwh' => $capKwh, 'chargeKw' => $chargeKw, 'dischargeKw' => $dischargeKw, 'maxW' => $maxW,
             'feedTariff' => $feedTariff, 'thCharge' => $thCharge, 'thDischarge' => $thDischarge,
+            'cycleCost' => max(0.0, (float)$this->ReadPropertyFloat('BAT_CycleCost_ct')) / 100.0,
         );
 
         $expensiveReserve = $this->computeExpensiveReserveKwh($prices, $thDischarge, $avgHouseW);
@@ -3904,6 +3918,7 @@ class EMS extends IPSModule
             'feedTariff' => $tarif['eur'], 'thCharge' => (float)$this->ReadPropertyFloat('TIB_Threshold_Charge'),
             'thDischarge' => (float)$this->ReadPropertyFloat('TIB_Threshold_Discharge'),
             'negativpreisPflicht' => $negativpreisPflicht,
+            'cycleCost' => max(0.0, (float)$this->ReadPropertyFloat('BAT_CycleCost_ct')) / 100.0,
         );
         if ($limit['w'] !== null) { $ctx['feedInLimitW'] = (float)$limit['w']; }
 
@@ -4117,7 +4132,8 @@ class EMS extends IPSModule
      */
     private function preDischargeEnd(array $price192, int $nowSlot, float $feed): ?int
     {
-        $maxBuy = ($feed - (float)$this->ReadPropertyFloat('PLAN_PreDischarge_MinGain_ct') / 100.0) * 0.9025;
+        $cycle  = max(0.0, (float)$this->ReadPropertyFloat('BAT_CycleCost_ct')) / 100.0;
+        $maxBuy = ($feed - $cycle - (float)$this->ReadPropertyFloat('PLAN_PreDischarge_MinGain_ct') / 100.0) * 0.9025;
         // Ist die laufende Viertelstunde selbst schon guenstig, ist das Fenster erreicht: nicht weiter entladen.
         if (isset($price192[$nowSlot]) && $price192[$nowSlot] !== null && $price192[$nowSlot] < $maxBuy) { return null; }
         for ($j = $nowSlot + 1; $j <= $nowSlot + 40 && $j < 192; $j++) {
@@ -4233,7 +4249,7 @@ class EMS extends IPSModule
         if ($op === EMS_OP_PV_SELFUSE && $gwMode === GW_MODE_CHARGE_PV) {
             $feed    = (float)$this->getFeedTariffEur()['eur'];
             $surplus = (float)$s['pv_total_w'] - (float)$s['house_pow_w'];
-            $cheap   = ($price > 0 && $feed > 0 && $price < $feed * 0.95);
+            $cheap   = ($price > 0 && $feed > 0 && $price < $feed * 0.95 - max(0.0, (float)$this->ReadPropertyFloat('BAT_CycleCost_ct')) / 100.0);
             if ($surplus < 200.0 && !$cheap) {
                 return array(
                     'op_mode' => EMS_OP_AUTO, 'gw_mode' => GW_MODE_AUTO, 'gw_power_w' => 0, 'gw_enable' => false,
@@ -5054,7 +5070,7 @@ class EMS extends IPSModule
             // Wirtschaftlichkeit (Dietmar 19.09.2026): Netzstrom nur, wenn er inkl. 5 % Verlust unter der
             // Einspeiseverguetung liegt; der gruene Strom allein rechtfertigt keinen teureren Einkauf.
             $greenFeed  = (float)$this->getFeedTariffEur()['eur'];
-            $greenPrice = ($greenFeed <= 0 || $price < $greenFeed * 0.95);
+            $greenPrice = ($greenFeed <= 0 || $price < $greenFeed * 0.95 - max(0.0, (float)$this->ReadPropertyFloat('BAT_CycleCost_ct')) / 100.0);
             $greenW     = $greenPrice ? $this->runtimeGridChargeW($s, (float)$maxW) : 0;
             if ($greenScore !== null && $greenScore >= $greenThreshold && $greenW >= 500) {
                 $d['op_mode']    = EMS_OP_NET_CHARGE;
@@ -6254,6 +6270,15 @@ class EMS extends IPSModule
 
     private function applyDecision($d, $s)
     {
+        // Trockenlauf (Test ohne Risiko): EMS rechnet und zeigt seine Entscheidung wie im Betrieb, schreibt aber
+        // nichts an Wechselrichter, Wallboxen und Netzdienlich-Pfad. Ein bereits aktiver Sollwert wird einmal an
+        // die Automatik zurueckgegeben, sonst haelt der WR ihn ohne Neuschreiben nicht (Rueckfall auf 255).
+        // Gesetzliche Einspeisegrenzen (Netzbetreiber, Negativpreis, dauerhafte Grenze) bleiben davon unberuehrt.
+        if ($this->ReadPropertyBoolean('EMS_DryRun')) {
+            $this->applyDryRun($d);
+            return;
+        }
+
         // Netzdienlicher Pfad (svc_*): ein Steuerpfad je Wechselrichter und
         // Zyklus (Dietmars Ergaenzung 12.09.2026). Solange B1 aktiv ist oder
         // gerade endet, wird ctl_* in diesem Zyklus NICHT geschrieben -- beim
@@ -6389,6 +6414,35 @@ class EMS extends IPSModule
     }
 
     /**
+     * Trockenlauf: Entscheidung anzeigen und protokollieren, aber nichts schreiben (siehe applyDecision()).
+     */
+    private function applyDryRun($d): void
+    {
+        $lastMode   = $this->ReadAttributeInteger('LastGoodweMode');
+        $lastEnable = $this->ReadAttributeBoolean('LastGoodweEnable');
+        if ($lastMode !== GW_MODE_AUTO || $lastEnable) {
+            $this->setGoodweMode(GW_MODE_AUTO, 0, false);
+            $this->WriteAttributeInteger('LastGoodweMode',   GW_MODE_AUTO);
+            $this->WriteAttributeBoolean('LastGoodweEnable', false);
+            $this->WriteAttributeInteger('LastGoodwePowerW', 0);
+            $this->emsLog(EMS_LOG_BASIC, 'Trockenlauf: aktiver Sollwert einmal an die Automatik zurueckgegeben');
+        }
+        $tuple = (int)($d['gw_mode'] ?? 0) . '/' . (int)($d['gw_power_w'] ?? 0) . '/' . (!empty($d['gw_enable']) ? 1 : 0)
+            . '/W' . (!empty($d['wb1_enable']) ? 1 : 0) . (!empty($d['wb2_enable']) ? 1 : 0);
+        if ($this->ReadAttributeString('DryRunLast') !== $tuple) {
+            $this->WriteAttributeString('DryRunLast', $tuple);
+            $this->emsLog(EMS_LOG_BASIC, sprintf('Trockenlauf: wuerde Modus %d, %d W, enable=%s, Wallbox 1=%s 2=%s senden | %s',
+                (int)($d['gw_mode'] ?? 0), (int)($d['gw_power_w'] ?? 0), !empty($d['gw_enable']) ? 'ja' : 'nein',
+                !empty($d['wb1_enable']) ? 'frei' : 'gesperrt', !empty($d['wb2_enable']) ? 'frei' : 'gesperrt', $d['reason'] ?? ''));
+        }
+        $text = 'Trockenlauf (nichts geschrieben): ' . ($d['reason'] ?? '');
+        $this->SetValue('EMS_Mode',       $d['op_mode'] ?? EMS_OP_AUTO);
+        $this->SetValue('EMS_LastAction', $text);
+        $this->SetValue('EMS_Status',     'OK: ' . $text);
+        $this->WriteAttributeString('LastDecisionSource', $d['source'] ?? 'ems');
+    }
+
+    /**
      * Haltesignal (alle 15 s): schreibt den zuletzt gesendeten aktiven Sollwert erneut, damit der WR nicht
      * ca. 30 s nach dem letzten Schreiben auf 255 zurueckfaellt (Live-Test 19.09.2026). Der 30-s-Zyklus
      * von Update() ist dafuer zu knapp. Nur bei aktivem EMS und aktivem Sollwert (enable), ohne
@@ -6396,7 +6450,7 @@ class EMS extends IPSModule
      */
     public function KeepAlive()
     {
-        if (!$this->ReadPropertyBoolean('EMS_Active') || !$this->ReadAttributeBoolean('LastGoodweEnable')) { return; }
+        if (!$this->ReadPropertyBoolean('EMS_Active') || $this->ReadPropertyBoolean('EMS_DryRun') || !$this->ReadAttributeBoolean('LastGoodweEnable')) { return; }
         $mode = $this->ReadAttributeInteger('LastGoodweMode');
         if ($mode === GW_MODE_AUTO) { return; }
         $inv = $this->getInverterEntry();

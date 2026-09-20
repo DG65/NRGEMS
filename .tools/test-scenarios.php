@@ -414,6 +414,40 @@ $GLOBALS['ACTIONS'] = [];
 call($ems, 'applyDecision', [$dT, state(['tibber_battery' => true])]);
 check('danach nichts mehr geschrieben (Tibber besitzt den Schreibkanal)', count($GLOBALS['ACTIONS']) === 0, json_encode($GLOBALS['ACTIONS']));
 
+echo "\n8c) Trockenlauf: Entscheidung sichtbar, aber nichts geschrieben\n";
+$ems = freshEms();
+$GLOBALS['INSTMOD'][IHUB_IID] = GUID_INVERTERHUB;
+attr('PartnerCache', json_encode(['inverterhub' => [['instanceID' => IHUB_IID, 'controlAuthority' => 'ems', 'controllable' => true]]]));
+prop('EMS_DryRun', true);
+attr('LastGoodweMode', GW_MODE_BAT_CHARGE); attr('LastGoodweEnable', true);
+$dNet = ['op_mode' => EMS_OP_NET_CHARGE, 'gw_mode' => GW_MODE_BAT_CHARGE, 'gw_power_w' => 20000, 'gw_enable' => true, 'wb1_enable' => false, 'wb2_enable' => false, 'reason' => 'Test Netzladen', 'source' => 'tagesplan'];
+$GLOBALS['ACTIONS'] = [];
+call($ems, 'applyDecision', [$dNet, state()]);
+check('Trockenlauf: aktiver Sollwert wird einmal freigegeben (Modus 1, enable aus)', $GLOBALS['CTL']['ctl_ems_mode'] === GW_MODE_AUTO && $GLOBALS['CTL']['ctl_ems_enable'] === false, json_encode($GLOBALS['ACTIONS']));
+check('Trockenlauf: Entscheidung ist sichtbar, mit Kennzeichnung', strpos($ems->GetValue('EMS_LastAction'), 'Trockenlauf') === 0 && strpos($ems->GetValue('EMS_LastAction'), 'Test Netzladen') !== false && (int)$ems->GetValue('EMS_Mode') === EMS_OP_NET_CHARGE, (string)$ems->GetValue('EMS_LastAction'));
+$GLOBALS['ACTIONS'] = [];
+call($ems, 'applyDecision', [$dNet, state()]);
+check('Trockenlauf: danach wird nichts mehr geschrieben', count($GLOBALS['ACTIONS']) === 0, json_encode($GLOBALS['ACTIONS']));
+prop('EMS_DryRun', false);
+
+// Zykluskosten (0.50.0): senken die Preisgrenze fuer Netzladung
+prop('PLAN_NightGrid_Active', true); prop('PLAN_NightGrid_EndHour', 6); prop('PLAN_NightGrid_ExtendHours', 0);
+prop('BAT_CycleCost_ct', 0.0);
+$ctxC = ['capKwh' => 40.0, 'chargeKw' => 10.0, 'maxW' => 20000, 'socTargetNight' => 100.0, 'feedTariff' => 0.1836, 'cycleCost' => 0.0];
+$pC = array_fill(0, 96, 0.30); $pC[3] = 0.16; $pC[4] = 0.12;
+$nwC0 = call($ems, 'nightWindowPlan', [$pC, 0, 0.0, $ctxC]);
+$nwC1 = call($ems, 'nightWindowPlan', [$pC, 0, 0.0, array_merge($ctxC, ['cycleCost' => 0.04])]);
+check('Zykluskosten 0: 16 ct (< 17,44 ct) kommen in Frage', isset($nwC0['charge'][3]) && isset($nwC0['charge'][4]), json_encode(array_keys($nwC0['charge'])));
+check('Zykluskosten 4 ct: Grenze 13,44 ct, 16 ct fliegt raus, 12 ct bleibt', !isset($nwC1['charge'][3]) && isset($nwC1['charge'][4]), json_encode(array_keys($nwC1['charge'])));
+prop('PLAN_PreDischarge_MinGain_ct', 3.0);
+$p192c = array_fill(0, 192, 0.30); for ($i = 96; $i < 102; $i++) { $p192c[$i] = 0.13; }
+prop('BAT_CycleCost_ct', 0.0);
+$e0 = call($ems, 'preDischargeEnd', [$p192c, 81, 0.1836]);
+prop('BAT_CycleCost_ct', 4.0);
+$e4 = call($ems, 'preDischargeEnd', [$p192c, 81, 0.1836]);
+prop('BAT_CycleCost_ct', 0.0);
+check('Vorentladen: mit 4 ct Verschleiss lohnt das Fenster bei 13 ct nicht mehr (ohne: ja)', $e0 === 96 && $e4 === null, json_encode([$e0, $e4]));
+
 echo "\n9) Regression 12.09.2026 -- Tagesplan darf die Batterie nicht per Sollwert-Modus ins Netz ziehen\n";
 $ems = freshEms();
 $ctx = ['enwgActive' => false, 'enwgStartH' => 0, 'enwgEndH' => 0, 'avgHouseW' => 300.0, 'houseLoadSlots' => [],

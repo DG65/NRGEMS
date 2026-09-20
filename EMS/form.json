@@ -20,6 +20,11 @@
                     "caption": "EMS aktiv"
                 },
                 {
+                    "type": "CheckBox",
+                    "name": "EMS_DryRun",
+                    "caption": "Trockenlauf: EMS rechnet und zeigt seine Entscheidungen (Plan, Betriebsart, Begründung), schreibt aber nichts an Wechselrichter und Wallboxen. Zum gefahrlosen Ausprobieren. Gesetzliche Einspeisegrenzen bleiben aktiv."
+                },
+                {
                     "type": "Label",
                     "caption": "── WR-Sicherheits-Stopp (Totmann) ─────────────────────"
                 },
@@ -684,6 +689,15 @@
                     "minimum": 1,
                     "maximum": 500,
                     "suffix": " kWh"
+                },
+                {
+                    "type": "NumberSpinner",
+                    "name": "BAT_CycleCost_ct",
+                    "caption": "Verschleißkosten der Batterie je entladener kWh (ct, 0 = nicht berücksichtigen). Richtwert: Anschaffungspreis geteilt durch (Zyklenzahl × nutzbare kWh)",
+                    "digits": 1,
+                    "minimum": 0,
+                    "maximum": 50,
+                    "suffix": " ct"
                 },
                 {
                     "type": "NumberSpinner",
