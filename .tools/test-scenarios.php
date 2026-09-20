@@ -595,6 +595,18 @@ check('Option aus: nur der Preis entscheidet (wie bisher)', call($ems, 'wallboxP
 prop('WB_PV_Ueberschuss', true);
 check('ohne dynamischen Tarif immer erlaubt', call($ems, 'wallboxPriceAllowed', [1, array_merge($sW, ['tib_active' => false, 'pv_total_w' => 0.0]), 0.99, 0.20]) === true);
 
+echo "\n8m) Wirkungsgrad einstellbar, Status 'nur beobachtend'\n";
+$ems = freshEms();
+check('Standard-Wirkungsgrad 95 %', abs(call($ems, 'convEff') - 0.95) < 1e-9);
+prop('BAT_Conv_Eff_Pct', 90.0);
+check('Wirkungsgrad 90 %: Netzlade-Grenze gegen Verguetung 18,36 ct sinkt auf 16,52 ct', abs(call($ems, 'gridChargeLimitEur', [['feedTariff' => 0.1836, 'refMode' => 0]]) - 0.16524) < 1e-6);
+prop('BAT_Conv_Eff_Pct', 60.0);
+check('unsinnige Eingabe wird auf 70 % begrenzt', abs(call($ems, 'convEff') - 0.70) < 1e-9);
+prop('BAT_Conv_Eff_Pct', 95.0);
+check('Statuszeile normal: OK', call($ems, 'statusText', ['Test']) === 'OK: Test');
+attr('NoControlReason', 'Wechselrichter ohne EMS-Stellglieder');
+check('Statuszeile ohne Stellglied: nur beobachtend, mit Grund', call($ems, 'statusText', ['Test']) === 'Nur beobachtend (Wechselrichter ohne EMS-Stellglieder): Test');
+
 echo "\n9) Regression 12.09.2026 -- Tagesplan darf die Batterie nicht per Sollwert-Modus ins Netz ziehen\n";
 $ems = freshEms();
 $ctx = ['enwgActive' => false, 'enwgStartH' => 0, 'enwgEndH' => 0, 'avgHouseW' => 300.0, 'houseLoadSlots' => [],

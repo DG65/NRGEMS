@@ -706,6 +706,15 @@
                 },
                 {
                     "type": "NumberSpinner",
+                    "name": "BAT_Conv_Eff_Pct",
+                    "caption": "Wirkungsgrad je AC/DC-Wandlung (%): 95 = 5 % Verlust. Gilt beim Laden aus dem Netz und beim Entladen ins Haus; Laden aus PV im DC-gekoppelten Hybrid-Wechselrichter zählt ohne Verlust",
+                    "digits": 1,
+                    "minimum": 70,
+                    "maximum": 100,
+                    "suffix": " %"
+                },
+                {
+                    "type": "NumberSpinner",
                     "name": "BAT_CycleCost_ct",
                     "caption": "Verschleißkosten der Batterie je entladener kWh (ct, 0 = nicht berücksichtigen). Richtwert: Anschaffungspreis geteilt durch (Zyklenzahl × nutzbare kWh)",
                     "digits": 1,

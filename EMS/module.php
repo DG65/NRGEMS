@@ -196,6 +196,7 @@ class EMS extends IPSModule
         $this->RegisterPropertyBoolean('BAT_Active',               false);
         $this->RegisterPropertyInteger('BAT_String_Count',         1);
         $this->RegisterPropertyFloat(  'BAT_Capacity_kWh',         10.0);
+        $this->RegisterPropertyFloat(  'BAT_Conv_Eff_Pct',         95.0); // Wirkungsgrad je AC/DC-Wandlung (%), 5 % Verlust = 95
         $this->RegisterPropertyFloat(  'BAT_CycleCost_ct',         0.0); // Verschleisskosten je entladene kWh (0 = nicht beruecksichtigen)
         $this->RegisterPropertyBoolean('EMS_DryRun',               false);
         $this->RegisterPropertyFloat(  'BAT_Charge_Max_kW',        0.0); // 0 = BMS-Angabe, sonst reale Obergrenze der Ladeleistung
@@ -458,6 +459,7 @@ class EMS extends IPSModule
         $this->RegisterAttributeBoolean('LastGoodweEnable',  true);
         $this->RegisterAttributeInteger('LastGoodwePowerW',  0);
         $this->RegisterAttributeInteger('NoControlLoggedAt', 0);
+        $this->RegisterAttributeString('NoControlReason', ''); // leer = EMS kann schreiben; sonst Grund, warum es nur beobachtet
         $this->RegisterAttributeInteger('ChargeNoEffectSince', 0);
         $this->RegisterAttributeInteger('ChargeNoEffectHoldUntil', 0);
         $this->RegisterAttributeString('DryRunLast', '');
@@ -2571,7 +2573,7 @@ class EMS extends IPSModule
         }
         // Haus nur dann aus dem Netz, wenn Netzstrom inkl. 5 % Batterieverlust billiger ist als die
         // Einspeiseverguetung (Dietmar 19.09.2026); sonst versorgt wie sonst der Akku das Haus.
-        $holdBelow = $ctx['feedTariff'] * 0.95;
+        $holdBelow = $ctx['feedTariff'] * $this->convEff();
         if ($price >= $holdBelow) { return null; }
         $why = sprintf('%.2fct < %.2fct (Einspeisevergütung %.2fct abzüglich 5 %% Batterieverlust)', $price * 100, $holdBelow * 100, $ctx['feedTariff'] * 100);
         $reason = ($nw['n'] > 0 || $soc < $ctx['socTargetNight'])
@@ -2607,16 +2609,22 @@ class EMS extends IPSModule
      * Obergrenze fuer Netzstrom, der in die Batterie geladen wird (EUR/kWh): Einspeiseverguetung x 0,95
      * (Wandlungsverlust) abzueglich Verschleisskosten je kWh. 0 Verguetung = keine Grenze (PHP_FLOAT_MAX).
      */
+    /** Wirkungsgrad je AC/DC-Wandlung (Einstellung BAT_Conv_Eff_Pct, 70-100 %), z. B. 0,95. */
+    private function convEff(): float
+    {
+        return max(0.70, min(1.0, (float)$this->ReadPropertyFloat('BAT_Conv_Eff_Pct') / 100.0));
+    }
+
     private function gridChargeLimitEur(array $ctx): float
     {
         if (($ctx['refMode'] ?? 0) === 1) {
             // Arbitrage im Haus: gekaufter Strom ersetzt spaeter den teuren Bezug; Hin- und Rueckwandlung (0,95 x 0,95),
             // Verschleiss und Mindestspanne muessen sich lohnen. Ohne Preisvergleichswert kein Netzladen.
             if (!isset($ctx['replacePrice']) || $ctx['replacePrice'] === null) { return -PHP_FLOAT_MAX; }
-            return $ctx['replacePrice'] * 0.9025 - ($ctx['cycleCost'] ?? 0.0) - ($ctx['spread'] ?? 0.0);
+            return $ctx['replacePrice'] * $this->convEff() * $this->convEff() - ($ctx['cycleCost'] ?? 0.0) - ($ctx['spread'] ?? 0.0);
         }
         if (($ctx['feedTariff'] ?? 0) <= 0) { return PHP_FLOAT_MAX; }
-        return $ctx['feedTariff'] * 0.95 - ($ctx['cycleCost'] ?? 0.0);
+        return $ctx['feedTariff'] * $this->convEff() - ($ctx['cycleCost'] ?? 0.0);
     }
 
     private function gridChargeXsetW(array $ctx, float $missingKwh = -1.0): int
@@ -2779,7 +2787,7 @@ class EMS extends IPSModule
         // beim urspruenglichen Export-Bug, nur in diesem zweiten Zweig
         // versteckt: die Batterie wurde fuer 18,36ct leergezogen, obwohl
         // abends 40+ct anstanden. Jetzt: dieselbe Reserve gilt hier genauso.
-        if ($ctx['feedTariff'] * 0.95 > ($price + 0.001) && $soc > ($ctx['socMin'] + $ctx['socReserve'] + $ctx['hystSoc'] + $priceBonusPct)) {
+        if ($ctx['feedTariff'] * $this->convEff() > ($price + 0.001) && $soc > ($ctx['socMin'] + $ctx['socReserve'] + $ctx['hystSoc'] + $priceBonusPct)) {
             // Bezug ist JETZT billiger als die Einspeiseverguetung -- die
             // gespeicherte Energie ist mehr wert, wenn sie exportiert
             // wird, als wenn sie den (billigeren) Netzbezug ersetzt.
@@ -4139,7 +4147,7 @@ class EMS extends IPSModule
         $f = max(0.02, (900 - (time() % 900)) / 900.0);
         $batW = min($this->preDischargeBatteryW($eKwh, $wNow, $sum - $wNow, $f), $lim['dischargeKw'] * 1000.0);
         $wbW    = ((float)$s['wb1_pow_kw'] + (float)$s['wb2_pow_kw']) * 1000.0;
-        $exportW = $batW * 0.95 + (float)$s['pv_total_w'] - (float)$s['house_pow_w'] - $wbW;
+        $exportW = $batW * $this->convEff() + (float)$s['pv_total_w'] - (float)$s['house_pow_w'] - $wbW;
         $exportW = min($exportW, (float)$this->ReadPropertyInteger('EMS_Max_Power_W'));
         if ($exportW < 500) { return null; }
 
@@ -4175,7 +4183,7 @@ class EMS extends IPSModule
     private function preDischargeEnd(array $price192, int $nowSlot, float $feed): ?int
     {
         $cycle  = max(0.0, (float)$this->ReadPropertyFloat('BAT_CycleCost_ct')) / 100.0;
-        $maxBuy = ($feed - $cycle - (float)$this->ReadPropertyFloat('PLAN_PreDischarge_MinGain_ct') / 100.0) * 0.9025;
+        $maxBuy = ($feed - $cycle - (float)$this->ReadPropertyFloat('PLAN_PreDischarge_MinGain_ct') / 100.0) * $this->convEff() * $this->convEff();
         // Ist die laufende Viertelstunde selbst schon guenstig, ist das Fenster erreicht: nicht weiter entladen.
         if (isset($price192[$nowSlot]) && $price192[$nowSlot] !== null && $price192[$nowSlot] < $maxBuy) { return null; }
         for ($j = $nowSlot + 1; $j <= $nowSlot + 40 && $j < 192; $j++) {
@@ -4196,7 +4204,7 @@ class EMS extends IPSModule
         $batKwh = ($pd['sum'] > 0) ? min($eKwh * ($w / $pd['sum']), $ctx['dischargeKw'] * 0.25) : 0.0;
         $pd['sum'] = max(0.0, $pd['sum'] - $w);
         $batW = $batKwh / 0.25 * 1000.0;
-        $exportW = min($batW * 0.95 + $pvW - $loadW, (float)$ctx['maxW']);
+        $exportW = min($batW * $this->convEff() + $pvW - $loadW, (float)$ctx['maxW']);
         $soc2 = max($pd['floor'], $soc - $batKwh / max(0.001, $ctx['capKwh']) * 100.0);
         if ($exportW < 500 || $batKwh <= 0) {
             return array('plan' => array('op' => EMS_OP_AUTO, 'gw' => GW_MODE_AUTO, 'power' => 0,
@@ -4291,7 +4299,7 @@ class EMS extends IPSModule
         if ($op === EMS_OP_PV_SELFUSE && $gwMode === GW_MODE_CHARGE_PV) {
             $feed    = $this->planFeedTariffEur();
             $surplus = (float)$s['pv_total_w'] - (float)$s['house_pow_w'];
-            $cheap   = ($price > 0 && $feed > 0 && $price < $feed * 0.95 - max(0.0, (float)$this->ReadPropertyFloat('BAT_CycleCost_ct')) / 100.0);
+            $cheap   = ($price > 0 && $feed > 0 && $price < $feed * $this->convEff() - max(0.0, (float)$this->ReadPropertyFloat('BAT_CycleCost_ct')) / 100.0);
             if ($surplus < 200.0 && !$cheap) {
                 return array(
                     'op_mode' => EMS_OP_AUTO, 'gw_mode' => GW_MODE_AUTO, 'gw_power_w' => 0, 'gw_enable' => false,
@@ -4686,7 +4694,7 @@ class EMS extends IPSModule
             // Arbitrage im Haus (unabhaengig von einer Einspeiseverguetung): guenstigster Preis gegen Ersatz-Bezugspreis
             $rp = $this->replacementPriceEur(array_values($prices), 0);
             if ($rp === null) { return false; }
-            return $minPrice < ($rp * 0.9025 - max(0.0, (float)$this->ReadPropertyFloat('BAT_CycleCost_ct')) / 100.0 - $spreadEur);
+            return $minPrice < ($rp * $this->convEff() * $this->convEff() - max(0.0, (float)$this->ReadPropertyFloat('BAT_CycleCost_ct')) / 100.0 - $spreadEur);
         }
         if ($tarif['quelle'] === 'platzhalter') {
             $this->emsLog(EMS_LOG_VERBOSE, sprintf(
@@ -6122,7 +6130,7 @@ class EMS extends IPSModule
      */
     private function batteryCostStep(array $st, float $batW, float $gridW, float $pvW, float $soc, int $now, ?float $priceCt, float $feedCt, float $capKwh): array
     {
-        $eta  = 0.95;
+        $eta  = $this->convEff();
         $meas = ($capKwh > 0.0) ? max(0.0, min(100.0, $soc)) / 100.0 * $capKwh : null;
         if (empty($st['ts'])) {
             $stock = $meas ?? 0.0;
@@ -6608,13 +6616,20 @@ class EMS extends IPSModule
 
         $this->SetValue('EMS_Mode',       $d['op_mode']);
         $this->SetValue('EMS_LastAction', $d['reason']);
-        $this->SetValue('EMS_Status',     'OK: ' . $d['reason']);
+        $this->SetValue('EMS_Status',     $this->statusText((string)$d['reason']));
         $this->WriteAttributeString('LastDecisionSource', $d['source'] ?? 'ems');
     }
 
     /**
      * Trockenlauf: Entscheidung anzeigen und protokollieren, aber nichts schreiben (siehe applyDecision()).
      */
+    /** Statuszeile: ehrlich "nur beobachtend", wenn das EMS mangels Stellglied nichts schreiben kann. */
+    private function statusText(string $reason): string
+    {
+        $why = $this->ReadAttributeString('NoControlReason');
+        return ($why !== '') ? ('Nur beobachtend (' . $why . '): ' . $reason) : ('OK: ' . $reason);
+    }
+
     private function applyDryRun($d): void
     {
         $lastMode   = $this->ReadAttributeInteger('LastGoodweMode');
@@ -6724,6 +6739,7 @@ class EMS extends IPSModule
                 // Wechselrichter ohne EMS-Stellglieder (andere Hersteller): nichts schreiben, einmal pro Stunde melden
                 $hasKids = count(IPS_GetChildrenIDs($iid)) > 0;
                 if ($hasKids && ($modeVarId <= 0 || $this->findChildVariableIdByIdent($iid, 'ctl_ems_power') <= 0 || $this->findChildVariableIdByIdent($iid, 'ctl_ems_enable') <= 0)) {
+                    $this->WriteAttributeString('NoControlReason', 'Wechselrichter ohne EMS-Stellglieder');
                     if (time() - $this->ReadAttributeInteger('NoControlLoggedAt') > 3600) {
                         $this->WriteAttributeInteger('NoControlLoggedAt', time());
                         $this->emsLog(EMS_LOG_BASIC, sprintf('setGoodweMode: WR #%d hat keine EMS-Stellglieder (ctl_ems_mode/-power/-enable) -- EMS beobachtet nur', $iid));
@@ -6742,8 +6758,10 @@ class EMS extends IPSModule
                     IPS_RequestAction($iid, 'ctl_ems_power', (int)$powerW);
                 }
                 IPS_RequestAction($iid, 'ctl_ems_enable', (bool)$enable);
+                if ($this->ReadAttributeString('NoControlReason') !== '') { $this->WriteAttributeString('NoControlReason', ''); }
                 return;
             }
+            $this->WriteAttributeString('NoControlReason', 'Steuerhoheit liegt nicht beim EMS');
             if (time() - $this->ReadAttributeInteger('NoControlLoggedAt') > 3600) {
                 $this->WriteAttributeInteger('NoControlLoggedAt', time());
                 $this->emsLog(EMS_LOG_BASIC, sprintf(
@@ -6757,6 +6775,8 @@ class EMS extends IPSModule
         // Fallback: alte manuelle Variablenverknuepfung (kein Partnermodul gefunden)
         $varMode  = $this->ReadPropertyInteger('VAR_WR_EMS_Mode');
         $varPower = $this->ReadPropertyInteger('VAR_WR_EMS_Power');
+        $want = ($varMode > 0) ? '' : 'kein Wechselrichter mit Stellgliedern gefunden oder verknuepft';
+        if ($this->ReadAttributeString('NoControlReason') !== $want) { $this->WriteAttributeString('NoControlReason', $want); }
         if ($varMode  > 0) { $this->writeVar($varMode, $mode); }
         if ($varPower > 0 && $powerW > 0) { $this->writeVar($varPower, $powerW); }
     }

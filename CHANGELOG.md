@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.54.0 (2026-09-20)
+- **Wirkungsgrad einstellbar** (`BAT_Conv_Eff_Pct`, Standard 95 %): Der Wandlungsverlust stand an zehn Stellen fest als 5 % im Code
+  (Preisgrenzen fürs Netzladen, Halten, Vorentladen, Ersatzpreis, Batterie-Einstandspreis). Jetzt eine Einstellung (70–100 %).
+- **Ehrliche Statuszeile:** Kann das EMS mangels Stellglied nichts schreiben (fremder Wechselrichter ohne `ctl_ems_*`, Steuerhoheit
+  nicht beim EMS, kein Wechselrichter gefunden), zeigt `EMS_Status` „Nur beobachtend (Grund): …“ statt „OK: …“.
+
 ## 0.53.0 (2026-09-20)
 - **Entfernt: „Grünste Ladezeit“** (Einstellungen `GREEN_Charge_Enabled`, `GREEN_GSI_Threshold`, Formularblock, reaktiver
   Zweig). Er entschied nur nach dem aktuellen StromGedacht-Grünstrom-Index, ohne Preis- und Speicherbezug, und drosselte
