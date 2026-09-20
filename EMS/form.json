@@ -191,7 +191,7 @@
                 {
                     "type": "NumberSpinner",
                     "name": "EMS_Max_Power_W",
-                    "caption": "Max. EMS-Leistungseinstellung (W) — WR-Limit, via IPS-Profil begrenzt",
+                    "caption": "Max. Leistung am Hausanschluss und Wechselrichter-Limit (W). Standard 11000 W ist bewusst vorsichtig: bitte an die eigene Anlage anpassen (Sicherungswert des Hausanschlusses)",
                     "minimum": 1000,
                     "maximum": 34642,
                     "suffix": " W"
@@ -322,6 +322,11 @@
                         {"caption": "Feste Einspeisevergütung", "value": 0},
                         {"caption": "Direktvermarktung", "value": 1}
                     ]
+                },
+                {
+                    "type": "CheckBox",
+                    "name": "ANL_Verguetung_Keine",
+                    "caption": "Ich bekomme keine Einspeisevergütung (0 ct, z. B. Volleigenverbrauch). Ohne Angabe und ohne erkennbaren Wert rechnet EMS nicht mit einem Vergütungswert, sondern mit dem Ersatz-Bezugspreis."
                 },
                 {
                     "type": "NumberSpinner",
@@ -689,6 +694,15 @@
                     "minimum": 1,
                     "maximum": 500,
                     "suffix": " kWh"
+                },
+                {
+                    "type": "Select",
+                    "name": "NETZLADUNG_Referenz",
+                    "caption": "Ab welchem Preis lohnt Netzladen der Batterie?",
+                    "options": [
+                        { "caption": "Nur unter der Einspeisevergütung (nach 5 % Verlust); ohne bekannte Vergütung automatisch Ersatz-Bezugspreis", "value": 0 },
+                        { "caption": "Wenn der Strom später teuren Bezug ersetzt (Ersatz-Bezugspreis: Mittel des teuersten Viertels der nächsten 24 Stunden, nach Verlusten, Verschleiß und Mindestspanne)", "value": 1 }
+                    ]
                 },
                 {
                     "type": "NumberSpinner",

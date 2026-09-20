@@ -197,6 +197,7 @@ function freshEms() {
     foreach (array_keys($GLOBALS['OBJ']) as $id) { if (($GLOBALS['OBJ'][$id]['ParentID'] ?? -1) === EMS_IID) { unset($GLOBALS['OBJ'][$id], $GLOBALS['VAR'][$id], $GLOBALS['VAL'][$id]); } }
     $ems = new EMS(EMS_IID);
     $ems->Create();
+    prop('ANL_Verguetung_ct', 18.36); // konfigurierte Anlage; Tests zu "unbekannt" setzen den Wert selbst auf 0
     return $ems;
 }
 /** Manuelle Preisquelle: 96 Slots in EUR/kWh (einfaches Zahlen-Array, siehe parsePT15M()). */
@@ -245,6 +246,7 @@ check('unverknuepft, alle Preise 0,30 EUR > Platzhalter 0,1836: KEINE Arbitrage'
 check('unverknuepft, guenstigster Preis 0,15 EUR < 0,1836: Arbitrage', call($ems, 'hasArbitrageInPrices', [array_fill(0, 96, 0.15)]) === true);
 check('Platzhalter wird sichtbar geloggt, nicht still verwendet', (bool)array_filter($GLOBALS['LOG'] ?? [], fn($l) => strpos($l, 'Platzhalter') !== false) || true, 'nur VERBOSE-Log, im Standard-Loglevel unterdrueckt');
 check('keine Preisdaten: keine Arbitrage (sicherer Default)', call($ems, 'hasArbitrageInPrices', [array_fill(0, 96, null)]) === false);
+prop('ANL_Verguetung_ct', 0.0);
 feedTariffVar(0.10);
 check('verknuepft 0,10 EUR, Preise 0,15: KEINE Arbitrage (eigener Wert zaehlt, nicht der Platzhalter)', call($ems, 'hasArbitrageInPrices', [array_fill(0, 96, 0.15)]) === false);
 check('verknuepft 0,10 EUR, Preise 0,05: Arbitrage (Spanne 5ct > Mindestspanne 3ct)', call($ems, 'hasArbitrageInPrices', [array_fill(0, 96, 0.05)]) === true);
@@ -466,6 +468,26 @@ check('laedt die Batterie mit voller Leistung: keine Aktion', $r4['gw_mode'] ===
 $ems = freshEms(); attr('ChargeNoEffectSince', time() - 500);
 $r5 = call($ems, 'applyChargeNoEffectGuard', [array_merge($dCh, ['source' => 'netzbetreiber']), $sNo]);
 check('Netzbetreiber-Vorgabe wird nicht ueberstimmt', $r5['gw_mode'] === GW_MODE_AC_IMPORT);
+
+echo "\n8e) Andere Nutzer, andere Konstellationen: Netzladen ohne feste Einspeiseverguetung\n";
+$ems = freshEms();
+prop('ANL_Verguetung_ct', 0.0); // Verguetung unbekannt
+$tagU = array_fill(0, 96, 0.30); for ($i = 0; $i < 24; $i++) { $tagU[$i] = 0.12; } for ($i = 72; $i < 88; $i++) { $tagU[$i] = 0.36; }
+check('Verguetung unbekannt: Arbitrage aus dem Preisverlauf (12 ct gegen Abendspitze 36 ct), nicht aus dem Platzhalter', call($ems, 'hasArbitrageInPrices', [$tagU]) === true);
+check('Verguetung unbekannt, flacher Tag (30 ct): keine Arbitrage', call($ems, 'hasArbitrageInPrices', [array_fill(0, 96, 0.30)]) === false);
+$rp = call($ems, 'replacementPriceEur', [$tagU, 0]);
+check('Ersatz-Bezugspreis = Mittel des teuersten Viertels (16 Slots 36 ct + 8 Slots 30 ct = 34 ct)', abs($rp - 0.34) < 0.001, (string)$rp);
+$ctxU = ['capKwh' => 40.0, 'chargeKw' => 10.0, 'maxW' => 20000, 'socTargetNight' => 100.0, 'feedTariff' => 0.0, 'refMode' => 1, 'replacePrice' => 0.36, 'spread' => 0.03, 'cycleCost' => 0.0];
+check('Referenz 1: Grenze = 36 ct x 0,9025 - 3 ct Mindestspanne = 29,49 ct', abs(call($ems, 'gridChargeLimitEur', [$ctxU]) - 0.29490) < 0.0005);
+check('Referenz 1 ohne Preisvergleichswert: kein Netzladen (Grenze unerreichbar)', call($ems, 'gridChargeLimitEur', [array_merge($ctxU, ['replacePrice' => null])]) < -1e9);
+prop('PLAN_NightGrid_Active', true); prop('PLAN_NightGrid_EndHour', 6); prop('PLAN_NightGrid_ExtendHours', 0);
+$nwU = call($ems, 'nightWindowPlan', [$tagU, 0, 0.0, $ctxU]);
+check('Nutzer ohne Verguetung laedt trotzdem in den 12-ct-Slots nach (kein Sperren wegen Verguetung 0)', $nwU !== null && count($nwU['charge']) > 0 && max(array_keys($nwU['charge'])) < 24, json_encode($nwU));
+check('Nutzer ohne Verguetung: Halten (Haus aus dem Netz) wird nicht aus der Verguetung abgeleitet', call($ems, 'nightWindowSlot', [30, 0.12, 60.0, $nwU, $ctxU]) === null);
+prop('ANL_Verguetung_ct', 8.0); // niedrige Verguetung (z. B. Ue20/Direktvermarktung)
+check('Verguetung 8 ct, Referenz Verguetung: Netzladen sehr streng (Grenze 7,6 ct)', abs(call($ems, 'gridChargeLimitEur', [['feedTariff' => 0.08, 'refMode' => 0]]) - 0.076) < 0.0005);
+prop('NETZLADUNG_Referenz', 1);
+check('Verguetung 8 ct, aber Referenz Ersatz-Bezugspreis gewaehlt: Modus 1', call($ems, 'chargeReferenceMode') === 1);
 
 echo "\n9) Regression 12.09.2026 -- Tagesplan darf die Batterie nicht per Sollwert-Modus ins Netz ziehen\n";
 $ems = freshEms();
@@ -804,11 +826,16 @@ check('Bestand, freiwillig ins neue Modell: Negativpreis-Regel gilt', in_array('
 check('IBN 2003 (Foerderende 2023 vorbei): Ue20-Hinweis', in_array('ue20', $codes('2003-06-01', 5.0)));
 
 // Verguetungs-Reihenfolge: eingetragen > Variable > Tabelle > Platzhalter
-check('nichts angegeben: Platzhalter 0,1836, Quelle sichtbar', call($ems, 'getFeedTariffEur') === ['eur' => 0.1836, 'quelle' => 'platzhalter']);
+prop('ANL_Verguetung_ct', 0.0); prop('VAR_TIB_Feed_Tariff', 0); prop('ANL_IBN_Datum', ''); prop('ANL_kWp_Manuell', 0.0);
+check('nichts angegeben: Platzhalter 0,1836, Quelle sichtbar, aber NICHT bekannt', call($ems, 'getFeedTariffEur') === ['eur' => 0.1836, 'quelle' => 'platzhalter', 'bekannt' => false], json_encode(call($ems, 'getFeedTariffEur')));
+check('Platzhalter steuert nie: Planwert 0, Referenz = Ersatz-Bezugspreis', call($ems, 'planFeedTariffEur') === 0.0 && call($ems, 'chargeReferenceMode') === 1);
 feedTariffVar(0.20);
-check('verknuepfte Variable: 0,20 EUR, Quelle variable', call($ems, 'getFeedTariffEur') === ['eur' => 0.20, 'quelle' => 'variable']);
+check('verknuepfte Variable: 0,20 EUR, Quelle variable', call($ems, 'getFeedTariffEur') === ['eur' => 0.20, 'quelle' => 'variable', 'bekannt' => true]);
 prop('ANL_Verguetung_ct', 12.5);
-check('eingetragener Wert hat Vorrang: 12,5 ct -> 0,125 EUR, Quelle eingetragen', call($ems, 'getFeedTariffEur') === ['eur' => 0.125, 'quelle' => 'eingetragen']);
+check('eingetragener Wert hat Vorrang: 12,5 ct -> 0,125 EUR, Quelle eingetragen', call($ems, 'getFeedTariffEur') === ['eur' => 0.125, 'quelle' => 'eingetragen', 'bekannt' => true]);
+prop('ANL_Verguetung_Keine', true);
+check('ausdruecklich keine Verguetung: 0 ct, bekannt, Referenz Ersatz-Bezugspreis', call($ems, 'getFeedTariffEur') === ['eur' => 0.0, 'quelle' => 'keine', 'bekannt' => true] && call($ems, 'chargeReferenceMode') === 1);
+prop('ANL_Verguetung_Keine', false);
 prop('ANL_IBN_Datum', '2012-10-24'); prop('ANL_kWp_Manuell', 9.18); prop('ANL_Einspeisemanagement', 2);
 $pi = call($ems, 'GetPlantInfo');
 check('GetPlantInfo: Vertrag 1.1, EEG-Fassung, Foerderende, kWp eingetragen, Verguetung 12,5 ct',
@@ -839,7 +866,7 @@ check('echt: IBN 09/2026, 15 kWp Mischsatz -> 7,35 ct', $lr('2026-09-13', 15.0) 
 check('echt: vor EEG 2000 und ab 2027 kein Satz (nicht raten)', $lr('2000-01-01', 5.0) === null && $lr('2027-03-01', 5.0) === null);
 check('echt: Zeitraum 10/2012 als geprueft, 2005 als ungeprueft markiert',
     (call($ems, 'findEegPeriod', [$echt, '2012-10-24'])['geprueft'] ?? null) === true && (call($ems, 'findEegPeriod', [$echt, '2005-06-01'])['geprueft'] ?? null) === false);
-$e2 = freshEms(); $GLOBALS['PROP'][EMS_IID]['ANL_IBN_Datum'] = '2012-10-24'; $GLOBALS['PROP'][EMS_IID]['ANL_kWp_Manuell'] = 9.18;
+$e2 = freshEms(); $GLOBALS['PROP'][EMS_IID]['ANL_IBN_Datum'] = '2012-10-24'; $GLOBALS['PROP'][EMS_IID]['ANL_kWp_Manuell'] = 9.18; $GLOBALS['PROP'][EMS_IID]['ANL_Verguetung_ct'] = 0.0; // Wert aus Datum und Groesse berechnen lassen
 $pi2 = call($e2, 'GetPlantInfo');
 check('GetPlantInfo ohne Eintrag/Variable: 18,36 ct berechnet und geprueft', $pi2['verguetungCt'] === 18.36 && $pi2['verguetungQuelle'] === 'berechnet' && $pi2['verguetungGeprueft'] === true, json_encode($pi2, JSON_UNESCAPED_UNICODE));
 $e4 = freshEms();
@@ -1179,6 +1206,7 @@ $r = call($ems, 'SimulateDayPlan', ['24.10.2012']);
 check('IBN 2012: kein Fatal Error, 96 Slots, keine § 51 Pflicht, keine dauerhafte Grenze', $r['ok'] === true && count($r['plan']) === 96 && $r['negativpreisPflicht'] === false && $r['einspeisegrenzeW'] === null, json_encode($r['fehler'] ?? $r['einspeisegrenzeGrund'] ?? null));
 check('IBN 2012: Verguetung berechnet ~18,36 ct (bekannter Gegenwert)', abs($r['verguetungCt'] - 18.36) < 0.5, (string)$r['verguetungCt']);
 check('IBN 2012: Slot-Format wie GetDayPlan (time gesetzt, Preis in ct/kWh)', isset($r['priceUnit']) && $r['priceUnit'] === 'ct/kWh' && isset($r['plan'][50]['time']) && $r['plan'][50]['time'] > 0 && abs($r['plan'][50]['price'] - 30.0) < 0.01, json_encode($r['plan'][50] ?? null));
+prop('ANL_Verguetung_ct', 0.0);
 $r2 = call($ems, 'SimulateDayPlan', ['01.06.2025']);
 check('IBN 06/2025: § 51 Pflicht aktiv, dauerhafte 60-%-Grenze = 5508 W (ohne Smart Meter/Steuerbox)', $r2['ok'] === true && $r2['negativpreisPflicht'] === true && $r2['einspeisegrenzeW'] === 5508, json_encode($r2));
 check('IBN 06/2025: andere Verguetung als IBN 2012 (unterschiedliche EEG-Fassung)', abs($r2['verguetungCt'] - $r['verguetungCt']) > 0.5, $r['verguetungCt'] . ' vs ' . $r2['verguetungCt']);

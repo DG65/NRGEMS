@@ -127,7 +127,7 @@ class EMS extends IPSModule
         $this->RegisterPropertyBoolean('EMS_Risk_Acknowledged', false);
         $this->RegisterPropertyBoolean('EMS_Active',           false);
         $this->RegisterPropertyInteger('EMS_Interval',         30);
-        $this->RegisterPropertyInteger('EMS_Max_Power_W',      34500);
+        $this->RegisterPropertyInteger('EMS_Max_Power_W',      11000); // Hausanschluss-Grenze in W: bewusst vorsichtiger Standard, bitte an die eigene Anlage anpassen
         $this->RegisterPropertyInteger('EMS_Fallback_Mode',    GW_MODE_AUTO);
         $this->RegisterPropertyInteger('EMS_Fallback_Timeout', 60);
         $this->RegisterPropertyInteger('EMS_Log_Level',        EMS_LOG_BASIC);
@@ -273,6 +273,8 @@ class EMS extends IPSModule
         $this->RegisterPropertyInteger('ANL_Einspeiseart',      0);    // 0 Teileinspeisung, 1 Volleinspeisung
         $this->RegisterPropertyFloat('ANL_kWp_Manuell',         0.0);  // 0 = aus der PV-Prognose
         $this->RegisterPropertyFloat('ANL_Verguetung_ct',       0.0);  // 0 = automatisch (Variable/Tabelle)
+        $this->RegisterPropertyBoolean('ANL_Verguetung_Keine',  false); // ausdruecklich KEINE Verguetung (0 ct), z. B. Volleigenverbrauch
+        $this->RegisterPropertyInteger('NETZLADUNG_Referenz',   0);    // 0 = Einspeiseverguetung, 1 = Ersatz-Bezugspreis (Arbitrage im Haus)
         $this->RegisterPropertyInteger('ANL_Einspeisemanagement', 0);  // 0 unbekannt, 1 70-%-Kappung, 2 Rundsteuerempfaenger, 3 Steuerbox, 4 keines
         $this->RegisterPropertyBoolean('ANL_iMSys',             false);
         $this->RegisterPropertyBoolean('ANL_Steuerbox',         false);
@@ -2584,6 +2586,12 @@ class EMS extends IPSModule
      */
     private function gridChargeLimitEur(array $ctx): float
     {
+        if (($ctx['refMode'] ?? 0) === 1) {
+            // Arbitrage im Haus: gekaufter Strom ersetzt spaeter den teuren Bezug; Hin- und Rueckwandlung (0,95 x 0,95),
+            // Verschleiss und Mindestspanne muessen sich lohnen. Ohne Preisvergleichswert kein Netzladen.
+            if (!isset($ctx['replacePrice']) || $ctx['replacePrice'] === null) { return -PHP_FLOAT_MAX; }
+            return $ctx['replacePrice'] * 0.9025 - ($ctx['cycleCost'] ?? 0.0) - ($ctx['spread'] ?? 0.0);
+        }
         if (($ctx['feedTariff'] ?? 0) <= 0) { return PHP_FLOAT_MAX; }
         return $ctx['feedTariff'] * 0.95 - ($ctx['cycleCost'] ?? 0.0);
     }
@@ -3628,7 +3636,7 @@ class EMS extends IPSModule
         $thCharge       = (float)$this->ReadPropertyFloat('TIB_Threshold_Charge');
         $thDischarge    = (float)$this->ReadPropertyFloat('TIB_Threshold_Discharge');
         $fcMinPower     = (float)$this->ReadPropertyInteger('FORECAST_Min_Power_W');
-        $feedTariff     = (float)$this->getFeedTariffEur()['eur'];
+        $feedTariff     = $this->planFeedTariffEur();
         $enwgActive     = $this->ReadPropertyBoolean('ENWG14A_Active');
         $enwgStartH     = $this->ReadPropertyInteger('ENWG14A_Start_Hour');
         $enwgEndH       = $this->ReadPropertyInteger('ENWG14A_End_Hour');
@@ -3669,6 +3677,9 @@ class EMS extends IPSModule
             'capKwh' => $capKwh, 'chargeKw' => $chargeKw, 'dischargeKw' => $dischargeKw, 'maxW' => $maxW,
             'feedTariff' => $feedTariff, 'thCharge' => $thCharge, 'thDischarge' => $thDischarge,
             'cycleCost' => max(0.0, (float)$this->ReadPropertyFloat('BAT_CycleCost_ct')) / 100.0,
+            'refMode' => $this->chargeReferenceMode(),
+            'spread' => max(0.0, (float)$this->ReadPropertyFloat('OPT_Arbitrage_Min_Spread_ct')) / 100.0,
+            'replacePrice' => $this->replacementPriceEur(array_merge(array_values($prices), array_values($tomorrowPrices)), $nowSlot),
         );
 
         $expensiveReserve = $this->computeExpensiveReserveKwh($prices, $thDischarge, $avgHouseW);
@@ -4034,17 +4045,18 @@ class EMS extends IPSModule
      */
     private function getFeedTariffEurForIbn(string $ibn): array
     {
+        if ($this->ReadPropertyBoolean('ANL_Verguetung_Keine')) { return array('eur' => 0.0, 'quelle' => 'keine', 'bekannt' => true); }
         $manual = (float)$this->ReadPropertyFloat('ANL_Verguetung_ct');
-        if ($manual > 0.0) { return array('eur' => $manual / 100.0, 'quelle' => 'eingetragen'); }
+        if ($manual > 0.0) { return array('eur' => $manual / 100.0, 'quelle' => 'eingetragen', 'bekannt' => true); }
         if ($this->ReadPropertyInteger('VAR_TIB_Feed_Tariff') > 0) {
-            return array('eur' => (float)$this->readVar('VAR_TIB_Feed_Tariff', 0.1836), 'quelle' => 'variable');
+            return array('eur' => (float)$this->readVar('VAR_TIB_Feed_Tariff', 0.1836), 'quelle' => 'variable', 'bekannt' => true);
         }
         $kwp = $this->getPlantKwp();
         if ($ibn !== '' && $kwp > 0.0) {
             $ct = $this->lookupEegTariffCt($this->loadEegTable(), $ibn, $kwp, $this->ReadPropertyInteger('ANL_Einspeiseart') === 1);
-            if ($ct !== null) { return array('eur' => $ct / 100.0, 'quelle' => 'berechnet'); }
+            if ($ct !== null) { return array('eur' => $ct / 100.0, 'quelle' => 'berechnet', 'bekannt' => true); }
         }
-        return array('eur' => 0.1836, 'quelle' => 'platzhalter');
+        return array('eur' => 0.1836, 'quelle' => 'platzhalter', 'bekannt' => false);
     }
 
     /**
@@ -4069,7 +4081,7 @@ class EMS extends IPSModule
     {
         if (!$this->ReadPropertyBoolean('PLAN_PreDischarge_Active') || !$this->ReadPropertyBoolean('PLAN_NightGrid_Active')) { return null; }
         if (empty($s['bat_active'])) { return null; }
-        $feed = (float)$this->getFeedTariffEur()['eur'];
+        $feed = $this->planFeedTariffEur();
         if ($feed <= 0) { return null; }
         $floor = (float)$this->ReadPropertyInteger('BAT_SOC_Min');
         $soc   = (float)$s['bat_soc'];
@@ -4250,7 +4262,7 @@ class EMS extends IPSModule
         // real, wuerde das Haus voll aus dem Netz laufen (Live 19.09. 07:30-09:00). Nur zulaessig bei
         // echtem Ueberschuss oder wenn Netzstrom guenstiger als die Verguetung ist (0 < Preis < Verguetung).
         if ($op === EMS_OP_PV_SELFUSE && $gwMode === GW_MODE_CHARGE_PV) {
-            $feed    = (float)$this->getFeedTariffEur()['eur'];
+            $feed    = $this->planFeedTariffEur();
             $surplus = (float)$s['pv_total_w'] - (float)$s['house_pow_w'];
             $cheap   = ($price > 0 && $feed > 0 && $price < $feed * 0.95 - max(0.0, (float)$this->ReadPropertyFloat('BAT_CycleCost_ct')) / 100.0);
             if ($surplus < 200.0 && !$cheap) {
@@ -4583,7 +4595,14 @@ class EMS extends IPSModule
         // eigene Variable ersetzen, statt dass er unsichtbar falsch fuer ihn
         // rechnet.
         $tarif = $this->getFeedTariffEur(); // eingetragen > Variable > Tabelle > Platzhalter
-        $feedTariff = (float)$tarif['eur'];
+        $feedTariff = $this->planFeedTariffEur();
+        $spreadEur = max(0.0, (float)$this->ReadPropertyFloat('OPT_Arbitrage_Min_Spread_ct')) / 100.0;
+        if ($this->chargeReferenceMode() === 1) {
+            // Arbitrage im Haus (unabhaengig von einer Einspeiseverguetung): guenstigster Preis gegen Ersatz-Bezugspreis
+            $rp = $this->replacementPriceEur(array_values($prices), 0);
+            if ($rp === null) { return false; }
+            return $minPrice < ($rp * 0.9025 - max(0.0, (float)$this->ReadPropertyFloat('BAT_CycleCost_ct')) / 100.0 - $spreadEur);
+        }
         if ($tarif['quelle'] === 'platzhalter') {
             $this->emsLog(EMS_LOG_VERBOSE, sprintf(
                 'hasArbitrageInPrices(): keine Einspeiseverguetung angegeben (Anlagendaten/VAR_TIB_Feed_Tariff) -- rechne mit Platzhalter %.4f EUR/kWh',
@@ -5072,8 +5091,9 @@ class EMS extends IPSModule
             $greenThreshold = (float)$this->ReadPropertyInteger('GREEN_GSI_Threshold');
             // Wirtschaftlichkeit (Dietmar 19.09.2026): Netzstrom nur, wenn er inkl. 5 % Verlust unter der
             // Einspeiseverguetung liegt; der gruene Strom allein rechtfertigt keinen teureren Einkauf.
-            $greenFeed  = (float)$this->getFeedTariffEur()['eur'];
-            $greenPrice = ($greenFeed <= 0 || $price < $greenFeed * 0.95 - max(0.0, (float)$this->ReadPropertyFloat('BAT_CycleCost_ct')) / 100.0);
+            $greenFeed  = $this->planFeedTariffEur();
+            // Grünstrom allein rechtfertigt keinen Einkauf: nur mit bekannter Vergütung und Preis unter der Grenze
+            $greenPrice = ($this->chargeReferenceMode() === 0 && $greenFeed > 0 && $price < $greenFeed * 0.95 - max(0.0, (float)$this->ReadPropertyFloat('BAT_CycleCost_ct')) / 100.0);
             $greenW     = $greenPrice ? $this->runtimeGridChargeW($s, (float)$maxW) : 0;
             if ($greenScore !== null && $greenScore >= $greenThreshold && $greenW >= 500) {
                 $d['op_mode']    = EMS_OP_NET_CHARGE;
@@ -5449,12 +5469,49 @@ class EMS extends IPSModule
      * (VAR_TIB_Feed_Tariff, EUR/kWh wie bisher) > aus Inbetriebnahmedatum +
      * kWp berechnet (EEG-Tabelle) > sichtbarer Platzhalter 0,1836.
      */
+    /**
+     * Fuer Planung und Preisregeln: die Einspeiseverguetung NUR, wenn sie wirklich bekannt ist. Der Platzhalter
+     * (0,1836 EUR/kWh) ist ein Wert der Entwicklungsanlage und darf fremde Anlagen nie still steuern.
+     * Unbekannt und "keine Verguetung" zaehlen beide als 0: dann gilt die Ersatz-Bezugspreis-Referenz.
+     */
+    private function planFeedTariffEur(): float
+    {
+        $t = $this->getFeedTariffEur();
+        return !empty($t['bekannt']) ? (float)$t['eur'] : 0.0;
+    }
+
+    /**
+     * Preisreferenz fuers Netzladen: 0 = Einspeiseverguetung x 0,95 (nur wenn bekannt und > 0), 1 = erwarteter
+     * Ersatz-Bezugspreis (Arbitrage im Haus, unabhaengig von einer Verguetung). Ohne bekannte Verguetung immer 1.
+     */
+    private function chargeReferenceMode(): int
+    {
+        return ($this->ReadPropertyInteger('NETZLADUNG_Referenz') === 1 || $this->planFeedTariffEur() <= 0.0) ? 1 : 0;
+    }
+
+    /**
+     * Erwarteter Bezugspreis, den gespeicherte Energie ersetzt: Mittel des teuersten Viertels der Preise im
+     * Betrachtungszeitraum (ab $fromSlot, hoechstens 24 h). null = keine Preise.
+     */
+    private function replacementPriceEur(array $prices, int $fromSlot = 0): ?float
+    {
+        $v = array();
+        for ($i = max(0, $fromSlot); $i < min(count($prices), max(0, $fromSlot) + 96); $i++) {
+            if (isset($prices[$i]) && $prices[$i] !== null) { $v[] = (float)$prices[$i]; }
+        }
+        if (count($v) < 4) { return null; }
+        rsort($v);
+        $n = max(1, (int)floor(count($v) / 4));
+        return array_sum(array_slice($v, 0, $n)) / $n;
+    }
+
     private function getFeedTariffEur(): array
     {
+        if ($this->ReadPropertyBoolean('ANL_Verguetung_Keine')) { return array('eur' => 0.0, 'quelle' => 'keine', 'bekannt' => true); }
         $manual = (float)$this->ReadPropertyFloat('ANL_Verguetung_ct');
-        if ($manual > 0.0) { return array('eur' => $manual / 100.0, 'quelle' => 'eingetragen'); }
+        if ($manual > 0.0) { return array('eur' => $manual / 100.0, 'quelle' => 'eingetragen', 'bekannt' => true); }
         if ($this->ReadPropertyInteger('VAR_TIB_Feed_Tariff') > 0) {
-            return array('eur' => (float)$this->readVar('VAR_TIB_Feed_Tariff', 0.1836), 'quelle' => 'variable');
+            return array('eur' => (float)$this->readVar('VAR_TIB_Feed_Tariff', 0.1836), 'quelle' => 'variable', 'bekannt' => true);
         }
         $ibn = $this->getPlantIbn();
         $kwp = $this->getPlantKwp();
@@ -5462,7 +5519,7 @@ class EMS extends IPSModule
             $ct = $this->lookupEegTariffCt($this->loadEegTable(), $ibn, $kwp, $this->ReadPropertyInteger('ANL_Einspeiseart') === 1);
             if ($ct !== null) { return array('eur' => $ct / 100.0, 'quelle' => 'berechnet'); }
         }
-        return array('eur' => 0.1836, 'quelle' => 'platzhalter');
+        return array('eur' => 0.1836, 'quelle' => 'platzhalter', 'bekannt' => false);
     }
 
     /**

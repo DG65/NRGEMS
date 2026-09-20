@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.51.0 (2026-09-20)
+**Keine Werte der Entwicklungsanlage mehr als stille Vorgabe** (Dietmar: „an alle möglichen Nutzer und Konstellationen denken“).
+- **Einspeisevergütung „unbekannt“ ≠ 18,36 ct:** Der Platzhalter 0,1836 €/kWh steuerte bisher die Preisregeln jedes
+  Nutzers ohne Vergütungsangabe. Jetzt zählt nur eine bekannte Vergütung (eingetragen, Variable oder aus Datum und Größe
+  berechnet). Neu: Häkchen „Ich bekomme keine Einspeisevergütung“ (0 ct). Unbekannt und 0 ct verwenden die Ersatz-Bezugspreis-Referenz.
+- **Neu: Preisreferenz fürs Netzladen** (`NETZLADUNG_Referenz`): 0 = unter der Einspeisevergütung (wie bisher, Standard
+  bei bekannter Vergütung), 1 = Ersatz-Bezugspreis (Arbitrage im Haus: Mittel des teuersten Viertels der nächsten 24 h
+  × 0,9025 − Verschleiß − Mindestspanne). Auch die Arbitrage-Erkennung (`hasArbitrageInPrices`) folgt dieser Referenz.
+  Ohne bekannte Vergütung oder mit 0 ct ist immer Referenz 1 aktiv (vorher: keine Preisgrenze bzw. Platzhalter).
+- **Hausanschluss-Standard 11 kW statt 34,5 kW** (`EMS_Max_Power_W`): 34,5 kW ist die Anlage des Entwicklers; ein zu hoher
+  Wert kann bei fremden Anlagen die Hausanschluss-Sicherung überlasten. An der Entwicklungsanlage ist 34500 W ausdrücklich gesetzt.
+- „Grünste Ladezeit“ lädt nur noch bei bekannter Vergütung und Referenz 0 (kein Grünstrom-Kauf ohne Preisgrenze).
+- Prüfstand: „konfigurierte Anlage“ als Grundzustand (18,36 ct eingetragen), neue Tests für unbekannte/keine/niedrige Vergütung.
+
 ## 0.50.1 (2026-09-20)
 - **Vorfall 20.09.2026:** „Grünste Ladezeit“ lief von 09:03 bis 12:46 im Stromeinkauf-Modus 4 mit 34,5 kW, obwohl die
   Batterie (SOC 95 %) nichts aufnahm. Der WR drosselte dabei die PV; gemessen 3,6 kWh Ernte gegen eine Prognose von
