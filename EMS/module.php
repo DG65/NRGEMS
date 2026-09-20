@@ -474,6 +474,7 @@ class EMS extends IPSModule
         $this->RegisterAttributeInteger('LastDecision',      0);
         $this->RegisterAttributeString('LastDecisionSource', 'ems');
         $this->RegisterAttributeInteger('ConsecutiveErrors', 0);
+        $this->RegisterAttributeInteger('FirstErrorAt', 0); // Beginn der laufenden Fehlerserie (Unix), 0 = keine
         $this->RegisterAttributeInteger('BatteryBoostUntil', 0);
         $this->RegisterAttributeInteger('PlausiSince',       0); // Beginn der durchgehenden Soll-Ist-Abweichung, 0 = keine
         $this->RegisterAttributeInteger('PlausiHoldUntil',   0); // bis wann der erzwungene Automatik-Rueckfall gehalten wird
@@ -1069,6 +1070,7 @@ class EMS extends IPSModule
             $this->applyDecision($decision, $state);
             $this->trackSpecialEvents($state);
             $this->WriteAttributeInteger('ConsecutiveErrors', 0);
+            $this->WriteAttributeInteger('FirstErrorAt', 0);
             // 205 statt 102, solange dieselben Wallboxen ueber ChargerHub und
             // OCPPHub erscheinen und keine Quelle gewaehlt ist (Regel 9f)
             // 206 vor 205: zwei Regler an einer Wallbox ist das groessere Risiko
@@ -1077,11 +1079,14 @@ class EMS extends IPSModule
         } catch (Exception $e) {
             $errors    = $this->ReadAttributeInteger('ConsecutiveErrors') + 1;
             $this->WriteAttributeInteger('ConsecutiveErrors', $errors);
-            $this->emsLog(EMS_LOG_BASIC, 'Fehler: ' . $e->getMessage() . ' (#' . $errors . ')');
+            // Ausfallzeit statt Zaehler: massgeblich ist, wie lange es schon ununterbrochen nicht klappt, nicht wie oft
+            // der Timer gefeuert hat (uebersprungene oder verzoegerte Takte zaehlen sonst falsch).
+            $firstErr = $this->ReadAttributeInteger('FirstErrorAt');
+            if ($firstErr <= 0) { $firstErr = time(); $this->WriteAttributeInteger('FirstErrorAt', $firstErr); }
+            $down = time() - $firstErr;
+            $this->emsLog(EMS_LOG_BASIC, 'Fehler: ' . $e->getMessage() . ' (#' . $errors . ', seit ' . $down . ' s)');
             $timeout   = $this->ReadPropertyInteger('EMS_Fallback_Timeout');
-            $interval  = $this->ReadPropertyInteger('EMS_Interval');
-            $threshold = max(1, (int)($timeout / max(1, $interval)));
-            if ($errors >= $threshold) {
+            if ($down >= $timeout) {
                 $this->applyFallback();
             }
         }
@@ -4812,11 +4817,28 @@ class EMS extends IPSModule
      * Mindestleistung weiterlaufen (Hysterese, kein Flackern bei Wolken). PV-Strom kostet nichts extra: der Preis
      * des Netzstroms ist dafuer nicht der richtige Massstab.
      */
+    /**
+     * Kleinste sinnvolle Ladeleistung der Wallbox $n (W). Eine ausdruecklich eingestellte Mindestleistung gilt immer.
+     * Steht die Einstellung noch auf dem vorsichtigen Standardwert (4140 W = 3-phasig 6 A) und meldet die Wallbox ihre
+     * aktuelle Phasenzahl (`phases`, ChargerHub-Vertrag ab 1.6), rechnet das EMS Phasen x 230 V x Mindeststrom
+     * (`stationMinCurrentA` aus OCPP, sonst 6 A nach IEC 61851). Fehlt die Phasenzahl, bleibt es beim Standardwert.
+     */
+    private function wallboxMinPowerW(int $n): float
+    {
+        $prop = (float)$this->ReadPropertyInteger('WB' . $n . '_Min_Power_W');
+        if ((int)$prop !== 4140) { return max(500.0, $prop); }
+        $e  = $this->getChargerEntry($n);
+        $ph = (int)($e['phases'] ?? 0);
+        if ($ph !== 1 && $ph !== 3) { return max(500.0, $prop); }
+        $minA = max(6.0, (float)($e['stationMinCurrentA'] ?? 6));
+        return max(500.0, $ph * 230.0 * $minA);
+    }
+
     private function wallboxPriceAllowed(int $n, array $s, float $price, float $thWB): bool
     {
         if (empty($s['tib_active']) || $price < $thWB) { return true; }
         if (!$this->ReadPropertyBoolean('WB_PV_Ueberschuss')) { return false; }
-        $minW    = max(500.0, (float)$this->ReadPropertyInteger('WB' . $n . '_Min_Power_W'));
+        $minW    = $this->wallboxMinPowerW($n);
         $surplus = (float)($s['pv_total_w'] ?? 0.0) - (float)($s['house_pow_w'] ?? 0.0);
         $charging = ((float)($s['wb' . $n . '_pow_kw'] ?? 0.0) * 1000.0) > 100.0;
         return $surplus >= ($charging ? 0.5 * $minW : $minW);
@@ -7097,6 +7119,9 @@ class EMS extends IPSModule
 
         if ($enable && !$isActive) {
             $maxCurrentA = (int)($entry['maxCurrent'] ?? 16);
+            if (isset($entry['stationMaxCurrentA']) && (int)$entry['stationMaxCurrentA'] >= 6) {
+                $maxCurrentA = min($maxCurrentA, (int)$entry['stationMaxCurrentA']); // Hardware-Grenze laut OCPP (OCPPHub 1.7)
+            }
             $configuredMaxW = $this->ReadPropertyInteger('WB' . $num . '_Max_Power_W');
             if ($configuredMaxW > 0) {
                 $maxCurrentA = min($maxCurrentA, max(6, (int)round($configuredMaxW / 230)));

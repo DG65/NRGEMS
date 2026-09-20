@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.59.0 (2026-09-20)
+- **Wallbox-Mindestleistung aus der gemeldeten Phasenzahl:** Meldet die Wallbox ihre aktuelle Phasenzahl (`phases`, ChargerHub-Vertrag
+  ab 1.6, derzeit Peblar und go-e im erzwungenen Modus), rechnet das EMS die kleinste sinnvolle Ladeleistung selbst
+  (Phasen × 230 V × Mindeststrom, `stationMinCurrentA` aus OCPP, sonst 6 A). Gilt nur, solange die Einstellung noch auf dem
+  vorsichtigen Standardwert 4140 W steht; eine ausdrücklich eingestellte Mindestleistung geht immer vor. Die Hardware-Stromgrenze
+  `stationMaxCurrentA` (OCPPHub ab 1.7) begrenzt zusätzlich den freigegebenen Ladestrom.
+- **Fallback nach Ausfallzeit statt Fehlerzahl:** Der Rückfall in die Wechselrichter-Automatik bei wiederholten Steuerfehlern löst jetzt
+  aus, wenn die Fehlerserie so lange dauert wie `EMS_Fallback_Timeout` (Sekunden seit dem ersten Fehler), nicht nach einer aus
+  Timeout und Intervall errechneten Anzahl. Übersprungene oder verzögerte Takte verfälschen das nicht mehr. Bei den Standardwerten
+  (60 s, Takt 30 s) greift der Rückfall nach 60 s statt nach dem zweiten Fehler.
+
 ## 0.58.0 (2026-09-20)
 - **Symcon-Strompreis als Preisquelle** (Symcon-Bibliothek „Strompreis“, Modul PowerPrice, Anbieter aWATTar, EPEX Spot oder Tibber): Wer weder Tibber Grid
   Rewards noch das Börsenpreis-Modul hat, aber den Symcon-Strompreis, bekommt jetzt den Tagesplan aus dessen Preisen. Das EMS liest

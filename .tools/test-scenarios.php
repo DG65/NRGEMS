@@ -685,6 +685,21 @@ check('Ohne Instanz keine Quelle', call($ems, 'getPT15MTodayJson') === '');
 $pOld = call($ems, 'parsePT15M', [json_encode([['start' => $d0, 'price' => 10.0], ['start' => $d0 + 900, 'price' => 20.0]]), 0]);
 check('Alte Kurven ohne end-Feld: unveraendert eine Viertelstunde je Eintrag', abs($pOld[0] - 0.10) < 1e-9 && abs($pOld[1] - 0.20) < 1e-9 && $pOld[2] === null, json_encode(array_slice($pOld, 0, 3)));
 
+echo "\n8r) Wallbox-Mindestleistung aus den gemeldeten Phasen (ChargerHub 1.6, OCPPHub 1.7), Ausfallzeit\n";
+$ems = freshEms();
+attr('PartnerCache', json_encode(['chargerhub' => [['instanceID' => 600, 'managedBy' => 'none']]]));
+check('Ohne Phasenangabe: Standardwert 4140 W', call($ems, 'wallboxMinPowerW', [1]) === 4140.0);
+attr('PartnerCache', json_encode(['chargerhub' => [['instanceID' => 600, 'managedBy' => 'none', 'phases' => 1]]]));
+check('1-phasig gemeldet: 1 x 230 V x 6 A = 1380 W', call($ems, 'wallboxMinPowerW', [1]) === 1380.0);
+attr('PartnerCache', json_encode(['chargerhub' => [['instanceID' => 600, 'managedBy' => 'none', 'phases' => 3, 'stationMinCurrentA' => 8]]]));
+check('3-phasig, Hardware-Mindeststrom 8 A: 5520 W', call($ems, 'wallboxMinPowerW', [1]) === 5520.0);
+attr('PartnerCache', json_encode(['chargerhub' => [['instanceID' => 600, 'managedBy' => 'none', 'phases' => 7]]]));
+check('Unsinnige Phasenzahl wird ignoriert (Standardwert)', call($ems, 'wallboxMinPowerW', [1]) === 4140.0);
+attr('PartnerCache', json_encode(['chargerhub' => [['instanceID' => 600, 'managedBy' => 'none', 'phases' => 1]]]));
+prop('WB1_Min_Power_W', 2000);
+check('Ausdruecklich eingestellter Wert schlaegt die Meldung der Wallbox', call($ems, 'wallboxMinPowerW', [1]) === 2000.0);
+prop('WB1_Min_Power_W', 4140);
+
 echo "\n9) Regression 12.09.2026 -- Tagesplan darf die Batterie nicht per Sollwert-Modus ins Netz ziehen\n";
 $ems = freshEms();
 $ctx = ['enwgActive' => false, 'enwgStartH' => 0, 'enwgEndH' => 0, 'avgHouseW' => 300.0, 'houseLoadSlots' => [],
