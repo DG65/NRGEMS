@@ -740,6 +740,19 @@ check('Geplantes Netzladen vor dem teuren Bedarf: Energie ist ersetzbar, Bedarf 
 $rv5 = call($ems, 'restwertValue', [array_merge($rwCtx, ['rwOffset' => 96, 'rwP' => $mkP([160 => 0.60]), 'rwNet' => $mkN([160 => 10.0])]), 40, 25.0]);
 check('Morgen-Plan (Offset 96): Slot 40 morgen schaut ab Index 137, Bedarf bei 160 wird gefunden, Grenzwert 60 ct', abs($rv5['value'] - 0.60) < 1e-9, json_encode($rv5));
 
+echo "\n8t) Restwert rechnet mit vorsichtiger PV (p10): Schnee-Tag\n";
+$GLOBALS['PVF_FC'] = [];
+if (!function_exists('PVF_GetForecast')) { function PVF_GetForecast($iid, $offset = 0) { return $GLOBALS['PVF_FC'][$offset] ?? []; } }
+$ems = freshEms();
+$GLOBALS['INSTMOD'][7100] = GUID_PVFORECAST; obj(7100, 1, 'PV', 0);
+$GLOBALS['PVF_FC'] = [0 => ['p10' => array_fill(0, 96, 0.0), 'p50' => array_fill(0, 96, 3000.0)], 1 => ['p10' => array_fill(0, 96, 100.0), 'p50' => array_fill(0, 96, 4000.0)]];
+$lo = call($ems, 'getPvfSlotsWatt', ['p10']); $mid = call($ems, 'getPvfSlotsWatt');
+check('p10 wird geliefert (Schnee: 0 W heute, 100 W morgen), Standard bleibt p50', count($lo) === 192 && $lo[10] == 0.0 && $lo[100] == 100.0 && $mid[10] == 3000.0 && $mid[100] == 4000.0, json_encode([$lo[10], $lo[100], $mid[10]]));
+$GLOBALS['PVF_FC'] = [0 => ['p50' => array_fill(0, 96, 3000.0)], 1 => ['p50' => array_fill(0, 96, 4000.0)]];
+$lo2 = call($ems, 'getPvfSlotsWatt', ['p10']);
+check('Fehlt p10 (aeltere Prognose), gilt p50', $lo2[10] == 3000.0 && $lo2[100] == 4000.0);
+unset($GLOBALS['INSTMOD'][7100]); $GLOBALS['PVF_FC'] = [];
+
 echo "\n9) Regression 12.09.2026 -- Tagesplan darf die Batterie nicht per Sollwert-Modus ins Netz ziehen\n";
 $ems = freshEms();
 $ctx = ['enwgActive' => false, 'enwgStartH' => 0, 'enwgEndH' => 0, 'avgHouseW' => 300.0, 'houseLoadSlots' => [],

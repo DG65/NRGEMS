@@ -2193,14 +2193,16 @@ class EMS extends IPSModule
         return $out;
     }
 
-    private function getPvfSlotsWatt()
+    private function getPvfSlotsWatt(string $quantile = 'p50')
     {
         $pvfId = $this->getPvfInstance();
         if ($pvfId <= 0) { return array(); }
         $today    = PVF_GetForecast($pvfId, 0);
         $tomorrow = PVF_GetForecast($pvfId, 1);
-        $todayP50    = isset($today['p50'])    && is_array($today['p50'])    ? $this->resampleTo96($today['p50'])    : array_fill(0, 96, 0.0);
-        $tomorrowP50 = isset($tomorrow['p50']) && is_array($tomorrow['p50']) ? $this->resampleTo96($tomorrow['p50']) : array_fill(0, 96, 0.0);
+        // gewuenschtes Quantil (Standard p50); fehlt es, gilt p50
+        $q = (isset($today[$quantile]) || isset($tomorrow[$quantile])) ? $quantile : 'p50';
+        $todayP50    = isset($today[$q])    && is_array($today[$q])    ? $this->resampleTo96($today[$q])    : array_fill(0, 96, 0.0);
+        $tomorrowP50 = isset($tomorrow[$q]) && is_array($tomorrow[$q]) ? $this->resampleTo96($tomorrow[$q]) : array_fill(0, 96, 0.0);
         return array_merge($todayP50, $tomorrowP50); // Index 0-191
     }
 
@@ -4006,11 +4008,15 @@ class EMS extends IPSModule
         // Restwert (Beta): Preise und Bedarf minus PV je Viertelstunde fuer heute + morgen (0-191)
         if ($this->ReadPropertyBoolean('PLAN_Restwert_Aktiv')) {
             $rwP = array(); $rwNet = array();
+            // Vorsichtige PV (p10): Der Restwert darf sich nicht darauf verlassen, dass die PV die Batterie wieder fuellt.
+            // Faellt die PV aus (Schnee, Nebel), muessen die teuren Zeiten morgens und abends aus guenstig gekauftem
+            // Strom ueberbrueckt werden koennen. Fehlt p10, gilt p50.
+            $pvfLow = $this->getPvfSlotsWatt('p10');
             for ($i = 0; $i < 96; $i++) {
                 $rwP[$i]      = $prices[$i] ?? null;
                 $rwP[96 + $i] = $tomorrowPrices[$i] ?? null;
-                $rwNet[$i]      = ((float)($houseLoadSlotsToday[$i] ?? $avgHouseW) - (float)($pvfSlots[$i] ?? 0.0)) / 1000.0 * 0.25;
-                $rwNet[96 + $i] = ((float)($houseLoadSlotsTomorrow[$i] ?? $avgHouseWTomorrow) - (float)($pvfSlots[96 + $i] ?? 0.0)) / 1000.0 * 0.25;
+                $rwNet[$i]      = ((float)($houseLoadSlotsToday[$i] ?? $avgHouseW) - (float)($pvfLow[$i] ?? 0.0)) / 1000.0 * 0.25;
+                $rwNet[96 + $i] = ((float)($houseLoadSlotsTomorrow[$i] ?? $avgHouseWTomorrow) - (float)($pvfLow[96 + $i] ?? 0.0)) / 1000.0 * 0.25;
             }
             $ctx['restwert'] = true; $ctx['rwP'] = $rwP; $ctx['rwNet'] = $rwNet; $ctx['rwOffset'] = 0; $ctx['rwCharge'] = array();
             // geplantes Netzladen der kommenden Nacht (Schaetzung mit dem heutigen SOC): dort fuellt sich die Batterie wieder auf

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.60.1 (2026-09-20)
+- **Restwert rechnet mit vorsichtiger PV (p10):** Der Restwert darf sich nicht darauf verlassen, dass die PV die Batterie wieder füllt.
+  Fällt die PV aus (Schnee, Nebel), müssen die teuren Zeiten morgens und abends aus günstig gekauftem Strom überbrückt werden können.
+  Das Wiederauffüllen durch PV wird deshalb mit der vorsichtigen Prognose (p10) angenommen, nicht mit p50. Fehlt p10 (ältere Prognose),
+  gilt p50. Nur wirksam, wenn der Schalter `PLAN_Restwert_Aktiv` an ist.
+
 ## 0.60.0 (2026-09-20)
 - **Restwert der Batterieenergie im Plan (Beta, Schalter `PLAN_Restwert_Aktiv`, Standard aus):** Das EMS bewertet die gespeicherte Energie mit
   einem Grenzwert statt mit mehreren Reserve-Sonderregeln. Über die nächsten 24 Stunden werden die Viertelstunden mit Bedarf (Hauslast
