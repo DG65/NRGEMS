@@ -324,7 +324,7 @@ $ems = freshEms();
 pricesToday(0.10); // Arbitrage-Chance -> §14a-Nachtladen ist erreichbar
 $target = $ems->ReadPropertyInteger('BAT_SOC_Target_Night');
 $d = call($ems, 'optimize', [state(['enwg_in_window' => true, 'bat_soc' => max(5, $target - 30), 'tib_price_eff' => 0.10])]);
-check('§14a-Nachtfenster + SOC unter Nachtziel: Netzladen (AC-Import, enable=true)', $d['op_mode'] === EMS_OP_NET_CHARGE && $d['gw_mode'] === GW_MODE_AC_IMPORT && $d['gw_enable'] === true, fmt($d));
+check('§14a-Nachtfenster + SOC unter Nachtziel: Netzladen (Batterie-Lademodus 11 mit auf Ladegrenze/Anschluss begrenztem Xset, enable=true)', $d['op_mode'] === EMS_OP_NET_CHARGE && $d['gw_mode'] === GW_MODE_BAT_CHARGE && $d['gw_power_w'] >= 500 && $d['gw_enable'] === true, fmt($d));
 pricesToday(0.30); // keine Arbitrage-Chance -> auch §14a-Nachtladen wird uebersprungen
 $d = call($ems, 'optimize', [state(['enwg_in_window' => true, 'bat_soc' => max(5, $target - 30)])]);
 check('ohne Arbitrage-Chance auch kein §14a-Nachtladen (Dietmars Vorgabe: Preis sticht)', $d['op_mode'] !== EMS_OP_NET_CHARGE && isNativeAuto($d), fmt($d));
@@ -447,6 +447,25 @@ prop('BAT_CycleCost_ct', 4.0);
 $e4 = call($ems, 'preDischargeEnd', [$p192c, 81, 0.1836]);
 prop('BAT_CycleCost_ct', 0.0);
 check('Vorentladen: mit 4 ct Verschleiss lohnt das Fenster bei 13 ct nicht mehr (ohne: ja)', $e0 === 96 && $e4 === null, json_encode([$e0, $e4]));
+
+echo "\n8d) Netzladen ohne Wirkung (Vorfall 20.09.2026): Sollwert wird nach 3 min aufgegeben\n";
+$ems = freshEms();
+$dCh = ['op_mode' => EMS_OP_NET_CHARGE, 'gw_mode' => GW_MODE_AC_IMPORT, 'gw_power_w' => 34500, 'gw_enable' => true, 'wb1_enable' => false, 'wb2_enable' => false, 'reason' => 'Gruenste Ladezeit', 'source' => 'stromgedacht'];
+$sNo = state(['bat_pow_w' => 0.0, 'bat_soc' => 95.0]);
+$r1 = call($ems, 'applyChargeNoEffectGuard', [$dCh, $sNo]);
+check('Netzladen ohne Wirkung: in den ersten Sekunden bleibt der Sollwert', $r1['gw_mode'] === GW_MODE_AC_IMPORT);
+attr('ChargeNoEffectSince', time() - 200);
+$r2 = call($ems, 'applyChargeNoEffectGuard', [$dCh, $sNo]);
+check('nach 3 min ohne Ladeleistung: Automatik, force, Haltephase 20 min', $r2['gw_mode'] === GW_MODE_AUTO && $r2['gw_enable'] === false && !empty($r2['force']) && $ems->ReadAttributeInteger('ChargeNoEffectHoldUntil') > time() + 1000, json_encode($r2));
+$r3 = call($ems, 'applyChargeNoEffectGuard', [$dCh, state(['bat_pow_w' => -20000.0, 'bat_soc' => 60.0])]);
+check('Haltephase gilt weiter, auch wenn die Batterie zwischendurch laedt', $r3['gw_mode'] === GW_MODE_AUTO);
+$ems = freshEms();
+$r4 = call($ems, 'applyChargeNoEffectGuard', [$dCh, state(['bat_pow_w' => -20000.0, 'bat_soc' => 60.0])]);
+attr('ChargeNoEffectSince', 0);
+check('laedt die Batterie mit voller Leistung: keine Aktion', $r4['gw_mode'] === GW_MODE_AC_IMPORT);
+$ems = freshEms(); attr('ChargeNoEffectSince', time() - 500);
+$r5 = call($ems, 'applyChargeNoEffectGuard', [array_merge($dCh, ['source' => 'netzbetreiber']), $sNo]);
+check('Netzbetreiber-Vorgabe wird nicht ueberstimmt', $r5['gw_mode'] === GW_MODE_AC_IMPORT);
 
 echo "\n9) Regression 12.09.2026 -- Tagesplan darf die Batterie nicht per Sollwert-Modus ins Netz ziehen\n";
 $ems = freshEms();

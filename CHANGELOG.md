@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.50.1 (2026-09-20)
+- **Vorfall 20.09.2026:** „Grünste Ladezeit“ lief von 09:03 bis 12:46 im Stromeinkauf-Modus 4 mit 34,5 kW, obwohl die
+  Batterie (SOC 95 %) nichts aufnahm. Der WR drosselte dabei die PV; gemessen 3,6 kWh Ernte gegen eine Prognose von
+  17,9 kWh (geschätzt ca. 9 bis 14 kWh entgangen). Gegenmaßnahmen:
+  - **Neu: Wächter „Netzladen ohne Wirkung“:** Läuft ein Netzlade-Sollwert (Modus 4/9/11), ohne dass die Batterie
+    nennenswert lädt (unter 300 W bzw. 10 % des Sollwerts, SOC unter 99,5 %), gibt EMS ihn nach 3 Minuten auf und
+    hält 20 Minuten die WR-Automatik. Gilt nicht für Netzbetreiber-Vorgaben und Grid Rewards.
+  - Der reaktive §14a-Nachtladezweig nutzt jetzt wie Plan und Grünste Ladezeit den Batterie-Lademodus 11 mit auf
+    Ladegrenze und Netzanschluss begrenztem Xset (Modus 4 drosselt die PV).
+  - „Grünste Ladezeit“ prüft seit 0.49.2 die Preisgrenze und nutzt Modus 11.
+
 ## 0.50.0 (2026-09-20)
 Anregungen aus dem Vergleich mit anderen Energiemanagement-Projekten (Quellcode gelesen).
 - **Neu: Verschleißkosten der Batterie** (`BAT_CycleCost_ct`, Standard 0 = wie bisher). Je entladener kWh, einmal

@@ -456,6 +456,8 @@ class EMS extends IPSModule
         $this->RegisterAttributeInteger('LastGoodweMode',    GW_MODE_AUTO);
         $this->RegisterAttributeBoolean('LastGoodweEnable',  true);
         $this->RegisterAttributeInteger('LastGoodwePowerW',  0);
+        $this->RegisterAttributeInteger('ChargeNoEffectSince', 0);
+        $this->RegisterAttributeInteger('ChargeNoEffectHoldUntil', 0);
         $this->RegisterAttributeString('DryRunLast', '');
         $this->RegisterAttributeInteger('LastGoodweWriteAt', 0);
         $this->RegisterAttributeInteger('LastWB1Switch',     0);
@@ -1053,6 +1055,7 @@ class EMS extends IPSModule
                 $decision['reason'] = ($decision['reason'] ?? '') . sprintf(' | ⚡ Negativer Börsenpreis %.2f ct/kWh: Einspeisung auf 0 W begrenzt (§ 51 EEG)', $neg['price']);
             }
             $decision = $this->applyPlausibilityGuard($decision, $state);
+            $decision = $this->applyChargeNoEffectGuard($decision, $state);
             $decision = $this->applyExportOverlapGuard($decision, $state);
             $this->applyDecision($decision, $state);
             $this->trackSpecialEvents($state);
@@ -5047,8 +5050,8 @@ class EMS extends IPSModule
         // ── 1. §14a Nacht-Laden ──────────────────────────────────────
         if ($s['enwg_in_window'] && $s['bat_active'] && $soc < ($socTargetNight - $hystSoc)) {
             $d['op_mode']    = EMS_OP_NET_CHARGE;
-            $d['gw_mode']    = GW_MODE_AC_IMPORT;
-            $d['gw_power_w'] = (int)$maxW;
+            $d['gw_mode']    = GW_MODE_BAT_CHARGE;
+            $d['gw_power_w'] = max(500, $this->runtimeGridChargeW($s, (float)$maxW));
             $d['wb1_enable'] = ($s['wb1_cable'] > 0 && $s['wb1_error'] === 0);
             $d['wb2_enable'] = ($s['wb_count'] >= 2 && $s['wb2_cable'] > 0 && $s['wb2_error'] === 0);
             $d['reason']     = sprintf(
@@ -6233,6 +6236,56 @@ class EMS extends IPSModule
         $d['svc']    = 'chargeInhibit';
         $d['source'] = 'netzdienlich';
         $d['reason'] = '🌞 Netzdienlich (Mittagsspitze): Laden gesperrt, Überschuss ins Netz -- ' . $r['reason'];
+        return $d;
+    }
+
+    /**
+     * Netzladen ohne Wirkung (Vorfall 20.09.2026, "Gruenste Ladezeit": Modus 4 lief 3 h 43 min, die Batterie nahm
+     * nichts auf, die PV wurde gedrosselt, es gingen ca. 10 kWh Ernte verloren): Laeuft ein aktiver Netzlade-Sollwert,
+     * ohne dass die Batterie nennenswert laedt, gibt EMS ihn nach EMS-Ladewirkung-Wartezeit (3 min) auf und haelt
+     * 20 min lang die WR-Automatik. Gilt nicht fuer Netzbetreiber-Vorgaben und Grid Rewards (dort ist der Zweck ein
+     * anderer als das Laden der Hausbatterie).
+     */
+    private function applyChargeNoEffectGuard($d, $s)
+    {
+        $now = time();
+        $hold = $this->ReadAttributeInteger('ChargeNoEffectHoldUntil');
+        $isCharge = (($d['op_mode'] ?? -1) === EMS_OP_NET_CHARGE) && !empty($d['gw_enable'])
+            && in_array((int)($d['gw_mode'] ?? 0), array(GW_MODE_AC_IMPORT, GW_MODE_BUY, GW_MODE_BAT_CHARGE), true)
+            && (($d['source'] ?? 'ems') !== 'netzbetreiber');
+        if (!$isCharge || empty($s['bat_active'])) {
+            if ($this->ReadAttributeInteger('ChargeNoEffectSince') > 0) { $this->WriteAttributeInteger('ChargeNoEffectSince', 0); }
+            return $d;
+        }
+        if ($hold > $now) {
+            return $this->chargeNoEffectFallback($d, sprintf('Haltephase, noch %d min', (int)ceil(($hold - $now) / 60)));
+        }
+        $chargeW  = max(0.0, -(float)$s['bat_pow_w']);            // bat_pow_w: + Entladen, - Laden
+        $wantW    = (float)($d['gw_power_w'] ?? 0);
+        $tooLow   = ($chargeW < max(300.0, 0.1 * min($wantW, 24000.0))) && ((float)$s['bat_soc'] < 99.5);
+        if (!$tooLow) {
+            if ($this->ReadAttributeInteger('ChargeNoEffectSince') > 0) { $this->WriteAttributeInteger('ChargeNoEffectSince', 0); }
+            return $d;
+        }
+        $since = $this->ReadAttributeInteger('ChargeNoEffectSince');
+        if ($since <= 0) { $this->WriteAttributeInteger('ChargeNoEffectSince', $now); return $d; }
+        if (($now - $since) < 180) { return $d; }
+        $this->WriteAttributeInteger('ChargeNoEffectSince', 0);
+        $this->WriteAttributeInteger('ChargeNoEffectHoldUntil', $now + 1200);
+        $this->emsLog(EMS_LOG_BASIC, sprintf('Netzladen ohne Wirkung: Batterie laedt nur %.0f W bei Sollwert %.0f W (SOC %.0f%%) -- WR-Automatik fuer 20 min', $chargeW, $wantW, (float)$s['bat_soc']));
+        return $this->chargeNoEffectFallback($d, sprintf('Batterie laedt nur %.0f W bei Sollwert %.0f W', $chargeW, $wantW));
+    }
+
+    private function chargeNoEffectFallback($d, $note)
+    {
+        $original = $d['reason'] ?? '';
+        $d['op_mode']    = EMS_OP_AUTO;
+        $d['gw_mode']    = GW_MODE_AUTO;
+        $d['gw_power_w'] = 0;
+        $d['gw_enable']  = false;
+        $d['force']      = true;
+        $d['source']     = 'ems';
+        $d['reason']     = '⚠️ Netzladen ohne Wirkung (' . $note . '): WR-Eigenregelung | urspruenglich: ' . $original;
         return $d;
     }
 
