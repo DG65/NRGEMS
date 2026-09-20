@@ -458,6 +458,7 @@ class EMS extends IPSModule
         $this->RegisterAttributeInteger('LastGoodweMode',    GW_MODE_AUTO);
         $this->RegisterAttributeBoolean('LastGoodweEnable',  true);
         $this->RegisterAttributeInteger('LastGoodwePowerW',  0);
+        $this->RegisterAttributeInteger('NoControlLoggedAt', 0);
         $this->RegisterAttributeInteger('ChargeNoEffectSince', 0);
         $this->RegisterAttributeInteger('ChargeNoEffectHoldUntil', 0);
         $this->RegisterAttributeString('DryRunLast', '');
@@ -1658,7 +1659,11 @@ class EMS extends IPSModule
         $steuerbox = $this->getSteuerboxState();
         if (($steuerbox !== null) && ($steuerbox['feedInDimmActive'] ?? false)) {
             $percent = max(0.0, min(100.0, (float)($steuerbox['feedInLimitPercent'] ?? 100)));
-            $limitW  = (int)round((float)$this->ReadPropertyInteger('EMS_Max_Power_W') * $percent / 100.0);
+            // Bezugsgroesse der Einspeisereduktion ist die installierte PV-Leistung (kWp), nicht der Hausanschluss; nur ohne
+            // bekannte kWp faellt sie auf die EMS-Leistungsgrenze zurueck.
+            $baseW   = $this->getPlantKwp() * 1000.0;
+            if ($baseW <= 0.0) { $baseW = (float)$this->ReadPropertyInteger('EMS_Max_Power_W'); }
+            $limitW  = (int)round($baseW * $percent / 100.0);
             $gruende[] = sprintf('§14a-Einspeisereduktion %.0f%%', $percent);
         }
         // Dauerhafte Einspeisegrenze (§ 9 EEG 60 %, Bestands-70-%-Kappung oder
@@ -2569,9 +2574,12 @@ class EMS extends IPSModule
     private function runtimeGridChargeW(array $s, float $wantW): int
     {
         $maxW   = (float)$this->ReadPropertyInteger('EMS_Max_Power_W');
-        $lim    = $this->getBatteryPowerLimitsKw($this->getInverterEntry(), $maxW, (float)$this->ReadPropertyFloat('BAT_Capacity_kWh'));
+        $lim    = $this->getBatteryPowerLimitsKw($this->getInverterEntry(), $maxW, $this->batteryCapacityKwh());
         $wbW    = ((float)$s['wb1_pow_kw'] + (float)$s['wb2_pow_kw']) * 1000.0;
-        $budget = $maxW + (float)$s['pv_total_w'] - (float)$s['house_pow_w'] - $wbW;
+        // Netzanschluss-Grenze: die eigene Angabe (SITE_Max_Grid_Import_W) hat Vorrang vor der EMS-Leistungsgrenze
+        $gridW  = (float)$this->ReadPropertyInteger('SITE_Max_Grid_Import_W');
+        if ($gridW <= 0.0) { $gridW = $maxW; }
+        $budget = $gridW + (float)$s['pv_total_w'] - (float)$s['house_pow_w'] - $wbW;
         return (int)max(0, round(min($wantW, $lim['chargeKw'] * 1000.0, $budget)));
     }
 
@@ -3160,7 +3168,7 @@ class EMS extends IPSModule
             return $staticTarget;
         }
 
-        $capacity = (float)$this->ReadPropertyFloat('BAT_Capacity_kWh');
+        $capacity = $this->batteryCapacityKwh();
         if ($capacity <= 0) { return $staticTarget; }
 
         $margin = (float)$this->ReadPropertyInteger('BAT_SOC_Safety_Margin_Pct');
@@ -3626,7 +3634,7 @@ class EMS extends IPSModule
         $houseLoadSlotsTomorrow = $this->getLoadForecastSlots($lfcId, 1);
 
         $inv            = $this->getInverterEntry();
-        $capKwh         = (float)$this->ReadPropertyFloat('BAT_Capacity_kWh');
+        $capKwh         = $this->batteryCapacityKwh();
         $maxW           = (float)$this->ReadPropertyInteger('EMS_Max_Power_W');
         $socMin         = (float)$this->ReadPropertyInteger('BAT_SOC_Min');
         $socReserve     = (float)$this->ReadPropertyInteger('BAT_SOC_Reserve_Backup');
@@ -3903,7 +3911,7 @@ class EMS extends IPSModule
         $houseLoadSlots = $this->getLoadForecastSlots($lfcId, 0);
 
         $inv    = $this->getInverterEntry();
-        $capKwh = (float)$this->ReadPropertyFloat('BAT_Capacity_kWh');
+        $capKwh = $this->batteryCapacityKwh();
         $maxW   = (float)$this->ReadPropertyInteger('EMS_Max_Power_W');
         $batLimits = $this->getBatteryPowerLimitsKw($inv, $maxW, $capKwh);
 
@@ -4049,7 +4057,10 @@ class EMS extends IPSModule
         $manual = (float)$this->ReadPropertyFloat('ANL_Verguetung_ct');
         if ($manual > 0.0) { return array('eur' => $manual / 100.0, 'quelle' => 'eingetragen', 'bekannt' => true); }
         if ($this->ReadPropertyInteger('VAR_TIB_Feed_Tariff') > 0) {
-            return array('eur' => (float)$this->readVar('VAR_TIB_Feed_Tariff', 0.1836), 'quelle' => 'variable', 'bekannt' => true);
+            // Nur ein positiver Wert zaehlt. Verknuepfte Variable ohne Wert (0/leer) ist "unbekannt" (kein Fremdwert als Vorgabe);
+            // wer wirklich keine Verguetung hat, setzt das Haekchen "Ich bekomme keine Einspeiseverguetung".
+            $vv = (float)$this->readVar('VAR_TIB_Feed_Tariff', 0.0);
+            if ($vv > 0.0) { return array('eur' => $vv, 'quelle' => 'variable', 'bekannt' => true); }
         }
         $kwp = $this->getPlantKwp();
         if ($ibn !== '' && $kwp > 0.0) {
@@ -4103,7 +4114,7 @@ class EMS extends IPSModule
         if ($n === 0 || $sum <= 0) { return null; }
         $wNow = ($price[$nowSlot] !== null) ? max(0.01, (float)$price[$nowSlot]) : ($sum / $n);
 
-        $capKwh = (float)$this->ReadPropertyFloat('BAT_Capacity_kWh');
+        $capKwh = $this->batteryCapacityKwh();
         $lim    = $this->getBatteryPowerLimitsKw($this->getInverterEntry(), (float)$this->ReadPropertyInteger('EMS_Max_Power_W'), $capKwh);
         $eKwh   = ($soc - $floor) / 100.0 * $capKwh;
         // Zeitgenau: Von der laufenden Viertelstunde ist nur noch der Bruchteil $f uebrig. Wuerde man sie
@@ -4239,7 +4250,7 @@ class EMS extends IPSModule
         // Xset <= Anschlussgrenze + PV - Haus - Wallbox. Bleibt zu wenig uebrig, gibt es nichts zu laden.
         if ($op === EMS_OP_NET_CHARGE && $gwMode === GW_MODE_BAT_CHARGE) {
             $maxW   = (float)$this->ReadPropertyInteger('EMS_Max_Power_W');
-            $lim    = $this->getBatteryPowerLimitsKw($this->getInverterEntry(), $maxW, (float)$this->ReadPropertyFloat('BAT_Capacity_kWh'));
+            $lim    = $this->getBatteryPowerLimitsKw($this->getInverterEntry(), $maxW, $this->batteryCapacityKwh());
             $wbW    = ((float)$s['wb1_pow_kw'] + (float)$s['wb2_pow_kw']) * 1000.0;
             $budget = $maxW + (float)$s['pv_total_w'] - (float)$s['house_pow_w'] - $wbW;
             $xset   = (int)max(0, round(min((float)$powerW, $lim['chargeKw'] * 1000.0, $budget)));
@@ -4806,6 +4817,17 @@ class EMS extends IPSModule
             $s['bat_pow_w']  = 0.0;
         }
 
+        // Ohne aktuellen SOC keine Batteriesteuerung: ein fehlender/eingefrorener Wert (WR-Ausfall, Verbindungsverlust)
+        // wuerde sonst als 0 % gelten und Netzladen ausloesen. Ergebnis: Automatik, Batterie "nicht verfuegbar".
+        if ($s['bat_active']) {
+            $socVarId = ($fromIhub && ($inv['socID'] ?? 0) > 0) ? (int)$inv['socID'] : (int)$this->ReadPropertyInteger('VAR_BAT1_SOC');
+            if ($socVarId <= 0 || !$this->isFreshVar($socVarId, 'Batterie-SOC')) {
+                $s['bat_active'] = false;
+                $s['bat_unavailable'] = ($socVarId <= 0) ? 'Kein Batterie-SOC verfuegbar' : 'Batterie-SOC veraltet (Wechselrichter/Verbindung)';
+                $this->emsLog(EMS_LOG_VERBOSE, 'Batteriesteuerung ausgesetzt: ' . $s['bat_unavailable']);
+            }
+        }
+
         // Wallboxen
         $s['wb_active']     = $this->ReadPropertyBoolean('WB_Active');
         $s['wb_count']      = $this->ReadPropertyInteger('WB_Count');
@@ -4833,7 +4855,7 @@ class EMS extends IPSModule
         $s['tib_active']    = $this->ReadPropertyBoolean('TIBBER_Active');
         $s['tib_price']     = $s['tib_active'] ? (float)$this->readVar('VAR_TIB_Price',       0)     : 0.0;
         $s['tib_level']     = $s['tib_active'] ? (int)  $this->readVar('VAR_TIB_Level',       2)     : 2;
-        $s['tib_feed']      = (float)$this->getFeedTariffEur()['eur']; // haengt an der Anlage, nicht am Tibber-Schalter
+        $s['tib_feed']      = $this->planFeedTariffEur(); // haengt an der Anlage, nicht am Tibber-Schalter; unbekannt = 0
 
         // PV Forecast
         $s['fc_active']     = $this->ReadPropertyBoolean('FORECAST_Active');
@@ -5067,10 +5089,11 @@ class EMS extends IPSModule
         if ($this->hasArbitrageToday()) {
 
         // ── 1. §14a Nacht-Laden ──────────────────────────────────────
-        if ($s['enwg_in_window'] && $s['bat_active'] && $soc < ($socTargetNight - $hystSoc)) {
+        $w14 = ($s['enwg_in_window'] && $s['bat_active'] && $soc < ($socTargetNight - $hystSoc)) ? $this->runtimeGridChargeW($s, (float)$maxW) : 0;
+        if ($w14 >= 500) { // ohne Anschluss-/Ladebudget wird nicht gezwungen
             $d['op_mode']    = EMS_OP_NET_CHARGE;
             $d['gw_mode']    = GW_MODE_BAT_CHARGE;
-            $d['gw_power_w'] = max(500, $this->runtimeGridChargeW($s, (float)$maxW));
+            $d['gw_power_w'] = $w14;
             $d['wb1_enable'] = ($s['wb1_cable'] > 0 && $s['wb1_error'] === 0);
             $d['wb2_enable'] = ($s['wb_count'] >= 2 && $s['wb2_cable'] > 0 && $s['wb2_error'] === 0);
             $d['reason']     = sprintf(
@@ -5197,7 +5220,7 @@ class EMS extends IPSModule
         // Projizierten Netzbezug schaetzen: aktueller Bezug, angepasst um
         // die geplanten Aenderungen je Wallbox (neu an: + max. Leistung als
         // Worst-Case, neu aus: - zuletzt gemessene Leistung).
-        $projected = $s['grid_total_w'];
+        $projected = -(float)$s['grid_total_w']; // Bezug positiv (grid_total_w: + Einspeisung, - Bezug)
         foreach ($wbs as $wb) {
             $wasOn = $wb['currentW'] > 100;
             if ($wb['enable'] && !$wasOn) {
@@ -5511,13 +5534,16 @@ class EMS extends IPSModule
         $manual = (float)$this->ReadPropertyFloat('ANL_Verguetung_ct');
         if ($manual > 0.0) { return array('eur' => $manual / 100.0, 'quelle' => 'eingetragen', 'bekannt' => true); }
         if ($this->ReadPropertyInteger('VAR_TIB_Feed_Tariff') > 0) {
-            return array('eur' => (float)$this->readVar('VAR_TIB_Feed_Tariff', 0.1836), 'quelle' => 'variable', 'bekannt' => true);
+            // Nur ein positiver Wert zaehlt. Verknuepfte Variable ohne Wert (0/leer) ist "unbekannt" (kein Fremdwert als Vorgabe);
+            // wer wirklich keine Verguetung hat, setzt das Haekchen "Ich bekomme keine Einspeiseverguetung".
+            $vv = (float)$this->readVar('VAR_TIB_Feed_Tariff', 0.0);
+            if ($vv > 0.0) { return array('eur' => $vv, 'quelle' => 'variable', 'bekannt' => true); }
         }
         $ibn = $this->getPlantIbn();
         $kwp = $this->getPlantKwp();
         if ($ibn !== '' && $kwp > 0.0) {
             $ct = $this->lookupEegTariffCt($this->loadEegTable(), $ibn, $kwp, $this->ReadPropertyInteger('ANL_Einspeiseart') === 1);
-            if ($ct !== null) { return array('eur' => $ct / 100.0, 'quelle' => 'berechnet'); }
+            if ($ct !== null) { return array('eur' => $ct / 100.0, 'quelle' => 'berechnet', 'bekannt' => true); }
         }
         return array('eur' => 0.1836, 'quelle' => 'platzhalter', 'bekannt' => false);
     }
@@ -5568,6 +5594,13 @@ class EMS extends IPSModule
         $prop = (float)$this->ReadPropertyFloat('BAT_Capacity_kWh');
         if ($prop > 0.0) { return array('kwh' => $prop, 'quelle' => 'einstellung'); }
         return array('kwh' => 0.0, 'quelle' => 'fehlt');
+    }
+
+    /** Speicherkapazitaet fuer Rechnungen: gemessene Wechselrichter-Angabe, sonst Einstellung (Standard 10 kWh). */
+    private function batteryCapacityKwh(): float
+    {
+        $c = $this->getPlantStorageKwh();
+        return ($c['kwh'] > 0.0) ? (float)$c['kwh'] : (float)$this->ReadPropertyFloat('BAT_Capacity_kWh');
     }
 
     /** Anlagengroesse in kWp: eingetragen, sonst PV-Prognose (PVF_GetGenerators totalKwp), sonst 0. */
@@ -6267,7 +6300,7 @@ class EMS extends IPSModule
             'pv'         => json_decode($this->ReadAttributeString('FcPvToday'), true) ?: array(),
             'load'       => json_decode($this->ReadAttributeString('FcLoadToday'), true) ?: array(),
             'avgHouseW'  => (float)$this->ReadPropertyInteger('NEG_Avg_House_Load_W'),
-            'capKwh'     => (float)$this->ReadPropertyFloat('BAT_Capacity_kWh'),
+            'capKwh'     => $this->batteryCapacityKwh(),
             'soc'        => (float)$s['bat_soc'],
             'pvW'        => (float)$s['pv_total_w'],
             'houseW'     => (float)$s['house_pow_w'],
@@ -6319,7 +6352,9 @@ class EMS extends IPSModule
         }
         $chargeW  = max(0.0, -(float)$s['bat_pow_w']);            // bat_pow_w: + Entladen, - Laden
         $wantW    = (float)($d['gw_power_w'] ?? 0);
-        $tooLow   = ($chargeW < max(300.0, 0.1 * min($wantW, 24000.0))) && ((float)$s['bat_soc'] < 99.5);
+        $limKw    = $this->getBatteryPowerLimitsKw($this->getInverterEntry(), (float)$this->ReadPropertyInteger('EMS_Max_Power_W'), $this->batteryCapacityKwh());
+        $refW     = min($wantW, max(500.0, (float)$limKw['chargeKw'] * 1000.0));
+        $tooLow   = ($chargeW < max(300.0, 0.1 * $refW)) && ((float)$s['bat_soc'] < 99.5);
         if (!$tooLow) {
             if ($this->ReadAttributeInteger('ChargeNoEffectSince') > 0) { $this->WriteAttributeInteger('ChargeNoEffectSince', 0); }
             return $d;
@@ -6481,7 +6516,7 @@ class EMS extends IPSModule
 
         if ($modeChanging && !$isGridRewards && ($now - $lastDecision) < $cooldown) {
             $this->emsLog(EMS_LOG_VERBOSE, 'Cooldown aktiv (' . ($now - $lastDecision) . 's < ' . $cooldown . 's) -- reassert letzter Modus ' . $lastMode . '/enable=' . ($lastEnable ? '1' : '0'));
-            $this->setGoodweMode($lastMode, 0, $lastEnable);
+            $this->setGoodweMode($lastMode, $this->ReadAttributeInteger('LastGoodwePowerW'), $lastEnable);
             return;
         }
 
@@ -6632,6 +6667,15 @@ class EMS extends IPSModule
                 // Netzbezug.
                 $iid       = $inv['instanceID'];
                 $modeVarId = $this->findChildVariableIdByIdent($iid, 'ctl_ems_mode');
+                // Wechselrichter ohne EMS-Stellglieder (andere Hersteller): nichts schreiben, einmal pro Stunde melden
+                $hasKids = count(IPS_GetChildrenIDs($iid)) > 0;
+                if ($hasKids && ($modeVarId <= 0 || $this->findChildVariableIdByIdent($iid, 'ctl_ems_power') <= 0 || $this->findChildVariableIdByIdent($iid, 'ctl_ems_enable') <= 0)) {
+                    if (time() - $this->ReadAttributeInteger('NoControlLoggedAt') > 3600) {
+                        $this->WriteAttributeInteger('NoControlLoggedAt', time());
+                        $this->emsLog(EMS_LOG_BASIC, sprintf('setGoodweMode: WR #%d hat keine EMS-Stellglieder (ctl_ems_mode/-power/-enable) -- EMS beobachtet nur', $iid));
+                    }
+                    return;
+                }
                 $istModus  = ($modeVarId > 0) ? (int)GetValue($modeVarId) : -1;
                 if ($istModus !== (int)$mode) {
                     IPS_RequestAction($iid, 'ctl_ems_power', 0);
@@ -6646,10 +6690,13 @@ class EMS extends IPSModule
                 IPS_RequestAction($iid, 'ctl_ems_enable', (bool)$enable);
                 return;
             }
-            $this->emsLog(EMS_LOG_BASIC, sprintf(
-                'setGoodweMode: WR #%d hat Steuerhoheit "%s" (nicht "ems") oder ist nicht steuerbar — EMS greift nicht ein (Situation B)',
-                $inv['instanceID'], $authority
-            ));
+            if (time() - $this->ReadAttributeInteger('NoControlLoggedAt') > 3600) {
+                $this->WriteAttributeInteger('NoControlLoggedAt', time());
+                $this->emsLog(EMS_LOG_BASIC, sprintf(
+                    'setGoodweMode: WR #%d hat Steuerhoheit "%s" (nicht "ems") oder ist nicht steuerbar — EMS greift nicht ein (Situation B)',
+                    $inv['instanceID'], $authority
+                ));
+            }
             return;
         }
 

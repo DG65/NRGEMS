@@ -237,7 +237,7 @@
                     "caption": "Fallback-Modus",
                     "options": [
                         {
-                            "caption": "Automatik (Goodwe entscheidet)",
+                            "caption": "Automatik (Wechselrichter entscheidet)",
                             "value": 1
                         },
                         {
@@ -1238,7 +1238,7 @@
                 {
                     "type": "CheckBox",
                     "name": "TIBBER_Active",
-                    "caption": "Tibber Preisoptimierung aktivieren"
+                    "caption": "Preisoptimierung mit dynamischem Tarif aktivieren (Tibber oder eigene Preisvariable)"
                 },
                 {
                     "type": "Label",

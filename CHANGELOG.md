@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.51.1 (2026-09-20)
+Systematische Prüfung auf Anlagen-Annahmen und Konstellationen (zwei unabhängige Durchsichten von `module.php`).
+- **Behoben (in 0.51.0 eingeführt):** Eine aus Inbetriebnahme und Größe berechnete Einspeisevergütung galt für
+  Planung und Preisregeln fälschlich als „unbekannt“ (fehlendes Feld `bekannt`); die Preisreferenz wäre dadurch
+  auch bei bekannter Vergütung auf Ersatz-Bezugspreis gefallen. Nicht live wirksam geworden.
+- **§ 14a-Einspeisereduktion** rechnet auf die installierte PV-Leistung (kWp), nicht auf den Hausanschluss.
+- **Netzanschluss-Budget der Wallboxen** (`enforceGridImportBudget`): Vorzeichenfehler behoben (Netz: + Einspeisung,
+  − Bezug); vorher wurde Überlast nicht erkannt bzw. bei Einspeisung unnötig gedrosselt.
+- **Ohne aktuellen Batterie-SOC keine Batteriesteuerung:** fehlt der SOC oder ist er älter als 10 Minuten, gilt die
+  Batterie als nicht verfügbar (Automatik) statt als 0 % (das hätte Netzladen ausgelöst).
+- **Wechselrichter ohne EMS-Stellglieder** (`ctl_ems_mode/-power/-enable`, andere Hersteller): EMS schreibt nichts und
+  meldet es einmal pro Stunde statt alle 30 s.
+- **Cooldown-Reassert** sendet die letzte Sollleistung statt 0 W (Xset-Modi wurden während der Cooldown-Zeit auf 0 W gesetzt).
+- **Speicherkapazität:** Plan und Regeln nutzen die vom Wechselrichter gemeldete Kapazität, dann die Einstellung.
+- **Wächter „Netzladen ohne Wirkung“** rechnet mit der realen Ladegrenze statt fest 24 kW.
+- **§ 14a-Nachtladen** wird ohne Anschluss-/Ladebudget nicht mehr mit 500 W erzwungen.
+- **Netzladung** nutzt `SITE_Max_Grid_Import_W` (eigene Anschlussangabe), sonst die EMS-Leistungsgrenze.
+- Vergütungsvariable ohne positiven Wert gilt als unbekannt (kein 18,36-ct-Vorgabewert).
+- Formular: „Preisoptimierung mit dynamischem Tarif“ statt „Tibber“, „Automatik (Wechselrichter entscheidet)“.
+- Offen (bekannt): Zeitumstellung (Slot-Zählung nach Wanduhr gegen verstrichene Zeit, 25.10.2026), mehrere Wechselrichter,
+  Wallbox-Strom je Phasenzahl, Sperren ohne `chargeEnableID`, Preisschwellen `TIB_Threshold_*` als feste Werte.
+
 ## 0.51.0 (2026-09-20)
 **Keine Werte der Entwicklungsanlage mehr als stille Vorgabe** (Dietmar: „an alle möglichen Nutzer und Konstellationen denken“).
 - **Einspeisevergütung „unbekannt“ ≠ 18,36 ct:** Der Platzhalter 0,1836 €/kWh steuerte bisher die Preisregeln jedes

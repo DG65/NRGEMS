@@ -489,6 +489,28 @@ check('Verguetung 8 ct, Referenz Verguetung: Netzladen sehr streng (Grenze 7,6 c
 prop('NETZLADUNG_Referenz', 1);
 check('Verguetung 8 ct, aber Referenz Ersatz-Bezugspreis gewaehlt: Modus 1', call($ems, 'chargeReferenceMode') === 1);
 
+echo "\n8f) Konstellationen: berechnete Verguetung, Netzanschluss-Budget, Wechselrichter ohne Stellglieder\n";
+$ems = freshEms();
+prop('ANL_Verguetung_ct', 0.0); prop('ANL_IBN_Datum', '2012-10-24'); prop('ANL_kWp_Manuell', 9.18);
+check('aus Inbetriebnahme und Groesse berechnete Verguetung ist BEKANNT und gilt fuer Planung (Referenz 0)', call($ems, 'planFeedTariffEur') > 0.15 && call($ems, 'chargeReferenceMode') === 0, json_encode(call($ems, 'getFeedTariffEur')));
+$ems = freshEms(); prop('SITE_Max_Grid_Import_W', 12000); prop('WB_Active', true); prop('WB_Count', 1); prop('WB1_Max_Power_W', 11000);
+$dW = ['wb1_enable' => true, 'wb2_enable' => false];
+call($ems, 'enforceGridImportBudget', [&$dW, state(['grid_total_w' => -6000.0, 'wb1_pow_kw' => 0.0, 'wb_count' => 1])]);
+check('Netzbezug 6 kW + neue Wallbox 11 kW ueberschreitet 12 kW: Wallbox wird gedrosselt (Vorzeichen: Bezug negativ)', $dW['wb1_enable'] === false, json_encode($dW));
+$dW2 = ['wb1_enable' => true, 'wb2_enable' => false];
+call($ems, 'enforceGridImportBudget', [&$dW2, state(['grid_total_w' => 5000.0, 'wb1_pow_kw' => 0.0, 'wb_count' => 1])]);
+check('5 kW Einspeisung + Wallbox 11 kW = nur 6 kW Bezug: Wallbox bleibt frei (keine unnoetige Drosselung)', $dW2['wb1_enable'] === true, json_encode($dW2));
+// Wechselrichter mit anderen Variablen, aber ohne EMS-Stellglieder: nichts schreiben
+$ems = freshEms();
+$GLOBALS['INSTMOD'][IHUB_IID] = GUID_INVERTERHUB;
+attr('PartnerCache', json_encode(['inverterhub' => [['instanceID' => IHUB_IID, 'controlAuthority' => 'ems', 'controllable' => true]]]));
+foreach (array_keys($GLOBALS['OBJ']) as $oid) { if (($GLOBALS['OBJ'][$oid]['ParentID'] ?? -1) === IHUB_IID && strpos($GLOBALS['OBJ'][$oid]['ObjectIdent'], 'ctl_ems') === 0) { $GLOBALS['OBJ'][$oid]['ObjectIdent'] = 'x_' . $GLOBALS['OBJ'][$oid]['ObjectIdent']; } }
+$GLOBALS['OBJ'][IHUB_IID]['HasChildren'] = true;
+vari('SOC', IHUB_IID, 'soc', 50, 1);
+$GLOBALS['ACTIONS'] = [];
+call($ems, 'setGoodweMode', [11, 5000, true]);
+check('WR ohne ctl_ems_*-Stellglieder (anderer Hersteller): keine Schreibzugriffe', count($GLOBALS['ACTIONS']) === 0, json_encode($GLOBALS['ACTIONS']));
+
 echo "\n9) Regression 12.09.2026 -- Tagesplan darf die Batterie nicht per Sollwert-Modus ins Netz ziehen\n";
 $ems = freshEms();
 $ctx = ['enwgActive' => false, 'enwgStartH' => 0, 'enwgEndH' => 0, 'avgHouseW' => 300.0, 'houseLoadSlots' => [],
@@ -511,6 +533,7 @@ $ems = freshEms();
 $GLOBALS['INSTMOD'][IHUB_IID] = GUID_INVERTERHUB;
 attr('PartnerCache', json_encode(['inverterhub' => [['instanceID' => IHUB_IID, 'controlAuthority' => 'ems', 'controllable' => true]]]));
 $rb = vari('EMS Leistungsmodus', IHUB_IID, 'ctl_ems_mode', GW_MODE_DISCHARGE, 1); // vom Geraet zurueckgelesener Ist-Modus
+vari('EMS Leistung', IHUB_IID, 'ctl_ems_power', 0, 1); vari('EMS Steuerung', IHUB_IID, 'ctl_ems_enable', false, 0); // Stellglieder wie beim echten GoodWe-Treiber
 $seq = function () { return array_map(fn($x) => $x[1] . '=' . var_export($x[2], true), $GLOBALS['ACTIONS']); };
 
 $GLOBALS['VAL'][$rb] = GW_MODE_DISCHARGE; $GLOBALS['ACTIONS'] = [];
@@ -934,8 +957,8 @@ $GLOBALS['INSTMOD'][300] = GUID_STEUERBOXHUB; $GLOBALS['SBH_STATE'] = ['feedInDi
 attr('FcSpotCurve', json_encode($negKurve)); $GLOBALS['ACTIONS'] = []; call($ems, 'applySteuerboxFeedInLimit');
 check('Netzbetreiber 60 % UND negativer Preis: der strengere Wert (0 W) gilt', end($GLOBALS['ACTIONS'])[1] === 'ctl_export_limit' && end($GLOBALS['ACTIONS'])[2] === 0, json_encode($acts()));
 attr('FcSpotCurve', json_encode($posKurve)); $GLOBALS['ACTIONS'] = []; call($ems, 'applySteuerboxFeedInLimit');
-$soll = (int)round($ems->ReadPropertyInteger('EMS_Max_Power_W') * 0.6);
-check('nur Netzbetreiber 60 %: Grenze 60 % von EMS_Max_Power_W', end($GLOBALS['ACTIONS'])[2] === $soll, json_encode($acts()));
+$soll = (int)round(call($ems, 'getPlantKwp') * 1000.0 * 0.6);
+check('nur Netzbetreiber 60 %: Grenze 60 % der installierten PV-Leistung (kWp), nicht des Hausanschlusses', end($GLOBALS['ACTIONS'])[2] === $soll, json_encode($acts()));
 unset($GLOBALS['INSTMOD'][300]); $GLOBALS['SBH_STATE'] = null;
 $ems = freshEms(); $neu(); $wrEms(); prop('EMS_Active', false); attr('FcSpotCurve', json_encode($negKurve));
 $GLOBALS['ACTIONS'] = []; call($ems, 'applySteuerboxFeedInLimit');
