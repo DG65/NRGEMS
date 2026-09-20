@@ -40,7 +40,7 @@ define('EMS_LOG_VERBOSE',     2);
 
 // Formular-Konvention (siehe EMS/SUITE.md "Einheitliche Formular-Optik"):
 // Was-ist-Neu-Panel ist versionsscharf dismissible, Referenzmuster InverterHub.
-define('EMS_NEWS_VERSION', '0.6.0');
+define('EMS_NEWS_VERSION', '0.60.1');
 
 // NRG-Stack Partnermodul-GUIDs (fuer automatische Discovery, siehe discoverPartners())
 define('GUID_CHARGERHUB',    '{9256C34E-5CFD-4F37-8BFE-E65390EBB37C}');
@@ -665,27 +665,31 @@ class EMS extends IPSModule
                 'items'    => array(
                     array(
                         'type'    => 'Label',
-                        'caption' => '• NEU: Sichtbarer Tagesplan (Wochenplan-Event "EMS Tagesplan (automatisch)" unter dieser Instanz) — zeigt je Viertelstunde, was das EMS vorhat und warum, statt nur reaktiv auf den Momentanpreis zu reagieren. Nutzt PT15M-Preise + PV-Prognose (PVF) + Lastschätzung.'
+                        'caption' => '• NEU: Restwert der Batterieenergie (Beta, Schalter im Panel „Tibber & Tarif“, standardmäßig aus): Ist die gespeicherte Energie später mehr wert als der Netzbezug jetzt, bleibt der Akku geschont und das Haus läuft aus dem Netz. Rechnet vorsichtig mit ausbleibender PV (p10), damit die teuren Zeiten morgens und abends aus günstig gekauftem Strom gedeckt werden können. Wirkt vor allem bei kleinen Speichern und dynamischem Tarif.'
                     ),
                     array(
                         'type'    => 'Label',
-                        'caption' => '• NEU: Export-Entscheidung berücksichtigt jetzt auch, wenn der aktuelle Bezugspreis unter der Einspeisevergütung liegt (typisch mittags) — dann exportiert die Batterie lieber, statt für Eigenverbrauch entladen zu werden, und der Hausverbrauch wird günstig aus dem Netz gedeckt.'
+                        'caption' => '• NEU: Preisquelle ohne Tibber: Wer den Symcon-Strompreis (Anbieter aWATTar, EPEX Spot oder Tibber) installiert hat, bekommt den Tagesplan aus dessen Preisen. Bei mehreren Instanzen die richtige im Panel „Tibber & Tarif“ wählen. Der Preis enthält die dort eingestellten Aufschläge.'
                     ),
                     array(
                         'type'    => 'Label',
-                        'caption' => '• Entfernt: die alten Buttons "Nacht-Ladefenster planen"/"Negativpreis-Vorentladung planen" (schrieben in die Goodwe-eigenen ECO-Zeitfenster-Register, liefen nie automatisch und konnten dem laufenden EMS widersprechen). Beide Aufgaben übernimmt jetzt der Tagesplan, ausgeführt über denselben Weg wie der Rest von EMS (InverterHub ctl_ems_*).'
+                        'caption' => '• NEU: Ladeleistung nach Ladestand: Das EMS lernt die vom Batteriemanagement gemeldete Ladegrenze je 5-Prozent-Stufe aus dem laufenden Betrieb und plant die Nachtladung damit. Kein Archiv und keine bestimmte Hardware nötig.'
                     ),
                     array(
                         'type'    => 'Label',
-                        'caption' => '• Automatische NRG-Stack-Partnermodul-Erkennung (EMS_Discover) — kein manuelles Verknüpfen von Variablen-IDs mehr nötig.'
+                        'caption' => '• NEU: Zusammenhängende Ladefenster: Die günstigsten Viertelstunden werden bevorzugt am Stück gewählt, damit es weniger Umschaltungen gibt. Im Plan steht je Ladefenster die geschätzte Ersparnis (Planzahl, keine Abrechnung).'
                     ),
                     array(
                         'type'    => 'Label',
-                        'caption' => '• Steuerhoheit je Gerät (Situation A/B): EMS erkennt automatisch, wo es schreiben darf und wo ein externer Akteur (Tibber, go-e Controller) bereits regelt.'
+                        'caption' => '• NEU: Trockenlauf: Das EMS rechnet und zeigt seine Entscheidungen, schreibt aber nichts an Wechselrichter und Wallboxen. Kann das EMS an einem Gerät nichts schreiben, steht im Status „nur beobachtend“ mit Grund statt „OK“.'
                     ),
                     array(
                         'type'    => 'Label',
-                        'caption' => '• Steuerung läuft jetzt über die automatisch gefundenen Partnermodule (InverterHub, ChargerHub) statt über die alten, manuell zu verknüpfenden Felder unten in "Wechselrichter & PV"/"Wallboxen" — diese bleiben nur noch als Fallback bestehen, wenn kein Partnermodul gefunden wird.'
+                        'caption' => '• NEU: Wirkungsgrad einstellbar (Wandlungsverlust beim Laden aus dem Netz und beim Entladen fürs Haus), Zykluskosten je kWh und eine Preisreferenz für die Grenze, ab der Netzladen lohnt. Alle Werte sind einstellbar und nie fest auf eine bestimmte Anlage zugeschnitten.'
+                    ),
+                    array(
+                        'type'    => 'Label',
+                        'caption' => '• NEU: Wallbox-Mindestleistung aus der gemeldeten Phasenzahl (sofern die Wallbox sie meldet); eine eingetragene Mindestleistung geht immer vor. Steuerfehler lösen den Rückfall in die Wechselrichter-Automatik jetzt nach Ausfallzeit statt nach einer Fehlerzahl aus.'
                     ),
                     array(
                         'type'    => 'Button',
@@ -3026,7 +3030,7 @@ class EMS extends IPSModule
         // der Akku geschont und das Haus laeuft aus dem Netz. Ersetzt die Reserve-Sonderregeln durch eine Groesse.
         if (!empty($ctx['restwert']) && $loadW > 0.0 && $soc > ($ctx['socMin'] + $ctx['socReserve'] + $ctx['hystSoc'])) {
             $rw = $this->restwertValue($ctx, (int)$slot, (float)$soc);
-            if ($rw['value'] > $price + ($ctx['spread'] ?? 0.0) + 0.001 && $rw['covered'] >= $rw['usable']) {
+            if ($rw['usable'] > 0.05 && $rw['value'] > $price + ($ctx['spread'] ?? 0.0) + 0.001 && $rw['covered'] >= $rw['usable']) {
                 return array('plan' => array('op' => EMS_OP_HOLD, 'gw' => GW_MODE_AC_EXPORT, 'power' => 0, 'rw' => round($rw['value'] * 100, 2),
                     'reason' => sprintf('Restwert: die gespeicherte Energie deckt später Viertelstunden bis %.2fct, Bezug jetzt nur %.2fct -- Akku wird geschont, Haus aus dem Netz', $rw['value'] * 100, $price * 100),
                     'price' => $price, 'soc' => round($soc, 1)), 'soc' => $soc);

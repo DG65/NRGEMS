@@ -1,4 +1,6 @@
 <?php
+// Alle Zeit- und Sommerzeitfaelle sind auf deutsche Ortszeit ausgelegt, unabhaengig von der Zeitzone der Maschine.
+date_default_timezone_set('Europe/Berlin');
 /**
  * Szenario-Pruefstand fuer die EMS-Entscheidungslogik.
  *
@@ -752,6 +754,46 @@ $GLOBALS['PVF_FC'] = [0 => ['p50' => array_fill(0, 96, 3000.0)], 1 => ['p50' => 
 $lo2 = call($ems, 'getPvfSlotsWatt', ['p10']);
 check('Fehlt p10 (aeltere Prognose), gilt p50', $lo2[10] == 3000.0 && $lo2[100] == 4000.0);
 unset($GLOBALS['INSTMOD'][7100]); $GLOBALS['PVF_FC'] = [];
+
+echo "\n8u) Allen-Nutzer-Pruefung: Restwert und Symcon-Strompreis in ungewoehnlichen Konstellationen\n";
+$ems = freshEms();
+$base = ['enwgActive' => false, 'enwgStartH' => 0, 'enwgEndH' => 0, 'avgHouseW' => 300.0, 'houseLoadSlots' => [],
+    'fcMinPower' => 100.0, 'socTargetDay' => 86.0, 'hystSoc' => 2.0, 'socMin' => 0.0, 'socReserve' => 10.0,
+    'socTargetNight' => 100.0, 'capKwh' => 40.0, 'chargeKw' => 48.0, 'dischargeKw' => 48.156, 'maxW' => 34500.0,
+    'feedTariff' => 0.1836, 'thCharge' => 0.15, 'thDischarge' => 0.25, 'spread' => 0.03, 'restwert' => true, 'rwOffset' => 0, 'rwCharge' => []];
+// Restwert ohne jede Prognosedaten (kein rwP/rwNet): darf nichts halten und nicht abstuerzen
+$r = call($ems, 'simulateDaySlot', [40, 0.30, 0.0, 50.0, [], $base, 0.0]);
+check('Restwert ohne Preis-/Bedarfsdaten: kein Halten, kein Fehler', $r['plan']['op'] !== EMS_OP_HOLD, json_encode($r['plan']));
+// SOC unter der Reserve: nichts zu schonen
+$mkP2 = function (array $set) { $p = array_fill(0, 192, 0.30); foreach ($set as $i => $v) { $p[$i] = $v; } return $p; };
+$mkN2 = function (array $set) { $n = array_fill(0, 192, 0.0); foreach ($set as $i => $v) { $n[$i] = $v; } return $n; };
+$cLow = array_merge($base, ['rwP' => $mkP2([60 => 0.90]), 'rwNet' => $mkN2([60 => 5.0])]);
+$rv = call($ems, 'restwertValue', [$cLow, 40, 8.0]);
+check('SOC unter Mindest-/Reservegrenze: nutzbare Energie 0, kein Halten', $rv['usable'] == 0.0, json_encode($rv));
+$r = call($ems, 'simulateDaySlot', [40, 0.30, 0.0, 8.0, [], $cLow, 0.0]);
+check('... auch in der Planung', $r['plan']['op'] !== EMS_OP_HOLD, json_encode($r['plan']));
+// Speicher mit unbekannter Kapazitaet (0)
+$rv0 = call($ems, 'restwertValue', [array_merge($cLow, ['capKwh' => 0.0]), 40, 50.0]);
+$r0 = call($ems, 'simulateDaySlot', [40, 0.30, 0.0, 50.0, [], array_merge($cLow, ['capKwh' => 0.0]), 0.0]);
+check('Kapazitaet 0: keine Division durch Null, kein Halten', $r0['plan']['op'] !== EMS_OP_HOLD && is_finite($rv0['value']), json_encode($rv0));
+// Preise mit Luecken (null) im Horizont
+$pGap = $mkP2([60 => 0.90, 61 => null, 62 => null]);
+$rvg = call($ems, 'restwertValue', [array_merge($base, ['rwP' => $pGap, 'rwNet' => $mkN2([60 => 5.0, 61 => 5.0, 62 => 5.0])]), 40, 40.0]);
+check('Preisluecken (null) werden uebersprungen, kein Fehler', is_finite($rvg['value']), json_encode($rvg));
+// Restwert liefert nie Halten, wenn gerade PV-Ueberschuss da ist (Vorrang PV-Laden)
+$r = call($ems, 'simulateDaySlot', [40, 0.30, 5000.0, 30.0, [], array_merge($base, ['rwP' => $mkP2([60 => 0.90]), 'rwNet' => $mkN2([60 => 30.0])]), 0.0]);
+check('Bei PV-Ueberschuss hat das PV-Laden Vorrang vor dem Restwert', $r['plan']['op'] !== EMS_OP_HOLD, json_encode($r['plan']));
+// Symcon-Strompreis: nur heute vorhanden (morgen noch nicht veroeffentlicht) und Stundenraster
+$GLOBALS['INSTMOD'][7201] = GUID_POWERPRICE; obj(7201, 1, 'Strompreis', 0);
+$dd0 = strtotime('today'); $mdOne = [];
+for ($h = 0; $h < 24; $h++) { $mdOne[] = ['start' => $dd0 + $h * 3600, 'end' => $dd0 + ($h + 1) * 3600, 'price' => 25.0]; }
+vari('Marktdaten', 7201, 'MarketData', json_encode($mdOne), 3);
+$pt = call($ems, 'parsePT15M', [call($ems, 'getPT15MTodayJson'), 0]); $pm = call($ems, 'parsePT15M', [call($ems, 'getPT15MTomorrowJson'), 1]);
+check('Nur heute veroeffentlicht: heute 96 Slots belegt, morgen alle leer (null), kein Fehler', count(array_filter($pt, fn($v) => $v !== null)) === 96 && count(array_filter($pm, fn($v) => $v !== null)) === 0);
+// kaputte Marktdaten
+$GLOBALS['VAL'][$GLOBALS['NEXTID'] - 1] = 'kein json';
+check('Kaputte Marktdaten (kein JSON): keine Quelle statt Fehler', call($ems, 'getPT15MTodayJson') === '');
+unset($GLOBALS['INSTMOD'][7201]);
 
 echo "\n9) Regression 12.09.2026 -- Tagesplan darf die Batterie nicht per Sollwert-Modus ins Netz ziehen\n";
 $ems = freshEms();

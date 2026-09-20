@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.60.2 (2026-09-20)
+- **„Neu in Version“ im Formular auf den Stand gebracht:** Das Panel nannte noch Neuerungen von 0.6.0. Jetzt stehen dort Restwert, Symcon-Strompreis,
+  Ladeleistung nach Ladestand, zusammenhängende Ladefenster, Trockenlauf, einstellbarer Wirkungsgrad, Wallbox-Mindestleistung und der
+  Fallback nach Ausfallzeit (wieder wegklickbar, erscheint einmal je Version).
+- **Restwert robuster:** Ohne nutzbare Energie (unter Mindest- und Reservegrenze) oder mit unbekannter Kapazität wird nie „gehalten“.
+  Neue Prüfstandsfälle für fehlende Prognose- und Preisdaten, Preislücken, PV-Überschuss, nur heute veröffentlichte Preise im
+  Symcon-Strompreis und defekte Marktdaten.
+- Prüfstand setzt die Zeitzone selbst (Europe/Berlin) und ist damit auf jeder Maschine grün.
+
 ## 0.60.1 (2026-09-20)
 - **Restwert rechnet mit vorsichtiger PV (p10):** Der Restwert darf sich nicht darauf verlassen, dass die PV die Batterie wieder füllt.
   Fällt die PV aus (Schnee, Nebel), müssen die teuren Zeiten morgens und abends aus günstig gekauftem Strom überbrückt werden können.
