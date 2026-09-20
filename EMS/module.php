@@ -2255,7 +2255,7 @@ class EMS extends IPSModule
         $ri = 0;
         $nowTs = time();
         for ($slot = 0; $slot < 96; $slot++) {
-            $slotStart = $dayStart + $slot * 900;
+            $slotStart = $this->slotTimestamp($dayStart, $slot);
             if ($slotStart > $nowTs) { break; } // Zukunft bleibt null, auch mit Startwert
             $slotEnd = $slotStart + 900;
             while ($ri < $n && $rows[$ri]['TimeStamp'] < $slotEnd) {
@@ -3966,7 +3966,7 @@ class EMS extends IPSModule
             // (meist hoeheren) Bezugspreis -- eigener Preiswert nur fuer die
             // Pflicht-Pruefung, der Bezugspreis fuer alles andere bleibt $price.
             if ($negativpreisPflicht) {
-                $spotSlot = $this->spotPriceAt($spotCurve, $dayStart + $slot * 900);
+                $spotSlot = $this->spotPriceAt($spotCurve, $this->slotTimestamp($dayStart, $slot));
                 if ($spotSlot !== null && (float)$spotSlot['price'] < 0.0) {
                     // simulateDaySlot() prueft 'negativpreisPflicht' nur auf den
                     // Bezugspreis -- fuer die Slots, in denen NUR der Boersenpreis
@@ -4648,14 +4648,14 @@ class EMS extends IPSModule
         }
 
         $targetDate = date('Y-m-d', strtotime($dayOffset === 0 ? 'today' : "today +{$dayOffset} day"));
-        // Sommerzeit-fest (Fund der Boersenpreis-Sitzung 13.09.2026): Slot aus
-        // dem Zeitabstand zum Tagesbeginn statt aus date('H:i') -- sonst
-        // ueberschreibt am 25-Stunden-Tag die zweite 02:00-Stunde die erste.
-        // Gleiche Zaehlung wie nowSlot ((time() - today) / 900). Tageslaenge
-        // 92/96/100 Slots, das Array hat mindestens 96 Eintraege.
+        // Sommerzeit: Der Plan zaehlt Viertelstunden nach der WANDUHR (Slot = Stunde*4 + Minute/15, 96 Slots), genau wie
+        // nowSlot, die PV-/Lastprognose und die Anzeige. Preise werden deshalb nach Wanduhrzeit einsortiert.
+        // Am 25-Stunden-Tag (Ende der Sommerzeit) kommt die Stunde 02-03 doppelt vor: es gilt der ERSTE Preis, der
+        // zweite ueberschreibt ihn nicht. Am 23-Stunden-Tag (Beginn der Sommerzeit) fehlt die Stunde 02-03: diese
+        // Slots bleiben null (Automatik). Alle anderen Viertelstunden stimmen exakt.
         $dayStartTs = strtotime($targetDate . ' 00:00:00');
         $dayEndTs   = strtotime('+1 day', $dayStartTs);
-        $prices     = array_fill(0, max(96, intdiv($dayEndTs - $dayStartTs, 900)), null);
+        $prices     = array_fill(0, 96, null);
         // Format: Objekt-Array mit Preis- + Zeitfeld. Unterstuetzt beide
         // bekannten Formen: Tibber Grid Reward liefert `start` als Unix-
         // Timestamp (int) + `price` (contractVersion 1.1, verifiziert
@@ -4691,8 +4691,8 @@ class EMS extends IPSModule
             if ($ts !== null) {
                 if ($ts < $dayStartTs || $ts >= $dayEndTs) { continue; } // gehoert zu einem anderen Kalendertag
                 $slot = $this->slotIndexForTs($ts, $dayStartTs);
-                if ($slot >= 0 && $slot < count($prices)) {
-                    $prices[$slot] = $price;
+                if ($slot >= 0 && $slot < count($prices) && $prices[$slot] === null) {
+                    $prices[$slot] = $price; // doppelte Stunde: erster Preis gilt
                 }
             } elseif ($i >= 0 && $i < 96) {
                 $prices[$i] = $price;
@@ -5764,10 +5764,10 @@ class EMS extends IPSModule
         return array('w' => (int)round($kwp * 1000.0 * $pct / 100.0), 'pct' => $pct, 'grund' => $grund);
     }
 
-    /** Viertelstunden-Index eines Zeitpunkts ab Tagesbeginn (sommerzeitfest, 0..91/95/99). */
+    /** Viertelstunden-Index eines Zeitpunkts nach Wanduhr (0..95, wie nowSlot und die Prognosen). */
     private function slotIndexForTs(int $ts, int $dayStartTs): int
     {
-        return intdiv($ts - $dayStartTs, 900);
+        return (int)(((int)date('G', $ts) * 60 + (int)date('i', $ts)) / 15);
     }
 
     /**
@@ -6295,7 +6295,7 @@ class EMS extends IPSModule
 
         $was = $this->ReadAttributeBoolean('B1Active');
         $r = $this->b1Evaluate(array(
-            'nowSlot'    => (int)((time() - strtotime('today')) / 900),
+            'nowSlot'    => (int)(((int)date('H') * 60 + (int)date('i')) / 15),
             'latestSlot' => max(0, min(24, $this->ReadPropertyInteger('NETZ_B1_Latest_Hour'))) * 4,
             'pv'         => json_decode($this->ReadAttributeString('FcPvToday'), true) ?: array(),
             'load'       => json_decode($this->ReadAttributeString('FcLoadToday'), true) ?: array(),

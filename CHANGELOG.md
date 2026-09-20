@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.51.2 (2026-09-20)
+- **Zeitumstellung (25.10.2026: 25-Stunden-Tag, 28.03.2027: 23-Stunden-Tag):** Preise und Plan zählten Viertelstunden
+  unterschiedlich (Preise nach verstrichener Zeit, Plan/Prognosen/`nowSlot` nach Wanduhr). Ab der Umstellung wäre der
+  Plan um eine Stunde verschoben gewesen. Jetzt zählt alles nach Wanduhr (96 Slots): Preise werden nach Uhrzeit
+  einsortiert, am 25-Stunden-Tag gilt für die doppelte Stunde 02–03 der erste Preis, am 23-Stunden-Tag bleiben die
+  fehlenden Slots 02–03 leer (Automatik); alle übrigen Viertelstunden stimmen exakt. Archiv-Ist-Werte, Börsenpreis-
+  Abgleich und die Mittagsspitze (B1) nutzen dieselbe Zählung. Prüfstand mit echten Kurven für beide Umstellungstage.
+
 ## 0.51.1 (2026-09-20)
 Systematische Prüfung auf Anlagen-Annahmen und Konstellationen (zwei unabhängige Durchsichten von `module.php`).
 - **Behoben (in 0.51.0 eingeführt):** Eine aus Inbetriebnahme und Größe berechnete Einspeisevergütung galt für

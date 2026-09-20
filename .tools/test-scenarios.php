@@ -511,6 +511,25 @@ $GLOBALS['ACTIONS'] = [];
 call($ems, 'setGoodweMode', [11, 5000, true]);
 check('WR ohne ctl_ems_*-Stellglieder (anderer Hersteller): keine Schreibzugriffe', count($GLOBALS['ACTIONS']) === 0, json_encode($GLOBALS['ACTIONS']));
 
+echo "\n8g) Zeitumstellung: 25-Stunden-Tag (Oktober) und 23-Stunden-Tag (Maerz)\n";
+$ems = freshEms();
+function lastSunday(int $year, int $month): string { $d = new DateTime(sprintf('%04d-%02d-01 00:00:00', $year, $month + 1 > 12 ? 1 : $month + 1)); if ($month + 1 > 12) { $d->modify('+1 year'); } $d->modify('-1 day'); while ($d->format('N') != 7) { $d->modify('-1 day'); } return $d->format('Y-m-d'); }
+$curve = function (string $date, int $n) { $t0 = strtotime($date . ' 00:00:00'); $o = []; for ($i = 0; $i < $n; $i++) { $o[] = ['start' => $t0 + $i * 900, 'end' => $t0 + ($i + 1) * 900, 'price' => 10.0 + $i]; } return json_encode($o); };
+$offsetFor = function (string $date) { return (int)round((strtotime($date . ' 12:00:00') - strtotime('today 12:00:00')) / 86400); };
+$dOkt = lastSunday(2030, 10); $nOkt = (int)((strtotime($dOkt . ' +1 day 00:00:00') - strtotime($dOkt . ' 00:00:00')) / 900);
+check('Testdatum Oktober ist ein 25-Stunden-Tag (100 Viertelstunden)', $nOkt === 100, "$dOkt $nOkt");
+$pOkt = call($ems, 'parsePT15M', [$curve($dOkt, $nOkt), $offsetFor($dOkt)]);
+check('25-Stunden-Tag: genau 96 Slots, Index nach Wanduhr', count($pOkt) === 96);
+check('25-Stunden-Tag: 12:00 Uhr (Slot 48) hat den Preis der Viertelstunde 12:00, nicht den einer Stunde davor/danach', abs($pOkt[48] - (0.10 + 52 * 0.01)) < 1e-9, (string)$pOkt[48]);
+check('25-Stunden-Tag: vor der Umstellung (Slot 4 = 01:00) exakt', abs($pOkt[4] - (0.10 + 4 * 0.01)) < 1e-9);
+check('25-Stunden-Tag: doppelte Stunde 02-03 (Slots 8-11): der erste Preis gilt', abs($pOkt[8] - (0.10 + 8 * 0.01)) < 1e-9 && abs($pOkt[11] - (0.10 + 11 * 0.01)) < 1e-9);
+check('25-Stunden-Tag: 23:45 (Slot 95) hat einen Preis', $pOkt[95] !== null && abs($pOkt[95] - (0.10 + 99 * 0.01)) < 1e-9, (string)$pOkt[95]);
+$dMrz = lastSunday(2031, 3); $nMrz = (int)((strtotime($dMrz . ' +1 day 00:00:00') - strtotime($dMrz . ' 00:00:00')) / 900);
+check('Testdatum Maerz ist ein 23-Stunden-Tag (92 Viertelstunden)', $nMrz === 92, "$dMrz $nMrz");
+$pMrz = call($ems, 'parsePT15M', [$curve($dMrz, $nMrz), $offsetFor($dMrz)]);
+check('23-Stunden-Tag: Slots 8-11 (02:00-03:00, gibt es nicht) bleiben leer, 12:00 (Slot 48) hat den Preis der Viertelstunde 12:00', $pMrz[8] === null && $pMrz[11] === null && abs($pMrz[48] - (0.10 + 44 * 0.01)) < 1e-9, json_encode([$pMrz[8], $pMrz[48]]));
+check('23-Stunden-Tag: vor der Umstellung exakt (01:00 = Slot 4)', abs($pMrz[4] - (0.10 + 4 * 0.01)) < 1e-9);
+
 echo "\n9) Regression 12.09.2026 -- Tagesplan darf die Batterie nicht per Sollwert-Modus ins Netz ziehen\n";
 $ems = freshEms();
 $ctx = ['enwgActive' => false, 'enwgStartH' => 0, 'enwgEndH' => 0, 'avgHouseW' => 300.0, 'houseLoadSlots' => [],
@@ -911,11 +930,11 @@ $tzAlt = date_default_timezone_get(); date_default_timezone_set('Europe/Berlin')
 $ems = freshEms();
 $d25 = mktime(0, 0, 0, 10, 25, 2026); $d26 = mktime(0, 0, 0, 10, 26, 2026);
 check('25.10.2026 hat 25 Stunden = 100 Viertelstunden', intdiv($d26 - $d25, 900) === 100, (string)intdiv($d26 - $d25, 900));
-check('Zeitumstellung: erste 02:00 (Sommerzeit) -> Slot 8, zweite 02:00 (Winterzeit) -> Slot 12, kein Ueberschreiben',
-    call($ems, 'slotIndexForTs', [$d25 + 2 * 3600, $d25]) === 8 && call($ems, 'slotIndexForTs', [$d25 + 3 * 3600, $d25]) === 12);
-check('letzte Viertelstunde des 25-Stunden-Tags -> Slot 99', call($ems, 'slotIndexForTs', [$d26 - 900, $d25]) === 99);
+check('Zeitumstellung (Wanduhr-Slots): beide 02:00 -> Slot 8 (der Preis der ersten gilt, siehe parsePT15M), 03:00 Winterzeit -> Slot 12',
+    call($ems, 'slotIndexForTs', [$d25 + 2 * 3600, $d25]) === 8 && call($ems, 'slotIndexForTs', [$d25 + 3 * 3600, $d25]) === 8 && call($ems, 'slotIndexForTs', [$d25 + 4 * 3600, $d25]) === 12);
+check('letzte Viertelstunde des 25-Stunden-Tags (23:45) -> Slot 95', call($ems, 'slotIndexForTs', [$d26 - 900, $d25]) === 95);
 $d29m = mktime(0, 0, 0, 3, 29, 2026); $d30m = mktime(0, 0, 0, 3, 30, 2026);
-check('29.03.2026 hat 23 Stunden = 92 Viertelstunden, letzte -> Slot 91', intdiv($d30m - $d29m, 900) === 92 && call($ems, 'slotIndexForTs', [$d30m - 900, $d29m]) === 91);
+check('29.03.2026 hat 23 Stunden = 92 Viertelstunden, letzte (23:45) -> Slot 95', intdiv($d30m - $d29m, 900) === 92 && call($ems, 'slotIndexForTs', [$d30m - 900, $d29m]) === 95);
 date_default_timezone_set($tzAlt);
 
 $now = time();
