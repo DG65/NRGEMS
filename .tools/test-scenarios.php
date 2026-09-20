@@ -530,6 +530,20 @@ $pMrz = call($ems, 'parsePT15M', [$curve($dMrz, $nMrz), $offsetFor($dMrz)]);
 check('23-Stunden-Tag: Slots 8-11 (02:00-03:00, gibt es nicht) bleiben leer, 12:00 (Slot 48) hat den Preis der Viertelstunde 12:00', $pMrz[8] === null && $pMrz[11] === null && abs($pMrz[48] - (0.10 + 44 * 0.01)) < 1e-9, json_encode([$pMrz[8], $pMrz[48]]));
 check('23-Stunden-Tag: vor der Umstellung exakt (01:00 = Slot 4)', abs($pMrz[4] - (0.10 + 4 * 0.01)) < 1e-9);
 
+echo "\n8h) Prognose-Aufloesung: 24/48/96 Slots werden auf 96 Viertelstunden umgerechnet\n";
+$ems = freshEms();
+$hourly = array_fill(0, 24, 0.0); $hourly[12] = 4800.0; $hourly[13] = 4800.0; $hourly[11] = 2400.0; $hourly[14] = 2400.0;
+$q = call($ems, 'resampleTo96', [$hourly]);
+check('stuendliche Reihe (24) -> 96 Werte', count($q) === 96);
+check('12:00-Stunde bleibt mittags hoch (Slot 50 = 12:30 ~ 4800 W), Nacht bleibt 0', abs($q[50] - 4800.0) < 1.0 && $q[8] === 0.0, json_encode([$q[50], $q[8]]));
+check('Energie bleibt erhalten (Summe der Viertelstunden/4 ~ Summe der Stunden)', abs(array_sum($q) / 4 - array_sum($hourly)) < 0.02 * array_sum($hourly), (string)(array_sum($q) / 4) . ' vs ' . array_sum($hourly));
+$half = array_map(fn($i) => (float)$i, range(0, 47));
+check('48 Slots -> 96, Rand konstant, streng steigend', count(call($ems, 'resampleTo96', [$half])) === 96 && call($ems, 'resampleTo96', [$half])[95] >= 46.9);
+$r96 = range(0, 95);
+check('96 Slots bleiben unveraendert', call($ems, 'resampleTo96', [$r96]) === $r96);
+$withNull = call($ems, 'resampleTo96', [array_merge(array_fill(0, 12, 100.0), array_fill(0, 12, null))]);
+check('fehlende Werte (null) werden nicht interpoliert', $withNull[10] === 100.0 && $withNull[90] === null);
+
 echo "\n9) Regression 12.09.2026 -- Tagesplan darf die Batterie nicht per Sollwert-Modus ins Netz ziehen\n";
 $ems = freshEms();
 $ctx = ['enwgActive' => false, 'enwgStartH' => 0, 'enwgEndH' => 0, 'avgHouseW' => 300.0, 'houseLoadSlots' => [],

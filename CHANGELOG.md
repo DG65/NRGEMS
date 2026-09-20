@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.51.3 (2026-09-20)
+- **Prognose-Auflösung:** PV-Prognose (p50, p10) und Lastprognose werden beliebig aufgelöst gelesen (24 = stündlich, 48, 96
+  Slots) und auf 96 Viertelstunden umgerechnet (linear zwischen den Slotmitten, `null` bleibt `null`). Vorher nahm das
+  EMS immer 96 Slots an: Bei der Standardeinstellung der Prognose (60 Minuten, 24 Slots) wurden PV-Zeiten falsch
+  zugeordnet (Stunde als Viertelstunde), die Lastprognose wurde ganz verworfen.
+
 ## 0.51.2 (2026-09-20)
 - **Zeitumstellung (25.10.2026: 25-Stunden-Tag, 28.03.2027: 23-Stunden-Tag):** Preise und Plan zählten Viertelstunden
   unterschiedlich (Preise nach verstrichener Zeit, Plan/Prognosen/`nowSlot` nach Wanduhr). Ab der Umstellung wäre der

@@ -2166,14 +2166,38 @@ class EMS extends IPSModule
      * Baut ein zusammenhaengendes 192-Slot-Array (heute+morgen, wie bei den
      * Tibber-PT15M-Preisen) aus PVF_GetForecast's p50-Median-Schaetzung in Watt.
      */
+    /**
+     * Rechnet eine Tagesreihe beliebiger Aufloesung (24 = stuendlich, 48, 96 = Viertelstunden, ...) auf 96 Viertelstunden
+     * um: linear zwischen den Slotmitten, an den Raendern konstant. Werte mit null (fehlt) werden nicht interpoliert,
+     * sondern vom naechsten Slot uebernommen. Das EMS rechnet intern immer mit 96 Viertelstunden nach Wanduhr; die
+     * Prognosemodule liefern je nach Einstellung 24/48/96 Slots (Vertrag: `slots` und Array-Laenge sind massgeblich).
+     */
+    private function resampleTo96(array $v): array
+    {
+        $v = array_values($v);
+        $n = count($v);
+        if ($n === 96 || $n < 2) { return ($n === 96) ? $v : array_fill(0, 96, $n === 1 ? $v[0] : null); }
+        $out = array();
+        for ($q = 0; $q < 96; $q++) {
+            $x  = ($q + 0.5) * $n / 96.0 - 0.5;       // Position im Quellraster (Slotmitte = ganze Zahl)
+            $i0 = (int)floor($x);
+            $f  = $x - $i0;
+            $a  = $v[max(0, min($n - 1, $i0))];
+            $b  = $v[max(0, min($n - 1, $i0 + 1))];
+            if ($a === null || $b === null) { $out[] = ($f < 0.5) ? $a : $b; continue; }
+            $out[] = (float)$a + ((float)$b - (float)$a) * $f;
+        }
+        return $out;
+    }
+
     private function getPvfSlotsWatt()
     {
         $pvfId = $this->getPvfInstance();
         if ($pvfId <= 0) { return array(); }
         $today    = PVF_GetForecast($pvfId, 0);
         $tomorrow = PVF_GetForecast($pvfId, 1);
-        $todayP50    = $today['p50']    ?? array_fill(0, 96, 0.0);
-        $tomorrowP50 = $tomorrow['p50'] ?? array_fill(0, 96, 0.0);
+        $todayP50    = isset($today['p50'])    && is_array($today['p50'])    ? $this->resampleTo96($today['p50'])    : array_fill(0, 96, 0.0);
+        $tomorrowP50 = isset($tomorrow['p50']) && is_array($tomorrow['p50']) ? $this->resampleTo96($tomorrow['p50']) : array_fill(0, 96, 0.0);
         return array_merge($todayP50, $tomorrowP50); // Index 0-191
     }
 
@@ -2212,8 +2236,8 @@ class EMS extends IPSModule
         $fc = @LFC_GetForecast($lfcId, $offset);
         if (!is_array($fc) || empty($fc['mean']) || !is_array($fc['mean'])) { return $empty; }
         $mean = array_values($fc['mean']);
-        if (count($mean) !== 96) { return $empty; } // fremdes Slot-Raster -- lieber Fallback als falsch zuordnen
-        return $mean;
+        if (count($mean) < 2) { return $empty; }
+        return $this->resampleTo96($mean); // 24/48/96 Slots je nach Einstellung der Prognose
     }
 
     private function getArchiveInstanceId(): int
@@ -5469,7 +5493,7 @@ class EMS extends IPSModule
             $pvfId = $this->getPvfInstance();
             $fcToday = ($pvfId > 0) ? PVF_GetForecast($pvfId, 0) : null;
             $p10 = $this->forecastUsable($fcToday, 0) ? (array)($fcToday['p10'] ?? array()) : array();
-            $this->WriteAttributeString('FcPv10Today', json_encode(count($p10) === 96 ? array_values($p10) : array()));
+            $this->WriteAttributeString('FcPv10Today', json_encode(count($p10) >= 2 ? $this->resampleTo96($p10) : array()));
             // Prognoseguete (Prognose Build 98, Vertrag PVF_CONTRACT_ACCURACY 1.0)
             $acc = ($pvfId > 0 && function_exists('PVF_GetAccuracy')) ? @PVF_GetAccuracy($pvfId) : null;
             if (is_string($acc)) { $acc = json_decode($acc, true); }
