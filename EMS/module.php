@@ -344,6 +344,7 @@ class EMS extends IPSModule
         $this->RegisterPropertyInteger('VAR_TIB_Price',            0);
         $this->RegisterPropertyInteger('VAR_TIB_Level',            0);
         $this->RegisterPropertyInteger('VAR_TIB_Feed_Tariff',      0);
+        $this->RegisterPropertyBoolean('PLAN_Restwert_Aktiv',      false); // Restwert der Batterieenergie im Plan (Beta)
         $this->RegisterPropertyInteger('PRICE_Source_Instance',    0);  // Symcon-Strompreis: 0 = automatisch (nur bei genau einer Instanz)
         $this->RegisterPropertyInteger('VAR_TIB_PT15M_Today',      0);
         $this->RegisterPropertyInteger('VAR_TIB_PT15M_Tomorrow',   0);
@@ -2840,6 +2841,47 @@ class EMS extends IPSModule
             'reason' => $reason, 'price' => $price, 'soc' => round($soc, 1)), 'soc' => $soc);
     }
 
+    /**
+     * Restwert der gespeicherten Energie (EUR/kWh, Grenzwert): Preis der teuersten kuenftigen Viertelstunde, die NICHT
+     * mehr gedeckt waere, wenn die Batterie jetzt Energie hergibt. Gerechnet wird ueber die naechsten 24 Stunden bis zum
+     * naechsten Wiederauffuellen (PV-Ueberschuss fuellt die freie Kapazitaet, oder ein geplantes Netzladen): danach ist die
+     * Energie ersetzbar und zaehlt nicht. Die Bedarfsslots werden nach Preis absteigend mit der nutzbaren Energie belegt.
+     * Reicht die Energie fuer alles, gilt als Restwert der Wiederbeschaffungspreis (guenstigster Preis / Wirkungsgrad).
+     * Nutzt ctx['rwP'] (Preise EUR/kWh je Slot, 0-191), ctx['rwNet'] (Bedarf minus PV in kWh je Slot, negativ = Ueberschuss),
+     * ctx['rwCharge'] (Slots mit geplantem Netzladen) und ctx['rwOffset'] (Index dieses Plans in 0-191).
+     */
+    private function restwertValue(array $ctx, int $slot, float $soc): array
+    {
+        $p = (array)($ctx['rwP'] ?? array()); $net = (array)($ctx['rwNet'] ?? array());
+        $abs = (int)($ctx['rwOffset'] ?? 0) + $slot;
+        $capUsable = max(0.001, (100.0 - $ctx['socMin'] - $ctx['socReserve']) / 100.0 * $ctx['capKwh']);
+        $usable    = max(0.0, min($capUsable, ($soc - $ctx['socMin'] - $ctx['socReserve']) / 100.0 * $ctx['capKwh']));
+        $room      = $capUsable - $usable;
+        $charge    = array_flip((array)($ctx['rwCharge'] ?? array()));
+        $items = array(); $surplus = 0.0; $minPrice = null;
+        $end = min(192, $abs + 97);
+        for ($i = $abs + 1; $i < $end; $i++) {
+            if (isset($charge[$i])) { break; }
+            $n = (float)($net[$i] ?? 0.0);
+            if (isset($p[$i]) && $p[$i] !== null) { $minPrice = ($minPrice === null) ? (float)$p[$i] : min($minPrice, (float)$p[$i]); }
+            if ($n < 0.0) {
+                $surplus += -$n;
+                if ($surplus >= $room + 0.05) { break; }
+                continue;
+            }
+            if ($n > 0.0 && isset($p[$i]) && $p[$i] !== null) { $items[] = array((float)$p[$i], $n); }
+        }
+        $terminal = ($minPrice !== null) ? max(0.0, $minPrice) / $this->convEff() : 0.0;
+        if (empty($items)) { return array('value' => $terminal, 'covered' => 0.0, 'usable' => $usable); }
+        usort($items, function ($a, $b) { return $b[0] <=> $a[0]; });
+        $cum = 0.0;
+        foreach ($items as $it) {
+            $cum += $it[1];
+            if ($cum >= $usable) { return array('value' => $it[0], 'covered' => $cum, 'usable' => $usable); }
+        }
+        return array('value' => $terminal, 'covered' => $cum, 'usable' => $usable);
+    }
+
     private function simulateDaySlot($slot, $price, $pvW, $soc, array $cheapRank, array $ctx, $expensiveReserveKwh = 0.0)
     {
         $hourOfSlot = (int)($slot / 4);
@@ -2975,6 +3017,18 @@ class EMS extends IPSModule
             return array('plan' => array('op' => EMS_OP_HOLD, 'gw' => GW_MODE_AC_EXPORT, 'power' => 0,
                 'reason' => sprintf('Bezug %.2fct < Einspeiseverguetung %.2fct abzueglich 5 %% Batterieverlust -- Batterie bleibt geschont, Haus aus dem Netz', $price * 100, $ctx['feedTariff'] * 95),
                 'price' => $price, 'soc' => round($soc, 1)), 'soc' => $soc);
+        }
+
+        // Restwert (Beta, PLAN_Restwert_Aktiv): Ist die gespeicherte Energie spaeter mehr wert als der Netzbezug jetzt
+        // (die noch nicht gedeckten teuersten Viertelstunden liegen um mindestens die Mindestspanne darueber), bleibt
+        // der Akku geschont und das Haus laeuft aus dem Netz. Ersetzt die Reserve-Sonderregeln durch eine Groesse.
+        if (!empty($ctx['restwert']) && $loadW > 0.0 && $soc > ($ctx['socMin'] + $ctx['socReserve'] + $ctx['hystSoc'])) {
+            $rw = $this->restwertValue($ctx, (int)$slot, (float)$soc);
+            if ($rw['value'] > $price + ($ctx['spread'] ?? 0.0) + 0.001 && $rw['covered'] >= $rw['usable']) {
+                return array('plan' => array('op' => EMS_OP_HOLD, 'gw' => GW_MODE_AC_EXPORT, 'power' => 0, 'rw' => round($rw['value'] * 100, 2),
+                    'reason' => sprintf('Restwert: die gespeicherte Energie deckt später Viertelstunden bis %.2fct, Bezug jetzt nur %.2fct -- Akku wird geschont, Haus aus dem Netz', $rw['value'] * 100, $price * 100),
+                    'price' => $price, 'soc' => round($soc, 1)), 'soc' => $soc);
+            }
         }
 
         $missingKwh  = max(0.0, ($ctx['socTargetNight'] - $soc) / 100.0 * $ctx['capKwh']);
@@ -3949,6 +4003,22 @@ class EMS extends IPSModule
             'replacePrice' => $this->replacementPriceEur(array_merge(array_values($prices), array_values($tomorrowPrices)), $nowSlot),
         );
 
+        // Restwert (Beta): Preise und Bedarf minus PV je Viertelstunde fuer heute + morgen (0-191)
+        if ($this->ReadPropertyBoolean('PLAN_Restwert_Aktiv')) {
+            $rwP = array(); $rwNet = array();
+            for ($i = 0; $i < 96; $i++) {
+                $rwP[$i]      = $prices[$i] ?? null;
+                $rwP[96 + $i] = $tomorrowPrices[$i] ?? null;
+                $rwNet[$i]      = ((float)($houseLoadSlotsToday[$i] ?? $avgHouseW) - (float)($pvfSlots[$i] ?? 0.0)) / 1000.0 * 0.25;
+                $rwNet[96 + $i] = ((float)($houseLoadSlotsTomorrow[$i] ?? $avgHouseWTomorrow) - (float)($pvfSlots[96 + $i] ?? 0.0)) / 1000.0 * 0.25;
+            }
+            $ctx['restwert'] = true; $ctx['rwP'] = $rwP; $ctx['rwNet'] = $rwNet; $ctx['rwOffset'] = 0; $ctx['rwCharge'] = array();
+            // geplantes Netzladen der kommenden Nacht (Schaetzung mit dem heutigen SOC): dort fuellt sich die Batterie wieder auf
+            $rwTmrCharge = array();
+            $nwEst = $this->nightWindowPlan($tomorrowPrices, 0, $soc, $ctx);
+            foreach (array_keys((array)($nwEst['charge'] ?? array())) as $k) { $rwTmrCharge[] = 96 + (int)$k; }
+        }
+
         $expensiveReserve = $this->computeExpensiveReserveKwh($prices, $thDischarge, $avgHouseW);
         if ($vehicleReserveKwh > 0.0) {
             // Fahrzeug-Bedarf gilt HEUTE durchgehend (ab jetzt bis Tagesende),
@@ -4030,6 +4100,7 @@ class EMS extends IPSModule
                 continue;
             }
             if ($nwToday === false) { $nwToday = $this->nightWindowPlan($prices, $slot, $soc, $ctx); }
+            if (!empty($ctx['restwert'])) { $ctx['rwCharge'] = array_merge(array_keys((array)($nwToday['charge'] ?? array())), $rwTmrCharge); }
             $result = $this->nightWindowSlot($slot, $price, $soc, $nwToday, $ctx);
             if ($result === null) {
                 $result = $hasArbitrageToday
@@ -4070,12 +4141,17 @@ class EMS extends IPSModule
         $ctxTomorrow = $ctx;
         $ctxTomorrow['avgHouseW'] = $avgHouseWTomorrow;
         $ctxTomorrow['houseLoadSlots'] = $houseLoadSlotsTomorrow;
+        if (!empty($ctx['restwert'])) { $ctxTomorrow['rwOffset'] = 96; }
 
         $tomorrowExpensiveReserve = $this->computeExpensiveReserveKwh($tomorrowPrices, $thDischarge, $avgHouseWTomorrow);
         $hasArbitrageTomorrow = $this->hasArbitrageInPrices($tomorrowPrices);
 
         $tomorrowPlan = array();
         $nwTomorrow = $this->nightWindowPlan($tomorrowPrices, 0, $soc, $ctxTomorrow);
+        if (!empty($ctxTomorrow['restwert'])) {
+            $rwc = array_map(function ($k) { return 96 + (int)$k; }, array_keys((array)($nwTomorrow['charge'] ?? array())));
+            $ctxTomorrow['rwCharge'] = array_merge((array)($ctx['rwCharge'] ?? array()), $rwc);
+        }
         for ($slot = 0; $slot < 96; $slot++) {
             $price = $tomorrowPrices[$slot];
             $pvW   = (float)($pvfSlots[96 + $slot] ?? 0.0);

@@ -700,6 +700,46 @@ prop('WB1_Min_Power_W', 2000);
 check('Ausdruecklich eingestellter Wert schlaegt die Meldung der Wallbox', call($ems, 'wallboxMinPowerW', [1]) === 2000.0);
 prop('WB1_Min_Power_W', 4140);
 
+echo "\n8s) Restwert der Batterieenergie (Beta): Akku schonen, wenn spaetere Viertelstunden mehr bringen\n";
+$ems = freshEms();
+$rwCtx = ['enwgActive' => false, 'enwgStartH' => 0, 'enwgEndH' => 0, 'avgHouseW' => 300.0, 'houseLoadSlots' => [],
+    'fcMinPower' => 100.0, 'socTargetDay' => 86.0, 'hystSoc' => 2.0, 'socMin' => 0.0, 'socReserve' => 10.0,
+    'socTargetNight' => 100.0, 'capKwh' => 40.0, 'chargeKw' => 48.0, 'dischargeKw' => 48.156, 'maxW' => 34500.0,
+    'feedTariff' => 0.1836, 'thCharge' => 0.15, 'thDischarge' => 0.25, 'spread' => 0.03,
+    'restwert' => true, 'rwOffset' => 0, 'rwCharge' => []];
+$mkP = function (array $late) { $p = array_fill(0, 192, null); for ($i = 0; $i < 192; $i++) { $p[$i] = 0.30; } foreach ($late as $i => $v) { $p[$i] = $v; } return $p; };
+$mkN = function (array $dem) { $n = array_fill(0, 192, 0.0); foreach ($dem as $i => $v) { $n[$i] = $v; } return $n; };
+// 6 kWh nutzbar (SOC 25 %: 25 - 10 Reserve = 15 % von 40 kWh); spaeter 5 kWh zu 50 ct und 20 kWh zu 35 ct
+$late = []; $dem = [];
+for ($i = 60; $i < 65; $i++) { $late[$i] = 0.50; $dem[$i] = 1.0; }
+for ($i = 70; $i < 90; $i++) { $late[$i] = 0.35; $dem[$i] = 1.0; }
+$c1 = array_merge($rwCtx, ['rwP' => $mkP($late), 'rwNet' => $mkN($dem)]);
+$rv = call($ems, 'restwertValue', [$c1, 40, 25.0]);
+check('Restwert: 6 kWh decken die 5 kWh zu 50 ct und 1 kWh zu 35 ct -> Grenzwert 35 ct', abs($rv['value'] - 0.35) < 1e-9 && abs($rv['usable'] - 6.0) < 1e-6, json_encode($rv));
+$r = call($ems, 'simulateDaySlot', [40, 0.30, 0.0, 25.0, [], $c1, 0.0]);
+check('Bezug jetzt 30 ct < Restwert 35 ct - 3 ct Spanne: Akku halten, Haus aus dem Netz, SOC bleibt', $r['plan']['op'] === EMS_OP_HOLD && abs($r['soc'] - 25.0) < 1e-9 && isset($r['plan']['rw']), json_encode($r['plan']));
+$r = call($ems, 'simulateDaySlot', [40, 0.34, 0.0, 25.0, [], $c1, 0.0]);
+check('Bezug 34 ct: Abstand zum Restwert kleiner als die Mindestspanne, kein Halten', $r['plan']['op'] !== EMS_OP_HOLD, json_encode($r['plan']));
+$c1off = $c1; unset($c1off['restwert']);
+$r = call($ems, 'simulateDaySlot', [40, 0.30, 0.0, 25.0, [], $c1off, 0.0]);
+check('Schalter aus: Verhalten wie bisher (kein Restwert-Halten)', $r['plan']['op'] !== EMS_OP_HOLD || strpos($r['plan']['reason'], 'Restwert') === false, json_encode($r['plan']));
+// Energie reicht fuer alles: kein Halten
+$c2 = array_merge($rwCtx, ['rwP' => $mkP($late), 'rwNet' => $mkN($dem)]);
+$rv2 = call($ems, 'restwertValue', [$c2, 40, 90.0]);
+check('Genug Energie (SOC 90 %, 32 kWh nutzbar) fuer alle 25 kWh Bedarf: Restwert = Wiederbeschaffung (30 ct / 0,95), kein Engpass', abs($rv2['value'] - 0.30 / 0.95) < 1e-6 && $rv2['covered'] < $rv2['usable'], json_encode($rv2));
+$r = call($ems, 'simulateDaySlot', [40, 0.30, 0.0, 90.0, [], array_merge($c2, ['thDischarge' => 0.99]), 0.0]);
+check('Ohne Engpass wird nicht geschont', $r['plan']['op'] !== EMS_OP_HOLD, json_encode($r['plan']));
+// PV fuellt vorher wieder auf: nichts zu bewahren
+$netPv = $dem; for ($i = 50; $i < 58; $i++) { $netPv[$i] = -4.0; }
+$rv3 = call($ems, 'restwertValue', [array_merge($rwCtx, ['rwP' => $mkP($late), 'rwNet' => $mkN($netPv)]), 40, 25.0]);
+check('PV-Ueberschuss fuellt die Batterie vor dem teuren Bedarf wieder auf: Bedarf danach zaehlt nicht (Wiederbeschaffungswert)', abs($rv3['value'] - 0.30 / 0.95) < 1e-6, json_encode($rv3));
+// geplantes Netzladen davor
+$rv4 = call($ems, 'restwertValue', [array_merge($rwCtx, ['rwP' => $mkP($late), 'rwNet' => $mkN($dem), 'rwCharge' => [55]]), 40, 25.0]);
+check('Geplantes Netzladen vor dem teuren Bedarf: Energie ist ersetzbar, Bedarf danach zaehlt nicht', abs($rv4['value'] - 0.30 / 0.95) < 1e-6, json_encode($rv4));
+// morgen-Plan: Offset 96
+$rv5 = call($ems, 'restwertValue', [array_merge($rwCtx, ['rwOffset' => 96, 'rwP' => $mkP([160 => 0.60]), 'rwNet' => $mkN([160 => 10.0])]), 40, 25.0]);
+check('Morgen-Plan (Offset 96): Slot 40 morgen schaut ab Index 137, Bedarf bei 160 wird gefunden, Grenzwert 60 ct', abs($rv5['value'] - 0.60) < 1e-9, json_encode($rv5));
+
 echo "\n9) Regression 12.09.2026 -- Tagesplan darf die Batterie nicht per Sollwert-Modus ins Netz ziehen\n";
 $ems = freshEms();
 $ctx = ['enwgActive' => false, 'enwgStartH' => 0, 'enwgEndH' => 0, 'avgHouseW' => 300.0, 'houseLoadSlots' => [],

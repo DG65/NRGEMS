@@ -1381,6 +1381,11 @@
                 },
                 {
                     "type": "CheckBox",
+                    "name": "PLAN_Restwert_Aktiv",
+                    "caption": "Restwert der Batterieenergie (Beta): Der Akku wird geschont und das Haus läuft aus dem Netz, wenn die gespeicherte Energie später (bis zum nächsten Auffüllen durch PV oder Netzladen) mehr einbringt als der Netzbezug jetzt, mindestens um die Mindestspanne für Preis-Arbitrage. Im Tagesplan als Akku halten mit Begründung sichtbar. Zum Vergleich zuerst im Trockenlauf probieren."
+                },
+                {
+                    "type": "CheckBox",
                     "name": "PLAN_PreDischarge_Active",
                     "caption": "Vorentladen: den Akku vor einem deutlich günstigeren Nachtladefenster über das Netz entleeren (Einspeisung aus der Batterie, preisgewichtet). Nur zusammen mit dem Nachtfenster."
                 },

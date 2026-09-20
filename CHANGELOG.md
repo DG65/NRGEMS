@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.60.0 (2026-09-20)
+- **Restwert der Batterieenergie im Plan (Beta, Schalter `PLAN_Restwert_Aktiv`, Standard aus):** Das EMS bewertet die gespeicherte Energie mit
+  einem Grenzwert statt mit mehreren Reserve-Sonderregeln. Über die nächsten 24 Stunden werden die Viertelstunden mit Bedarf (Hauslast
+  minus PV) nach Preis absteigend mit der nutzbaren Energie belegt; die erste, die nicht mehr gedeckt wäre, setzt den Restwert. Die
+  Betrachtung endet, sobald sich die Batterie wieder auffüllt (PV-Überschuss oder geplantes Netzladen). Reicht die Energie für alles,
+  gilt der Wiederbeschaffungspreis (günstigster Preis / Wirkungsgrad). Liegt der Netzbezug jetzt um mindestens die Mindestspanne unter dem
+  Restwert, plant das EMS „Akku halten, Haus aus dem Netz“ mit Begründung. Bei ausgeschaltetem Schalter ändert sich nichts.
+  Der Plan enthält je gehaltenem Slot das Feld `rw` (Restwert in ct/kWh).
+
 ## 0.59.0 (2026-09-20)
 - **Wallbox-Mindestleistung aus der gemeldeten Phasenzahl:** Meldet die Wallbox ihre aktuelle Phasenzahl (`phases`, ChargerHub-Vertrag
   ab 1.6, derzeit Peblar und go-e im erzwungenen Modus), rechnet das EMS die kleinste sinnvolle Ladeleistung selbst
