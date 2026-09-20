@@ -463,6 +463,8 @@ class EMS extends IPSModule
         $this->RegisterAttributeInteger('ChargeNoEffectHoldUntil', 0);
         $this->RegisterAttributeString('DryRunLast', '');
         $this->RegisterAttributeInteger('LastGoodweWriteAt', 0);
+        $this->RegisterAttributeBoolean('WB1LastSentEnable', false);
+        $this->RegisterAttributeBoolean('WB2LastSentEnable', false);
         $this->RegisterAttributeInteger('LastWB1Switch',     0);
         $this->RegisterAttributeInteger('LastWB2Switch',     0);
         $this->RegisterAttributeInteger('LastDecision',      0);
@@ -1488,8 +1490,20 @@ class EMS extends IPSModule
 
         $ihub = (array)($partners['inverterhub'] ?? array());
         if (!empty($ihub)) {
-            $i = $ihub[0];
+            // Mehrere Wechselrichter: den mit Batterie (und Steuerbarkeit) waehlen, nicht die Reihenfolge der Instanz-IDs
+            // entscheiden lassen. Die PV-Leistung der uebrigen wird zur PV-Summe addiert (extraPvIDs); sie laufen autonom.
+            $bestIdx = 0; $bestScore = -1;
+            foreach ($ihub as $idx => $cand) {
+                $score = ((int)($cand['batPowerID'] ?? 0) > 0 ? 2 : 0) + (!empty($cand['controllable']) ? 1 : 0);
+                if ($score > $bestScore) { $bestScore = $score; $bestIdx = $idx; }
+            }
+            $i = $ihub[$bestIdx];
+            $extraPv = array();
+            foreach ($ihub as $idx => $cand) {
+                if ($idx !== $bestIdx && (int)($cand['pvPowerID'] ?? 0) > 0) { $extraPv[] = (int)$cand['pvPowerID']; }
+            }
             return array(
+                'extraPvIDs'       => $extraPv,
                 'source'           => 'inverterhub',
                 'instanceID'       => $i['instanceID'],
                 'controlAuthority' => $i['controlAuthority'] ?? 'none',
@@ -4809,6 +4823,12 @@ class EMS extends IPSModule
         } else {
             $s['pv_total_w'] = (float)$this->readVar('VAR_PV_Total_Power', 0);
         }
+        // Weitere Wechselrichter (ohne EMS-Steuerung): ihre PV-Leistung gehoert zur Hausbilanz
+        if ($fromIhub) {
+            foreach ((array)($inv['extraPvIDs'] ?? array()) as $xid) {
+                $s['pv_total_w'] += (float)$this->readDiscoveredVar((int)$xid, 0);
+            }
+        }
 
         // Wechselrichter (AC-Gesamtleistung)
         if ($fromIhub && ($inv['acPowerID'] ?? 0) > 0) {
@@ -6798,7 +6818,11 @@ class EMS extends IPSModule
         }
 
         $chargeEnableID = $entry['chargeEnableID'] ?? 0;
-        $isActive = ($chargeEnableID > 0 && IPS_VariableExists($chargeEnableID)) ? (bool)GetValue($chargeEnableID) : false;
+        // Ohne lesbaren Freigabe-Status (kein chargeEnableID) gilt der zuletzt selbst gesendete Zustand, sonst liesse sich
+        // die Wallbox nie sperren (isActive waere immer false).
+        $isActive = ($chargeEnableID > 0 && IPS_VariableExists($chargeEnableID))
+            ? (bool)GetValue($chargeEnableID)
+            : $this->ReadAttributeBoolean('WB' . (int)$num . 'LastSentEnable');
 
         if ($enable && !$isActive) {
             $maxCurrentA = (int)($entry['maxCurrent'] ?? 16);
@@ -6811,10 +6835,12 @@ class EMS extends IPSModule
             // 25.07.2026).
             IPS_RequestAction($instance, 'ctl_curr_limit', $maxCurrentA);
             IPS_RequestAction($instance, 'ctl_enable', true);
+            $this->WriteAttributeBoolean('WB' . (int)$num . 'LastSentEnable', true);
             $this->WriteAttributeInteger('LastWB' . $num . 'Switch', time());
             $this->emsLog(EMS_LOG_BASIC, 'WB' . $num . ' (' . $this->chargerSourceLabel($entry) . ' #' . $instance . ') freigegeben (' . $maxCurrentA . ' A)');
         } elseif (!$enable && $isActive) {
             IPS_RequestAction($instance, 'ctl_enable', false);
+            $this->WriteAttributeBoolean('WB' . (int)$num . 'LastSentEnable', false);
             $this->WriteAttributeInteger('LastWB' . $num . 'Switch', time());
             $this->emsLog(EMS_LOG_BASIC, 'WB' . $num . ' (' . $this->chargerSourceLabel($entry) . ' #' . $instance . ') gesperrt');
         }

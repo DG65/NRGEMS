@@ -544,6 +544,27 @@ check('96 Slots bleiben unveraendert', call($ems, 'resampleTo96', [$r96]) === $r
 $withNull = call($ems, 'resampleTo96', [array_merge(array_fill(0, 12, 100.0), array_fill(0, 12, null))]);
 check('fehlende Werte (null) werden nicht interpoliert', $withNull[10] === 100.0 && $withNull[90] === null);
 
+echo "\n8i) Mehrere Wechselrichter: der mit Batterie wird gesteuert, die uebrigen zaehlen zur PV-Summe\n";
+$ems = freshEms();
+attr('PartnerCache', json_encode(['inverterhub' => [
+    ['instanceID' => 101, 'controlAuthority' => 'none', 'controllable' => false, 'pvPowerID' => 5001, 'batPowerID' => 0, 'socID' => 0],
+    ['instanceID' => 102, 'controlAuthority' => 'ems', 'controllable' => true, 'pvPowerID' => 5002, 'batPowerID' => 5003, 'socID' => 5004],
+]]));
+$invM = call($ems, 'getInverterEntry');
+check('Hybrid-Wechselrichter mit Batterie (#102) wird gewaehlt, nicht der erste (#101)', $invM['instanceID'] === 102 && $invM['batPowerID'] === 5003, json_encode($invM));
+check('PV-Leistung des zweiten Wechselrichters wird zur Summe addiert (extraPvIDs)', $invM['extraPvIDs'] === [5001], json_encode($invM['extraPvIDs']));
+
+echo "\n8j) Wallbox ohne lesbaren Freigabe-Status: sperren geht trotzdem\n";
+$ems = freshEms();
+$GLOBALS['ACTIONS'] = [];
+$entryNoRead = ['instanceID' => 777, 'source' => 'chargerhub', 'chargeEnableID' => 0, 'maxCurrent' => 16];
+call($ems, 'controlWallboxViaChargerHub', [1, $entryNoRead, true]);
+$freigabe = count($GLOBALS['ACTIONS']);
+attr('LastWB1Switch', 0);
+$GLOBALS['ACTIONS'] = [];
+call($ems, 'controlWallboxViaChargerHub', [1, $entryNoRead, false]);
+check('Wallbox ohne chargeEnableID: erst freigeben, danach wird das Sperren wirklich gesendet', $freigabe > 0 && count($GLOBALS['ACTIONS']) > 0 && end($GLOBALS['ACTIONS'])[1] === 'ctl_enable' && end($GLOBALS['ACTIONS'])[2] === false, json_encode($GLOBALS['ACTIONS']));
+
 echo "\n9) Regression 12.09.2026 -- Tagesplan darf die Batterie nicht per Sollwert-Modus ins Netz ziehen\n";
 $ems = freshEms();
 $ctx = ['enwgActive' => false, 'enwgStartH' => 0, 'enwgEndH' => 0, 'avgHouseW' => 300.0, 'houseLoadSlots' => [],

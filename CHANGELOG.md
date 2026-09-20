@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.51.4 (2026-09-20)
+- **Mehrere Wechselrichter:** Statt der ersten InverterHub-Instanz (Reihenfolge der Instanz-IDs) wählt EMS den
+  Wechselrichter mit Batterie und Steuerbarkeit. Die PV-Leistung der übrigen Wechselrichter wird zur PV-Summe
+  addiert (Hausbilanz stimmt); sie laufen weiter autonom, EMS steuert genau einen Batterie-Wechselrichter.
+- **Wallbox ohne lesbaren Freigabe-Status** (kein `chargeEnableID`): EMS merkt sich den zuletzt gesendeten Zustand,
+  damit sich die Wallbox auch dann sperren lässt (bisher: `isActive` war immer falsch, Sperren wurde nie gesendet).
+
 ## 0.51.3 (2026-09-20)
 - **Prognose-Auflösung:** PV-Prognose (p50, p10) und Lastprognose werden beliebig aufgelöst gelesen (24 = stündlich, 48, 96
   Slots) und auf 96 Viertelstunden umgerechnet (linear zwischen den Slotmitten, `null` bleibt `null`). Vorher nahm das
