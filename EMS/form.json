@@ -715,6 +715,22 @@
                 },
                 {
                     "type": "NumberSpinner",
+                    "name": "BAT_Price_EUR",
+                    "caption": "Anschaffungspreis des Speichers (EUR, optional): daraus berechnet das EMS die Verschleißkosten, wenn unten 0 steht",
+                    "digits": 0,
+                    "minimum": 0,
+                    "maximum": 200000,
+                    "suffix": " €"
+                },
+                {
+                    "type": "NumberSpinner",
+                    "name": "BAT_Cycles",
+                    "caption": "Ladezyklen laut Hersteller (optional, z. B. 6000 bis 8000)",
+                    "minimum": 0,
+                    "maximum": 50000
+                },
+                {
+                    "type": "NumberSpinner",
                     "name": "BAT_CycleCost_ct",
                     "caption": "Verschleißkosten der Batterie je entladener kWh (ct, 0 = nicht berücksichtigen). Richtwert: Anschaffungspreis geteilt durch (Zyklenzahl × nutzbare kWh)",
                     "digits": 1,

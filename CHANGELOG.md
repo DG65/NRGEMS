@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.61.0 (2026-09-20)
+- **Verschleißkosten im Formular erfragt:** Neue optionale Felder „Anschaffungspreis des Speichers (EUR)“ und „Ladezyklen laut Hersteller“ (`BAT_Price_EUR`,
+  `BAT_Cycles`). Steht bei „Verschleißkosten je kWh“ 0, berechnet das EMS Preis / (Zyklen × Kapazität) selbst; ein direkt eingetragener Wert gilt
+  weiter vorrangig. Das Formular zeigt den geltenden Wert an. Ohne Angaben werden wie bisher keine Verschleißkosten berücksichtigt (kein Vorgabewert).
+- Prüfstand: die beiden B1-Fälle mit Restüberschuss des Tages überspringen jetzt ab 22:00 statt ab 23:45 (waren abends nach 23 Uhr zeitabhängig rot).
+
 ## 0.60.2 (2026-09-20)
 - **„Neu in Version“ im Formular auf den Stand gebracht:** Das Panel nannte noch Neuerungen von 0.6.0. Jetzt stehen dort Restwert, Symcon-Strompreis,
   Ladeleistung nach Ladestand, zusammenhängende Ladefenster, Trockenlauf, einstellbarer Wirkungsgrad, Wallbox-Mindestleistung und der

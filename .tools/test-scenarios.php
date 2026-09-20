@@ -795,6 +795,25 @@ $GLOBALS['VAL'][$GLOBALS['NEXTID'] - 1] = 'kein json';
 check('Kaputte Marktdaten (kein JSON): keine Quelle statt Fehler', call($ems, 'getPT15MTodayJson') === '');
 unset($GLOBALS['INSTMOD'][7201]);
 
+echo "\n8v) Verschleisskosten aus Preis und Zyklen (im Formular erfragt)\n";
+$ems = freshEms(); prop('BAT_Capacity_kWh', 40.0);
+check('Ohne Angaben: keine Verschleisskosten', call($ems, 'cycleCostCt') === 0.0);
+prop('BAT_Price_EUR', 9998.0);
+check('Nur Preis, keine Zyklen: keine Verschleisskosten (nichts raten)', call($ems, 'cycleCostCt') === 0.0);
+prop('BAT_Cycles', 8000);
+check('9998 EUR / (8000 Zyklen x 40 kWh) = 3,12 ct/kWh', abs(call($ems, 'cycleCostCt') - 3.124375) < 1e-6, (string)call($ems, 'cycleCostCt'));
+prop('BAT_CycleCost_ct', 5.0);
+check('Ausdruecklich eingetragener Wert schlaegt die Rechnung', call($ems, 'cycleCostCt') === 5.0);
+prop('BAT_CycleCost_ct', 0.0); prop('BAT_Capacity_kWh', 0.0);
+check('Unbekannte Kapazitaet: keine Division durch Null', is_finite(call($ems, 'cycleCostCt')));
+prop('BAT_Capacity_kWh', 40.0);
+$lim0 = call($ems, 'gridChargeLimitEur', [['feedTariff' => 0.1836, 'refMode' => 0, 'cycleCost' => 0.0]]);
+$ctxC = ['feedTariff' => 0.1836, 'refMode' => 0, 'cycleCost' => call($ems, 'cycleCostCt') / 100.0];
+$lim1 = call($ems, 'gridChargeLimitEur', [$ctxC]);
+check('Mit Verschleiss sinkt die Netzlade-Grenze um 3,1 ct: 17,44 -> ca. 14,3 ct', abs($lim0 - 0.17442) < 1e-4 && abs($lim1 - (0.17442 - 0.031244)) < 1e-4, "$lim0 / $lim1");
+$formJson = json_decode($ems->GetConfigurationForm(), true);
+check('Formular bleibt gueltig und enthaelt die neuen Felder', strpos(json_encode($formJson), 'BAT_Cycles') !== false && strpos(json_encode($formJson), 'BAT_Price_EUR') !== false);
+
 echo "\n9) Regression 12.09.2026 -- Tagesplan darf die Batterie nicht per Sollwert-Modus ins Netz ziehen\n";
 $ems = freshEms();
 $ctx = ['enwgActive' => false, 'enwgStartH' => 0, 'enwgEndH' => 0, 'avgHouseW' => 300.0, 'houseLoadSlots' => [],
@@ -1043,7 +1062,7 @@ prop('BAT_Capacity_kWh', 40.0);
 $sonnig = state(['bat_soc' => 50.0, 'pv_total_w' => 5000.0, 'house_pow_w' => 400.0]);
 $autoD = ['op_mode' => EMS_OP_AUTO, 'gw_mode' => GW_MODE_AUTO, 'gw_power_w' => 0, 'gw_enable' => false,
     'wb1_enable' => false, 'wb2_enable' => false, 'reason' => 'Automatik', 'source' => 'ems'];
-$spaet = ((int)((time() - strtotime('today')) / 900)) >= 95;
+$spaet = ((int)((time() - strtotime('today')) / 900)) >= 88; // ab 22:00 fehlt der Restueberschuss des Tages fuer diese Faelle
 $d = call($ems, 'applyGridServiceB1', [$autoD, $sonnig]);
 check('Automatik-Entscheidung + Faehigkeit + sonnig: B1 sperrt das Laden (svc, Quelle netzdienlich)', $spaet || (($d['svc'] ?? '') === 'chargeInhibit' && $d['source'] === 'netzdienlich'), fmt($d) . ($spaet ? ' (23:45, uebersprungen)' : ''));
 $planD = array_merge($autoD, ['op_mode' => EMS_OP_NET_CHARGE, 'gw_mode' => GW_MODE_AC_IMPORT, 'gw_power_w' => 8000, 'gw_enable' => true, 'source' => 'tagesplan']);
@@ -1317,7 +1336,7 @@ attr('FcPvToday', json_encode(array_fill(0, 96, 50000.0))); prop('NETZ_B1_Latest
 $auto19 = ['op_mode' => EMS_OP_AUTO, 'gw_mode' => GW_MODE_AUTO, 'gw_power_w' => 0, 'gw_enable' => false, 'wb1_enable' => false, 'wb2_enable' => false, 'reason' => 'Automatik', 'source' => 'ems'];
 $d = call($ems, 'applyGridServiceB1', [$auto19, state(['bat_soc' => 50.0, 'pv_total_w' => 7000.0, 'house_pow_w' => 400.0])]);
 check('Überschuss 6600 W über der Grenze 5400 W: B1 sperrt NICHT, Batterie nimmt auf', empty($d['svc']) && strpos($d['reason'], 'Einspeisegrenze') !== false, $d['reason']);
-$spaet19 = ((int)((time() - strtotime('today')) / 900)) >= 95;
+$spaet19 = ((int)((time() - strtotime('today')) / 900)) >= 88;
 $d = call($ems, 'applyGridServiceB1', [$auto19, state(['bat_soc' => 50.0, 'pv_total_w' => 3000.0, 'house_pow_w' => 400.0])]);
 check('Überschuss 2600 W deutlich unter der Grenze: B1 darf sperren', $spaet19 || ($d['svc'] ?? '') === 'chargeInhibit', $d['reason']);
 unset($GLOBALS['INSTMOD'][IHUB_IID]);

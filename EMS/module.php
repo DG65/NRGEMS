@@ -40,7 +40,7 @@ define('EMS_LOG_VERBOSE',     2);
 
 // Formular-Konvention (siehe EMS/SUITE.md "Einheitliche Formular-Optik"):
 // Was-ist-Neu-Panel ist versionsscharf dismissible, Referenzmuster InverterHub.
-define('EMS_NEWS_VERSION', '0.60.1');
+define('EMS_NEWS_VERSION', '0.61.0');
 
 // NRG-Stack Partnermodul-GUIDs (fuer automatische Discovery, siehe discoverPartners())
 define('GUID_CHARGERHUB',    '{9256C34E-5CFD-4F37-8BFE-E65390EBB37C}');
@@ -199,6 +199,8 @@ class EMS extends IPSModule
         $this->RegisterPropertyFloat(  'BAT_Capacity_kWh',         10.0);
         $this->RegisterPropertyFloat(  'BAT_Conv_Eff_Pct',         95.0); // Wirkungsgrad je AC/DC-Wandlung (%), 5 % Verlust = 95
         $this->RegisterPropertyFloat(  'BAT_CycleCost_ct',         0.0); // Verschleisskosten je entladene kWh (0 = nicht beruecksichtigen)
+        $this->RegisterPropertyFloat(  'BAT_Price_EUR',            0.0); // Anschaffungspreis des Speichers (EUR), optional: daraus wird BAT_CycleCost_ct berechnet, wenn dort 0 steht
+        $this->RegisterPropertyInteger('BAT_Cycles',               0);   // Ladezyklen laut Hersteller, optional (siehe BAT_Price_EUR)
         $this->RegisterPropertyBoolean('EMS_DryRun',               false);
         $this->RegisterPropertyFloat(  'BAT_Charge_Max_kW',        0.0); // 0 = BMS-Angabe, sonst reale Obergrenze der Ladeleistung
         $this->RegisterPropertyInteger('BAT_SOC_Min',              10);
@@ -665,6 +667,10 @@ class EMS extends IPSModule
                 'items'    => array(
                     array(
                         'type'    => 'Label',
+                        'caption' => '• NEU: Verschleißkosten aus Anschaffungspreis und Zyklenzahl: Preis des Speichers und Herstellerzyklen im Panel „Batterie“ eintragen, das EMS berechnet die Kosten je kWh selbst und zieht sie bei Netzladen, Vorentladen und Restwert ab. Ein direkt eingetragener Wert in ct/kWh gilt weiter vorrangig.'
+                    ),
+                    array(
+                        'type'    => 'Label',
                         'caption' => '• NEU: Restwert der Batterieenergie (Beta, Schalter im Panel „Tibber & Tarif“, standardmäßig aus): Ist die gespeicherte Energie später mehr wert als der Netzbezug jetzt, bleibt der Akku geschont und das Haus läuft aus dem Netz. Rechnet vorsichtig mit ausbleibender PV (p10), damit die teuren Zeiten morgens und abends aus günstig gekauftem Strom gedeckt werden können. Wirkt vor allem bei kleinen Speichern und dynamischem Tarif.'
                     ),
                     array(
@@ -714,6 +720,25 @@ class EMS extends IPSModule
                     }
                 }
                 break;
+            }
+        }
+        unset($element);
+
+        // 3b2. Verschleisskosten: berechneten Wert anzeigen (aus Preis und Zyklen), damit der Nutzer sieht, was gilt
+        $cyc = $this->cycleCostCt();
+        $cycText = ((float)$this->ReadPropertyFloat('BAT_CycleCost_ct') > 0.0)
+            ? sprintf('ℹ️ Es gilt der eingetragene Wert von %.2f ct/kWh.', $cyc)
+            : ($cyc > 0.0
+                ? sprintf('✅ Berechnet aus Preis und Zyklen (bei %.1f kWh Kapazität): %.2f ct/kWh Verschleiß. Wird bei der Planung abgezogen.', $this->batteryCapacityKwh(), $cyc)
+                : 'ℹ️ Ohne Angabe werden keine Verschleißkosten berücksichtigt.');
+        foreach ($form['elements'] as &$element) {
+            if (($element['type'] ?? '') === 'ExpansionPanel') {
+                foreach ($element['items'] as $idx => $item) {
+                    if (($item['name'] ?? '') === 'BAT_Cycles') {
+                        array_splice($element['items'], $idx + 1, 0, array($this->statusLabel($cycText)));
+                        break 2;
+                    }
+                }
             }
         }
         unset($element);
@@ -4003,7 +4028,7 @@ class EMS extends IPSModule
             'socMin' => $socMin, 'socReserve' => $socReserve, 'socTargetNight' => $socTargetNight,
             'capKwh' => $capKwh, 'chargeKw' => $chargeKw, 'chargeCurve' => $this->chargeCurveKw(), 'dischargeKw' => $dischargeKw, 'maxW' => $maxW,
             'feedTariff' => $feedTariff, 'thCharge' => $thCharge, 'thDischarge' => $thDischarge,
-            'cycleCost' => max(0.0, (float)$this->ReadPropertyFloat('BAT_CycleCost_ct')) / 100.0,
+            'cycleCost' => $this->cycleCostCt() / 100.0,
             'refMode' => $this->chargeReferenceMode(),
             'spread' => max(0.0, (float)$this->ReadPropertyFloat('OPT_Arbitrage_Min_Spread_ct')) / 100.0,
             'replacePrice' => $this->replacementPriceEur(array_merge(array_values($prices), array_values($tomorrowPrices)), $nowSlot),
@@ -4285,7 +4310,7 @@ class EMS extends IPSModule
             'feedTariff' => $tarif['eur'], 'thCharge' => $this->priceThresholds($prices)['charge'],
             'thDischarge' => $this->priceThresholds($prices)['discharge'],
             'negativpreisPflicht' => $negativpreisPflicht,
-            'cycleCost' => max(0.0, (float)$this->ReadPropertyFloat('BAT_CycleCost_ct')) / 100.0,
+            'cycleCost' => $this->cycleCostCt() / 100.0,
         );
         if ($limit['w'] !== null) { $ctx['feedInLimitW'] = (float)$limit['w']; }
 
@@ -4503,7 +4528,7 @@ class EMS extends IPSModule
      */
     private function preDischargeEnd(array $price192, int $nowSlot, float $feed): ?int
     {
-        $cycle  = max(0.0, (float)$this->ReadPropertyFloat('BAT_CycleCost_ct')) / 100.0;
+        $cycle  = $this->cycleCostCt() / 100.0;
         $maxBuy = ($feed - $cycle - (float)$this->ReadPropertyFloat('PLAN_PreDischarge_MinGain_ct') / 100.0) * $this->convEff() * $this->convEff();
         // Ist die laufende Viertelstunde selbst schon guenstig, ist das Fenster erreicht: nicht weiter entladen.
         if (isset($price192[$nowSlot]) && $price192[$nowSlot] !== null && $price192[$nowSlot] < $maxBuy) { return null; }
@@ -4620,7 +4645,7 @@ class EMS extends IPSModule
         if ($op === EMS_OP_PV_SELFUSE && $gwMode === GW_MODE_CHARGE_PV) {
             $feed    = $this->planFeedTariffEur();
             $surplus = (float)$s['pv_total_w'] - (float)$s['house_pow_w'];
-            $cheap   = ($price > 0 && $feed > 0 && $price < $feed * $this->convEff() - max(0.0, (float)$this->ReadPropertyFloat('BAT_CycleCost_ct')) / 100.0);
+            $cheap   = ($price > 0 && $feed > 0 && $price < $feed * $this->convEff() - $this->cycleCostCt() / 100.0);
             if ($surplus < 200.0 && !$cheap) {
                 return array(
                     'op_mode' => EMS_OP_AUTO, 'gw_mode' => GW_MODE_AUTO, 'gw_power_w' => 0, 'gw_enable' => false,
@@ -5032,7 +5057,7 @@ class EMS extends IPSModule
             // Arbitrage im Haus (unabhaengig von einer Einspeiseverguetung): guenstigster Preis gegen Ersatz-Bezugspreis
             $rp = $this->replacementPriceEur(array_values($prices), 0);
             if ($rp === null) { return false; }
-            return $minPrice < ($rp * $this->convEff() * $this->convEff() - max(0.0, (float)$this->ReadPropertyFloat('BAT_CycleCost_ct')) / 100.0 - $spreadEur);
+            return $minPrice < ($rp * $this->convEff() * $this->convEff() - $this->cycleCostCt() / 100.0 - $spreadEur);
         }
         if ($tarif['quelle'] === 'platzhalter') {
             $this->emsLog(EMS_LOG_VERBOSE, sprintf(
@@ -6008,6 +6033,21 @@ class EMS extends IPSModule
     }
 
     /** Speicherkapazitaet fuer Rechnungen: gemessene Wechselrichter-Angabe, sonst Einstellung (Standard 10 kWh). */
+    /**
+     * Verschleisskosten je entladener kWh in ct: die eingetragenen ct/kWh gelten immer; steht dort 0, wird sie aus
+     * Anschaffungspreis / (Zyklen x Kapazitaet) berechnet, sofern Preis und Zyklenzahl eingetragen sind. Sonst 0 (nicht beruecksichtigt).
+     */
+    private function cycleCostCt(): float
+    {
+        $manual = (float)$this->ReadPropertyFloat('BAT_CycleCost_ct');
+        if ($manual > 0.0) { return $manual; }
+        $price  = (float)$this->ReadPropertyFloat('BAT_Price_EUR');
+        $cycles = (int)$this->ReadPropertyInteger('BAT_Cycles');
+        $cap    = $this->batteryCapacityKwh();
+        if ($price > 0.0 && $cycles > 0 && $cap > 0.0) { return max(0.0, $price / ($cycles * $cap) * 100.0); }
+        return 0.0;
+    }
+
     private function batteryCapacityKwh(): float
     {
         $c = $this->getPlantStorageKwh();
