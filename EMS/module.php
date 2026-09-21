@@ -769,6 +769,20 @@ class EMS extends IPSModule
         }
         unset($element);
 
+        // 3b4. Boersenpreis-Verbindung (Negativpreis-Pflicht): Statuszeile unter dem Schalter der netzdienlichen Bausteine
+        $spotText = $this->getSpotStatusLine();
+        foreach ($form['elements'] as &$element) {
+            if (($element['type'] ?? '') === 'ExpansionPanel') {
+                foreach ($element['items'] as $idx => $item) {
+                    if (($item['name'] ?? '') === 'NETZ_Aktiv') {
+                        array_splice($element['items'], $idx + 1, 0, array(array_merge($this->statusLabel($spotText), array('name' => 'SpotStatusLabel'))));
+                        break 2;
+                    }
+                }
+            }
+        }
+        unset($element);
+
         // 3c. Netzmesspunkte-Panel: pauschalen "schau oben"-Hinweis durch eine
         // Status-Zeile JE FELD ersetzen (Dietmars Praezisierung 20.08.2026:
         // nicht ein Panel-weiter Verweis, sondern direkt hinter jedem
@@ -6396,6 +6410,30 @@ class EMS extends IPSModule
      * aktiver Tarifzerlegung). Dietmar 13.09.2026: fuer § 51 IMMER zuerst das
      * Boersenpreis-Modul, auch wenn Tibber da ist. Leer = kein Signal.
      */
+    /** Statuszeile fuer die Boersenpreis-Verbindung (Negativpreis-Pflicht nach § 51 EEG): welche Quelle, Umfang, aktueller Wert. */
+    private function getSpotStatusLine(): string
+    {
+        $curve = $this->getSpotCurveLive();
+        if (empty($curve)) {
+            return 'ℹ️ Keine Börsenpreis-Quelle gefunden (weder das Börsenpreis-Modul noch eine Tibber-Tarifzerlegung): Die Negativpreis-Pflicht (§ 51 EEG) kann nicht geprüft werden. Nötig nur, wenn sie für deine Anlage gilt.';
+        }
+        $q = (string)($curve[0]['quelle'] ?? '');
+        if ($q !== 'boersenpreis') {
+            return 'ℹ️ Kein Börsenpreis-Modul gefunden: Ersatz ist der aus dem Tibber-Endpreis zurückgerechnete Börsenpreis (nur mit aktiver Tarifzerlegung). Für die Negativpreis-Pflicht (§ 51 EEG) gilt das trotzdem.';
+        }
+        $list = @IPS_GetInstanceListByModuleID(GUID_SPOTPRICE);
+        $id = (is_array($list) && !empty($list)) ? (int)$list[0] : 0;
+        $end = 0; foreach ($curve as $e) { $end = max($end, (int)($e['end'] ?? 0)); }
+        $now = $this->spotPriceAt($curve, time());
+        $text = sprintf('Börsenpreis #%d „%s“ liefert die Kurve für die Negativpreis-Pflicht (§ 51 EEG): %d Viertelstunden, bis %s%s.',
+            $id, $id > 0 ? IPS_GetName($id) : '?', count($curve), $end > 0 ? date('d.m.Y H:i', $end) : 'unbekannt',
+            $now !== null ? sprintf(', aktuell %.2f ct/kWh (Börsenpreis netto)', (float)$now['price']) : '');
+        if (is_array($list) && count($list) > 1) {
+            return '⚠️ Mehrere Börsenpreis-Instanzen gefunden, das EMS nutzt die erste. ' . $text;
+        }
+        return '✅ ' . $text;
+    }
+
     private function getSpotCurveLive(): array
     {
         if (function_exists('SPOT_GetPriceCurve')) {

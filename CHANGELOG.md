@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.64.1 (2026-09-21)
+- **Formular zeigt die Verbindung zum Börsenpreis-Modul:** Unter „Netzdienliche Bausteine aktiv“ steht jetzt eine Statuszeile für die Kurve der Negativpreis-Pflicht (§ 51 EEG):
+  ✅ Instanz, Name, Umfang (Viertelstunden, bis wann) und aktueller Börsenpreis, ⚠️ bei mehreren Börsenpreis-Instanzen (das EMS nutzt die erste), ℹ️ ohne Modul mit dem
+  Tibber-Ersatz oder dem Hinweis, dass die Pflicht nicht geprüft werden kann. Bisher stand dazu nichts im Formular (Hinweis der Börsenpreis-Sitzung).
+
 ## 0.64.0 (2026-09-21)
 - **Automatisch gelieferte Werte ersetzen das Eingabefeld (Formular):** Liefert eine automatische Verbindung den Wert und ist das Feld leer, wird das Eingabefeld ausgeblendet und die
   Statuszeile zeigt „🔗 Automatisch übernommen: …“ statt „Felder unten werden ignoriert“. Betrifft Batterie-SOC, Netz-Gesamtleistung, PV- und WR-Gesamtleistung, EMS-Modus/-Leistung des

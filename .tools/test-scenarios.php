@@ -108,6 +108,7 @@ function AC_GetLoggedValues($a, $var, $start, $end, $limit) {
 // Verhalten steuert je Szenario eine globale Variable. Eine Instanz gibt es
 // nur, wenn das Szenario sie in INSTMOD eintraegt.
 function SBH_GetState($iid)               { return $GLOBALS['SBH_STATE']; }
+function SPOT_GetPriceCurve($iid)         { return $GLOBALS['SPOT_CURVE'] ?? []; }
 function TIBBERGR_GetPriceCurve($iid)     { return $GLOBALS['TIBBER_CURVE']; }
 function TIBBERGR_GetActiveControls($iid) { return $GLOBALS['ACTIVE_CONTROLS']; }
 function SGW_GetState($iid)               { return $GLOBALS['SGW_STATE']; }
@@ -1781,6 +1782,20 @@ prop('VAR_BAT1_SOC', 0);
 $prices = $findItem(json_decode($ems->GetConfigurationForm(), true), 'VAR_TIB_PT15M_Today');
 check('Ohne Preisquelle: Preisfeld sichtbar', $prices !== null && ($prices['visible'] ?? true) !== false);
 unset($GLOBALS['INSTMOD'][IHUB_IID]);
+
+echo "\n8ac) Formular zeigt die Verbindung zum Boersenpreis-Modul (Negativpreis-Pflicht)\n";
+$ems = freshEms(); prop('EMS_Risk_Acknowledged', true); $GLOBALS['SPOT_CURVE'] = [];
+$fx = json_encode(json_decode($ems->GetConfigurationForm(), true), JSON_UNESCAPED_UNICODE);
+check('Ohne Boersenpreis-Quelle: ℹ️ "Keine Börsenpreis-Quelle gefunden" im Formular', strpos($fx, 'Keine Börsenpreis-Quelle gefunden') !== false && strpos($fx, 'SpotStatusLabel') !== false, 'Label: ' . (strpos($fx, 'SpotStatusLabel') !== false ? 'da' : 'fehlt') . ', Text: ' . (preg_match('/Börsenpreis[^"]{0,80}/u', $fx, $mx) ? $mx[0] : '-'));
+$GLOBALS['INSTMOD'][7401] = GUID_SPOTPRICE; obj(7401, 1, 'Börsenpreis Test', 0);
+$dd = strtotime('today'); $curveS = []; for ($i = 0; $i < 96; $i++) { $curveS[] = ['start' => $dd + $i * 900, 'end' => $dd + ($i + 1) * 900, 'price' => 5.0, 'aufloesung' => 900]; }
+$GLOBALS['SPOT_CURVE'] = $curveS;
+$fx = json_encode(json_decode($ems->GetConfigurationForm(), true), JSON_UNESCAPED_UNICODE);
+check('Mit Boersenpreis-Modul: ✅ mit Instanz, Name, Umfang und aktuellem Wert', strpos($fx, '✅ Börsenpreis #7401') !== false && strpos($fx, 'Börsenpreis Test') !== false && strpos($fx, '96 Viertelstunden') !== false && strpos($fx, 'aktuell 5.00 ct') !== false, (preg_match('/[✅⚠️ℹ️] ?Börsenpreis[^"]{0,200}/u', $fx, $mm) ? $mm[0] : 'keine Zeile'));
+$GLOBALS['INSTMOD'][7402] = GUID_SPOTPRICE; obj(7402, 1, 'Zweite', 0);
+$fx = json_encode(json_decode($ems->GetConfigurationForm(), true), JSON_UNESCAPED_UNICODE);
+check('Zwei Boersenpreis-Instanzen: ⚠️ (EMS nutzt die erste) statt still zu raten', strpos($fx, '⚠️ Mehrere Börsenpreis-Instanzen gefunden') !== false);
+unset($GLOBALS['INSTMOD'][7401], $GLOBALS['INSTMOD'][7402]); $GLOBALS['SPOT_CURVE'] = [];
 
 // ===========================================================================
 echo "\n" . ($fails === 0 ? "ALLE SZENARIEN BESTANDEN" : "$fails SZENARIO(S) VERLETZT") . "\n\n";
