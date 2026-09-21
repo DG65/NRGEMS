@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.64.0 (2026-09-21)
+- **Automatisch gelieferte Werte ersetzen das Eingabefeld (Formular):** Liefert eine automatische Verbindung den Wert und ist das Feld leer, wird das Eingabefeld ausgeblendet und die
+  Statuszeile zeigt „🔗 Automatisch übernommen: …“ statt „Felder unten werden ignoriert“. Betrifft Batterie-SOC, Netz-Gesamtleistung, PV- und WR-Gesamtleistung, EMS-Modus/-Leistung des
+  Wechselrichters und die 15-Minuten-Preise (heute/morgen). Eine eigene Angabe im Feld bleibt sichtbar und hat Vorrang. Der automatische Wert wird nie in das Feld geschrieben, damit „Übernehmen“
+  ihn nicht als eigene Angabe speichert. Ohne Verbindung bleibt das Feld sichtbar.
+
 ## 0.63.0 (2026-09-21)
 - **`EMS_GetSpecialEvents()` 1.1 (additiv):** Neben Tibber Grid Rewards führt das EMS jetzt auch Batterie-Boost (`boost`), negative Börsenpreise mit 0-W-Einspeisung
   (`negativpreis`), Einspeisereduktion des Netzbetreibers (`einspeisung_netzbetreiber`) und § 14a-Lastbegrenzung (`lastbegrenzung_14a`) als Ereignisse.

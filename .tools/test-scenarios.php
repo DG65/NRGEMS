@@ -1730,7 +1730,7 @@ $dd = strtotime('today'); for ($h = 0; $h < 24; $h++) { $mdv[] = ['start' => $dd
 vari('Marktdaten', 7301, 'MarketData', json_encode($mdv), 3);
 $GLOBALS['INSTMOD'][7302] = GUID_POWERPRICE; obj(7302, 1, 'Strompreis B', 0); vari('Marktdaten', 7302, 'MarketData', '[]', 3);
 $ems->PriceSourceChanged(7301);
-check('Preisquelle: Auswahl der Instanz mit Daten im offenen Formular ergibt ✅ mit Namen', strpos((string)($GLOBALS['FORMFIELD']['PT15MStatusLabel']['caption'] ?? ''), 'Strompreis A') !== false && strpos((string)$GLOBALS['FORMFIELD']['PT15MStatusLabel']['caption'], '✅') !== false, json_encode($GLOBALS['FORMFIELD']['PT15MStatusLabel'] ?? null));
+check('Preisquelle: Auswahl der Instanz mit Daten im offenen Formular ergibt 🔗 mit Namen', strpos((string)($GLOBALS['FORMFIELD']['PT15MStatusLabel']['caption'] ?? ''), 'Strompreis A') !== false && strpos((string)$GLOBALS['FORMFIELD']['PT15MStatusLabel']['caption'], '🔗') !== false, json_encode($GLOBALS['FORMFIELD']['PT15MStatusLabel'] ?? null));
 $ems->PriceSourceChanged(0);
 check('Zwei Instanzen ohne Auswahl im Formular: Hinweis "bitte auswaehlen" statt raten', strpos((string)$GLOBALS['FORMFIELD']['PT15MStatusLabel']['caption'], 'Mehrere Symcon-Strompreis-Instanzen') !== false, (string)$GLOBALS['FORMFIELD']['PT15MStatusLabel']['caption']);
 unset($GLOBALS['INSTMOD'][7301], $GLOBALS['INSTMOD'][7302]);
@@ -1760,6 +1760,27 @@ call($ems, 'trackSpecialEvents', [[]]);
 $open2 = array_column(array_filter(call($ems, 'GetSpecialEvents', [0, 0])['events'], fn($e) => $e['to'] === null), 'type');
 check('Aufruf ohne Zustand (EMS aus) beendet keine offenen Grid-Rewards-Ereignisse und schreibt die anderen Typen weiter', in_array('lastbegrenzung_14a', $open2, true));
 $GLOBALS['SBH_STATE'] = null; unset($GLOBALS['INSTMOD'][300]);
+
+echo "\n8ab) Wert kommt automatisch: Eingabefeld wird ausgeblendet, Zeile zeigt 🔗 (eigene Angabe bleibt sichtbar)\n";
+$findItem = function ($node, $name) use (&$findItem) {
+    if (is_array($node)) { if (($node['name'] ?? null) === $name && isset($node['type'])) { return $node; } foreach ($node as $v) { $r = $findItem($v, $name); if ($r !== null) { return $r; } } }
+    return null;
+};
+$ems = freshEms(); prop('BAT_Active', true);
+$f = json_decode($ems->GetConfigurationForm(), true);
+$soc = $findItem($f, 'VAR_BAT1_SOC');
+check('Ohne InverterHub: Batterie-SOC-Feld bleibt sichtbar (wird gebraucht)', $soc !== null && ($soc['visible'] ?? true) !== false);
+$GLOBALS['INSTMOD'][IHUB_IID] = GUID_INVERTERHUB; $socV = vari('SOC', IHUB_IID, 'soc', 60.0); $wr(['socID' => $socV]);
+$f = json_decode($ems->GetConfigurationForm(), true); $soc = $findItem($f, 'VAR_BAT1_SOC'); $txt = json_encode($f, JSON_UNESCAPED_UNICODE);
+check('Mit InverterHub: Batterie-SOC-Feld ausgeblendet, Zeile "🔗 Automatisch übernommen"', $soc !== null && ($soc['visible'] ?? true) === false && strpos($txt, '🔗 Automatisch übernommen: InverterHub') !== false, json_encode($soc));
+check('Der Satz "Felder unten werden ignoriert" ist weg (das Feld ist ja nicht mehr da)', strpos($txt, 'Felder unten werden ignoriert') === false || strpos($txt, '🔗 Automatisch übernommen: InverterHub #') !== false);
+$man = vari('eigener SOC', 0, '', 55.0); prop('VAR_BAT1_SOC', $man);
+$f = json_decode($ems->GetConfigurationForm(), true); $soc = $findItem($f, 'VAR_BAT1_SOC');
+check('Eigene Angabe im Feld: Feld bleibt sichtbar, die eigene Angabe hat Vorrang', $soc !== null && ($soc['visible'] ?? true) !== false);
+prop('VAR_BAT1_SOC', 0);
+$prices = $findItem(json_decode($ems->GetConfigurationForm(), true), 'VAR_TIB_PT15M_Today');
+check('Ohne Preisquelle: Preisfeld sichtbar', $prices !== null && ($prices['visible'] ?? true) !== false);
+unset($GLOBALS['INSTMOD'][IHUB_IID]);
 
 // ===========================================================================
 echo "\n" . ($fails === 0 ? "ALLE SZENARIEN BESTANDEN" : "$fails SZENARIO(S) VERLETZT") . "\n\n";

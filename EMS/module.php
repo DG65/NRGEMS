@@ -721,7 +721,18 @@ class EMS extends IPSModule
             if (($element['type'] ?? '') === 'ExpansionPanel' && ($element['caption'] ?? '') === '💰 Tibber & Tarif') {
                 foreach ($element['items'] as $idx => $item) {
                     if (($item['name'] ?? '') === 'VAR_TIB_PT15M_Today') {
-                        array_splice($element['items'], $idx, 0, array(array_merge($this->statusLabel($this->getPT15MStatusLine()), array('name' => 'PT15MStatusLabel'))));
+                        $ptLine = $this->getPT15MStatusLine();
+                        $ptText = is_array($ptLine) ? (string)$ptLine['caption'] : (string)$ptLine;
+                        $ptAuto = (strpos($ptText, '✅') === 0) && (int)$this->ReadPropertyInteger('VAR_TIB_PT15M_Today') === 0 && (int)$this->ReadPropertyInteger('VAR_TIB_PT15M_Tomorrow') === 0;
+                        if ($ptAuto) {
+                            $ptLine = $this->autoLineText($ptText);
+                        }
+                        array_splice($element['items'], $idx, 0, array(array_merge($this->statusLabel($ptLine), array('name' => 'PT15MStatusLabel'))));
+                        if ($ptAuto) {
+                            foreach ($element['items'] as $k => $it) {
+                                if (in_array($it['name'] ?? '', array('VAR_TIB_PT15M_Today', 'VAR_TIB_PT15M_Tomorrow'), true)) { $element['items'][$k]['visible'] = false; }
+                            }
+                        }
                         break;
                     }
                 }
@@ -776,7 +787,8 @@ class EMS extends IPSModule
                 foreach ($element['items'] as $item) {
                     $name = $item['name'] ?? '';
                     if (isset($gridFieldMap[$name])) {
-                        $newItems[] = $this->statusLabel($this->getGridFieldStatusLine($gridFieldMap[$name]));
+                        $this->pushAutoField($newItems, $item, $this->getGridFieldStatusLine($gridFieldMap[$name]));
+                        continue;
                     }
                     // Den alten Pauschal-Verweis-Text ("Schau ganz oben...") aus
                     // der RowLayout entfernen -- die Status-Zeilen je Feld machen
@@ -814,7 +826,8 @@ class EMS extends IPSModule
                     // Batteriestring 2 gilt -- sonst sieht das aus wie eine
                     // offene Frage bei Bat2, obwohl auch dort alles geklaert ist).
                     if ($name === 'VAR_BAT1_SOC' || $name === 'VAR_BAT2_SOC') {
-                        $newItems[] = $this->statusLabel($this->getBatterySocStatusLine());
+                        $this->pushAutoField($newItems, $item, $this->getBatterySocStatusLine());
+                        continue;
                     }
                     $newItems[] = $item;
                 }
@@ -849,8 +862,11 @@ class EMS extends IPSModule
                 $newItems = array();
                 foreach ($element['items'] as $item) {
                     $name = $item['name'] ?? '';
+                    if ($name === 'VAR_WR_EMS_Power' && !empty($controlAuto)) { $item['visible'] = false; } // gehoert zur selben Zeile wie der EMS-Modus
                     if (array_key_exists($name, $inverterFieldMap) && $inverterFieldMap[$name] !== null) {
-                        $newItems[] = $this->statusLabel($this->getInverterFieldStatusLine($inverterFieldMap[$name]));
+                        $hid = $this->pushAutoField($newItems, $item, $this->getInverterFieldStatusLine($inverterFieldMap[$name]));
+                        if ($name === 'VAR_WR_EMS_Mode') { $controlAuto = $hid; }
+                        continue;
                     }
                     // Alten Pauschal-Hinweis ganz oben im Panel entfernen -- die
                     // Zeilen je Feld machen ihn ueberfluessig.
@@ -953,7 +969,10 @@ class EMS extends IPSModule
     /** onChange der Preisquellen-Auswahl: die Statuszeile folgt der Auswahl im offenen Formular, nicht dem Speicherstand. */
     public function PriceSourceChanged(int $instanceId)
     {
-        $this->UpdateFormField('PT15MStatusLabel', 'caption', $this->getPT15MStatusLine($instanceId));
+        $line = $this->getPT15MStatusLine($instanceId);
+        $line = is_array($line) ? (string)$line['caption'] : (string)$line;
+        if (strpos($line, '✅') === 0 && (int)$this->ReadPropertyInteger('VAR_TIB_PT15M_Today') === 0) { $line = $this->autoLineText($line); }
+        $this->UpdateFormField('PT15MStatusLabel', 'caption', $line);
     }
 
     /** onChange der Verschleisskosten-Felder: Statuszeile mit den Werten aus dem offenen Formular. */
@@ -3356,6 +3375,34 @@ class EMS extends IPSModule
      * Array-Wrapping wiederholen muss -- nur die roten Pflichtfeld-Faelle
      * liefern direkt ein Array mit 'color' (20.08.2026).
      */
+    /**
+     * Regel "Wert kommt automatisch: Eingabefeld ersetzen" (Dietmar, 21.09.2026): Liefert die Verbindung fuer ein Feld einen Wert (Statuszeile beginnt mit ✅)
+     * und ist das Feld leer (keine eigene Angabe), wird das Eingabefeld ausgeblendet und die Zeile zeigt 🔗 "automatisch uebernommen". Eine eigene Angabe
+     * bleibt sichtbar (sie hat Vorrang). Der automatische Wert wird NIE in das Feld geschrieben, sonst wuerde "Uebernehmen" ihn als eigene Angabe speichern.
+     * Gibt zurueck, ob das Feld ausgeblendet wurde.
+     */
+    private function autoLineText(string $text): string
+    {
+        $text = preg_replace('/^✅ Automatisch verbunden:/u', '🔗 Automatisch übernommen:', $text);
+        return preg_replace('/\s+—\s+Felder? unten (?:werden|wird) ignoriert\./u', '.', $text);
+    }
+
+    private function pushAutoField(array &$out, array $item, $line): bool
+    {
+        $text = is_array($line) ? (string)$line['caption'] : (string)$line;
+        $name = (string)($item['name'] ?? '');
+        $auto = (strpos($text, '✅') === 0) && $name !== '' && (int)$this->ReadPropertyInteger($name) === 0;
+        if ($auto) {
+            $text = $this->autoLineText($text);
+            $item['visible'] = false;
+            $out[] = $this->statusLabel($text);
+        } else {
+            $out[] = $this->statusLabel($line);
+        }
+        $out[] = $item;
+        return $auto;
+    }
+
     private function statusLabel($textOrArray)
     {
         if (is_array($textOrArray)) {
@@ -3499,7 +3546,7 @@ class EMS extends IPSModule
             $ppList = is_array($ppList) ? $ppList : array();
             if ($this->getPowerPriceInstance($sourceOverride) > 0 && $this->getPowerPriceCurveJson($sourceOverride) !== '' && (int)$this->ReadPropertyInteger('VAR_TIB_PT15M_Today') === 0) {
                 $ppId = $this->getPowerPriceInstance($sourceOverride);
-                return sprintf('✅ Automatisch verbunden: Symcon-Strompreis #%d ("%s") — Preis inklusive der dort eingestellten Aufschläge, ohne zeitvariable Netzentgelte (§ 14a Modul 3). Feld unten wird ignoriert.', $ppId, IPS_GetName($ppId));
+                return sprintf('✅ Automatisch verbunden: Symcon-Strompreis #%d ("%s") — Preis inklusive der dort eingestellten Aufschläge, ohne zeitvariable Netzentgelte (§ 14a Modul 3) — Feld unten wird ignoriert.', $ppId, IPS_GetName($ppId));
             }
             if (count($ppList) > 1 && ($sourceOverride !== null ? $sourceOverride : (int)$this->ReadPropertyInteger('PRICE_Source_Instance')) === 0) {
                 return '⚠️ Mehrere Symcon-Strompreis-Instanzen gefunden — bitte unten die zu verwendende auswählen (oder das Feld verknüpfen).';
