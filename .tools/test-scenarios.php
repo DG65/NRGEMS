@@ -1777,6 +1777,9 @@ check('Mit InverterHub: Batterie-SOC-Feld ausgeblendet, Zeile "🔗 Automatisch 
 check('Der Satz "Felder unten werden ignoriert" ist weg (das Feld ist ja nicht mehr da)', strpos($txt, 'Felder unten werden ignoriert') === false || strpos($txt, '🔗 Automatisch übernommen: InverterHub #') !== false);
 $man = vari('eigener SOC', 0, '', 55.0); prop('VAR_BAT1_SOC', $man);
 $f = json_decode($ems->GetConfigurationForm(), true); $soc = $findItem($f, 'VAR_BAT1_SOC');
+$greenOk = false; $walk = function ($n) use (&$walk, &$greenOk) { if (is_array($n)) { if (($n['type'] ?? '') === 'Label' && strpos((string)($n['caption'] ?? ''), '🔗 Automatisch übernommen') === 0 && ($n['color'] ?? null) === EMS_COLOR_AUTO) { $greenOk = true; } foreach ($n as $v) { $walk($v); } } };
+$walk($f);
+check('🔗-Zeile ist grün (color gesetzt)', $greenOk);
 check('Eigene Angabe im Feld: Feld bleibt sichtbar, die eigene Angabe hat Vorrang', $soc !== null && ($soc['visible'] ?? true) !== false);
 prop('VAR_BAT1_SOC', 0);
 $prices = $findItem(json_decode($ems->GetConfigurationForm(), true), 'VAR_TIB_PT15M_Today');

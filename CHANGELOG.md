@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.64.2 (2026-09-21)
+- **🔗-Zeilen (automatisch übernommen) erscheinen grün** (Label-Farbe 0x2E8B3D), auch wenn sie im offenen Formular per `onChange` aktualisiert werden. Andere Statuszeilen bleiben unverändert.
+
 ## 0.64.1 (2026-09-21)
 - **Formular zeigt die Verbindung zum Börsenpreis-Modul:** Unter „Netzdienliche Bausteine aktiv“ steht jetzt eine Statuszeile für die Kurve der Negativpreis-Pflicht (§ 51 EEG):
   ✅ Instanz, Name, Umfang (Viertelstunden, bis wann) und aktueller Börsenpreis, ⚠️ bei mehreren Börsenpreis-Instanzen (das EMS nutzt die erste), ℹ️ ohne Modul mit dem

@@ -40,6 +40,7 @@ define('EMS_LOG_VERBOSE',     2);
 
 // Formular-Konvention (siehe EMS/SUITE.md "Einheitliche Formular-Optik"):
 // Was-ist-Neu-Panel ist versionsscharf dismissible, Referenzmuster InverterHub.
+define('EMS_COLOR_AUTO', 0x2E8B3D); // Gruen: Wert wurde automatisch uebernommen (🔗-Zeilen im Formular)
 define('EMS_NEWS_VERSION', '0.62.0');
 
 // NRG-Stack Partnermodul-GUIDs (fuer automatische Discovery, siehe discoverPartners())
@@ -727,7 +728,7 @@ class EMS extends IPSModule
                         if ($ptAuto) {
                             $ptLine = $this->autoLineText($ptText);
                         }
-                        array_splice($element['items'], $idx, 0, array(array_merge($this->statusLabel($ptLine), array('name' => 'PT15MStatusLabel'))));
+                        array_splice($element['items'], $idx, 0, array(array_merge($this->statusLabel($ptLine), array('name' => 'PT15MStatusLabel'), $ptAuto ? array('color' => EMS_COLOR_AUTO) : array())));
                         if ($ptAuto) {
                             foreach ($element['items'] as $k => $it) {
                                 if (in_array($it['name'] ?? '', array('VAR_TIB_PT15M_Today', 'VAR_TIB_PT15M_Tomorrow'), true)) { $element['items'][$k]['visible'] = false; }
@@ -985,8 +986,10 @@ class EMS extends IPSModule
     {
         $line = $this->getPT15MStatusLine($instanceId);
         $line = is_array($line) ? (string)$line['caption'] : (string)$line;
-        if (strpos($line, '✅') === 0 && (int)$this->ReadPropertyInteger('VAR_TIB_PT15M_Today') === 0) { $line = $this->autoLineText($line); }
+        $auto = (strpos($line, '✅') === 0 && (int)$this->ReadPropertyInteger('VAR_TIB_PT15M_Today') === 0);
+        if ($auto) { $line = $this->autoLineText($line); }
         $this->UpdateFormField('PT15MStatusLabel', 'caption', $line);
+        $this->UpdateFormField('PT15MStatusLabel', 'color', $auto ? EMS_COLOR_AUTO : -1);
     }
 
     /** onChange der Verschleisskosten-Felder: Statuszeile mit den Werten aus dem offenen Formular. */
@@ -3409,7 +3412,7 @@ class EMS extends IPSModule
         if ($auto) {
             $text = $this->autoLineText($text);
             $item['visible'] = false;
-            $out[] = $this->statusLabel($text);
+            $out[] = array_merge($this->statusLabel($text), array('color' => EMS_COLOR_AUTO));
         } else {
             $out[] = $this->statusLabel($line);
         }
