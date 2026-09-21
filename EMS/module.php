@@ -1014,6 +1014,13 @@ class EMS extends IPSModule
             $this->emsLog(EMS_LOG_BASIC, 'Tagesplan-Fehler (Ausfuehrung laeuft unbeeinflusst weiter): ' . $e->getMessage());
         }
 
+        // Sondereffekt-Ereignisse (Einspeisereduktion, Negativpreis, Boost, §14a) auch bei EMS aus mitschreiben: Lernende Module brauchen sie unabhaengig davon.
+        try {
+            $this->trackSpecialEvents(array());
+        } catch (Throwable $e) {
+            $this->emsLog(EMS_LOG_VERBOSE, 'Sondereffekt-Protokoll: ' . $e->getMessage());
+        }
+
         // §14a-Netzbetreiber-Dimmung (SteuerboxHub) läuft ebenfalls
         // UNABHÄNGIG von EMS_Active — eine Gesetz-/Netzbetreiber-Vorgabe darf
         // nicht davon abhängen, ob die EMS-Preisoptimierung gerade an ist
@@ -2132,8 +2139,20 @@ class EMS extends IPSModule
      */
     private function trackSpecialEvents($s)
     {
+        // Vertrag 1.1: je Ereignis 'affects' = betroffene Groesse fuer lernende Module (pv = PV-Erzeugung war abgeregelt, load = Last
+        // durch Wallbox/Batterie/Lastbegrenzung verfaelscht). Prognose: PV-Kalibrierung ueberspringt 'pv'-Ereignisse, die Lastprognose 'load'-Ereignisse.
+        $steuerbox = $this->getSteuerboxState();
+        $neg = $this->negativePriceStatus();
         $conditions = array(
-            'grid_rewards' => !empty($s['grid_rewards']),
+            'grid_rewards'              => array_key_exists('grid_rewards', $s) ? !empty($s['grid_rewards']) : null, // null = hier nicht bekannt, Ereignis unveraendert lassen
+            'boost'                     => ($this->ReadAttributeInteger('BatteryBoostUntil') > time()),
+            'negativpreis'              => !empty($neg['active']),
+            'einspeisung_netzbetreiber' => ($steuerbox !== null) && !empty($steuerbox['feedInDimmActive']),
+            'lastbegrenzung_14a'        => ($steuerbox !== null) && !empty($steuerbox['loadDimmActive']),
+        );
+        $affects = array(
+            'grid_rewards' => array('load'), 'boost' => array('load'), 'negativpreis' => array('pv'),
+            'einspeisung_netzbetreiber' => array('pv'), 'lastbegrenzung_14a' => array('load'),
         );
 
         $log = json_decode($this->ReadAttributeString('SpecialEventsLog'), true);
@@ -2141,6 +2160,7 @@ class EMS extends IPSModule
         $now = time();
 
         foreach ($conditions as $type => $active) {
+            if ($active === null) { continue; }
             $openIdx = null;
             foreach ($log as $i => $ev) {
                 if (($ev['type'] ?? '') === $type && ($ev['to'] ?? null) === null) {
@@ -2152,7 +2172,7 @@ class EMS extends IPSModule
                 if ($openIdx !== null) {
                     $log[$openIdx]['to'] = null; // bleibt offen, nur Existenz bestaetigt
                 } else {
-                    $log[] = array('from' => $now, 'to' => null, 'type' => $type, 'reason' => $type);
+                    $log[] = array('from' => $now, 'to' => null, 'type' => $type, 'reason' => $type, 'affects' => $affects[$type]);
                 }
             } elseif ($openIdx !== null) {
                 $log[$openIdx]['to'] = $now; // Ereignis endet jetzt
@@ -2188,11 +2208,12 @@ class EMS extends IPSModule
                 'to'     => $ev['to'] ?? null,
                 'type'   => $ev['type'] ?? 'unknown',
                 'reason' => $ev['reason'] ?? '',
+                'affects' => $ev['affects'] ?? array('load', 'pv'), // aeltere Eintraege ohne Angabe: beides ausschliessen (vorsichtig)
             );
         }
 
         return array(
-            'contractVersion' => '1.0',
+            'contractVersion' => '1.1',
             'events'          => $events,
         );
     }

@@ -1737,6 +1737,30 @@ unset($GLOBALS['INSTMOD'][7301], $GLOBALS['INSTMOD'][7302]);
 $fj = json_encode(json_decode($ems->GetConfigurationForm(), true), JSON_UNESCAPED_UNICODE);
 check('Die Zeilen haben Namen, damit UpdateFormField sie erreicht', strpos($fj, 'PT15MStatusLabel') !== false && strpos($fj, 'CycleCostStatusLabel') !== false);
 
+echo "\n8z) EMS_GetSpecialEvents 1.1: mehr Ereignistypen mit betroffener Groesse (affects)\n";
+$ems = freshEms();
+call($ems, 'trackSpecialEvents', [state(['grid_rewards' => true])]);
+$ev = call($ems, 'GetSpecialEvents', [0, 0]);
+check('Vertrag 1.1, Grid Rewards: Ereignis mit affects=load', $ev['contractVersion'] === '1.1' && count($ev['events']) === 1 && $ev['events'][0]['type'] === 'grid_rewards' && $ev['events'][0]['affects'] === ['load'], json_encode($ev));
+attr('BatteryBoostUntil', time() + 600);
+call($ems, 'trackSpecialEvents', [state(['grid_rewards' => true])]);
+$types = array_column(call($ems, 'GetSpecialEvents', [0, 0])['events'], 'type');
+check('Batterie-Boost wird als Ereignis (load) gefuehrt', in_array('boost', $types, true), json_encode($types));
+$GLOBALS['INSTMOD'][300] = GUID_STEUERBOXHUB;
+$GLOBALS['SBH_STATE'] = ['contractVersion' => '1.0', 'loadDimmActive' => false, 'feedInDimmActive' => true, 'feedInLimitPercent' => 30, 'loadPMin' => 4.2];
+call($ems, 'trackSpecialEvents', [state(['grid_rewards' => true])]);
+$evs = call($ems, 'GetSpecialEvents', [0, 0])['events']; $byType = array_column($evs, 'affects', 'type');
+check('Netzbetreiber-Einspeisereduktion: Ereignis mit affects=pv (PV-Kalibrierung ueberspringt es)', ($byType['einspeisung_netzbetreiber'] ?? null) === ['pv'], json_encode($byType));
+$GLOBALS['SBH_STATE'] = ['contractVersion' => '1.0', 'loadDimmActive' => true, 'feedInDimmActive' => false, 'feedInLimitPercent' => 100, 'loadPMin' => 4.2];
+call($ems, 'trackSpecialEvents', [state(['grid_rewards' => false])]);
+$evs = call($ems, 'GetSpecialEvents', [0, 0])['events'];
+$open = array_filter($evs, fn($e) => $e['to'] === null); $openTypes = array_column($open, 'type');
+check('§14a-Lastbegrenzung wird gefuehrt, beendete Ereignisse (Grid Rewards, Einspeisereduktion) haben ein Ende', in_array('lastbegrenzung_14a', $openTypes, true) && !in_array('grid_rewards', $openTypes, true) && !in_array('einspeisung_netzbetreiber', $openTypes, true), json_encode($evs));
+call($ems, 'trackSpecialEvents', [[]]);
+$open2 = array_column(array_filter(call($ems, 'GetSpecialEvents', [0, 0])['events'], fn($e) => $e['to'] === null), 'type');
+check('Aufruf ohne Zustand (EMS aus) beendet keine offenen Grid-Rewards-Ereignisse und schreibt die anderen Typen weiter', in_array('lastbegrenzung_14a', $open2, true));
+$GLOBALS['SBH_STATE'] = null; unset($GLOBALS['INSTMOD'][300]);
+
 // ===========================================================================
 echo "\n" . ($fails === 0 ? "ALLE SZENARIEN BESTANDEN" : "$fails SZENARIO(S) VERLETZT") . "\n\n";
 exit($fails === 0 ? 0 : 1);

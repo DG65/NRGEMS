@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.63.0 (2026-09-21)
+- **`EMS_GetSpecialEvents()` 1.1 (additiv):** Neben Tibber Grid Rewards führt das EMS jetzt auch Batterie-Boost (`boost`), negative Börsenpreise mit 0-W-Einspeisung
+  (`negativpreis`), Einspeisereduktion des Netzbetreibers (`einspeisung_netzbetreiber`) und § 14a-Lastbegrenzung (`lastbegrenzung_14a`) als Ereignisse.
+  Neues Feld `affects` je Ereignis: `pv` (PV-Erzeugung war abgeregelt: Einspeisereduktion, Negativpreis) oder `load` (Last durch Wallbox, Batterie oder Lastbegrenzung
+  verfälscht: Grid Rewards, Boost, § 14a). Ältere Einträge ohne Angabe gelten als beides. Lernende Module können damit gezielt ausschließen: die PV-Kalibrierung
+  überspringt `pv`-Ereignisse, die Lastprognose `load`-Ereignisse.
+- Die Ereignisse werden auch bei ausgeschaltetem EMS mitgeschrieben (Aufruf ohne Zustand lässt offene Grid-Rewards-Ereignisse unberührt).
+  Bekannte Grenze: Das Protokoll ist ein Instanz-Attribut, hält höchstens 500 Einträge (keine Zeitgrenze) und geht bei einem vollständigen Modul-Neuladen verloren.
+
 ## 0.62.3 (2026-09-21)
 - **Statuszeilen folgen der Auswahl im offenen Formular:** Die Zeile zur Preisquelle (Symcon-Strompreis-Instanz) und die Zeile zu den Verschleißkosten (Preis, Zyklen, ct/kWh)
   zeigten bisher den zuletzt gespeicherten Stand, obwohl im Formular schon etwas anderes gewählt oder eingetragen war (Hinweis MeterHub, Symcon lässt die Zeile nicht live
