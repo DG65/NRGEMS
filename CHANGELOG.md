@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.62.1 (2026-09-21)
+- Formular: Die Beschreibung der realen max. Ladeleistung sagt jetzt, dass das EMS die Ladeleistung je Ladestand nur bei Anbindung über den InverterHub
+  selbst lernt; mit von Hand eingetragenen Batterie-Variablen gilt nur der eingetragene Wert.
+
 ## 0.62.0 (2026-09-21)
 - **Ladekurve aus beobachteter Leistung:** Das Batteriemanagement meldete in der Nacht 20./21.09.2026 bei 88 bis 95 % SOC 8 bis 10 kW, tatsächlich nahm die Batterie
   20 bis 22 kW auf; der Plan hatte deshalb zu viele Ladeslots angenommen. Das EMS lernt jetzt zusätzlich die real beobachtete Ladeleistung je 5-%-Stufe

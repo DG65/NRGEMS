@@ -741,7 +741,7 @@
                 {
                     "type": "NumberSpinner",
                     "name": "BAT_Charge_Max_kW",
-                    "caption": "Reale max. Ladeleistung (kW, 0 = Angabe des Batteriemanagements)",
+                    "caption": "Reale max. Ladeleistung (kW, 0 = Angabe des Batteriemanagements). Ist der Wechselrichter über den InverterHub angebunden, lernt das EMS die Ladeleistung je Ladestand zusätzlich selbst (Meldung des Batteriemanagements und beobachtete Leistung) und plant die Nachtladung damit. Mit von Hand eingetragenen Batterie-Variablen wird nichts gelernt, dann gilt nur dieser Wert.",
                     "digits": 1,
                     "minimum": 0,
                     "maximum": 500,
