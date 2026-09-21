@@ -814,6 +814,33 @@ check('Mit Verschleiss sinkt die Netzlade-Grenze um 3,1 ct: 17,44 -> ca. 14,3 ct
 $formJson = json_decode($ems->GetConfigurationForm(), true);
 check('Formular bleibt gueltig und enthaelt die neuen Felder', strpos(json_encode($formJson), 'BAT_Cycles') !== false && strpos(json_encode($formJson), 'BAT_Price_EUR') !== false);
 
+echo "\n8w) Ladekurve auch aus beobachteter Leistung; kein Neustart des Nachtladens bei kleinem Rueckgang\n";
+$ems = freshEms(); prop('EMS_Max_Power_W', 34500);
+call($ems, 'learnChargeLimit', [90.0, 8.0]);                      // Batteriemanagement meldet 8 kW bei Stufe 90-95 %
+call($ems, 'learnChargeObserved', [90.0, 21.5]);                  // real gemessen 21,5 kW
+call($ems, 'learnChargeObserved', [90.0, 19.0]);                  // kleinerer Wert aendert den Spitzenwert nicht
+$cv = call($ems, 'chargeCurveKw');
+check('Stufe 90-95 %: Maximum aus Meldung (8 kW) und Beobachtung (21,5 kW)', abs($cv[18] - 21.5) < 1e-6, json_encode($cv));
+call($ems, 'learnChargeObserved', [50.0, 22.0]);
+check('Stufe ohne Meldung des Batteriemanagements: die Beobachtung gilt allein', abs(call($ems, 'chargeCurveKw')[10] - 22.0) < 1e-6);
+call($ems, 'learnChargeObserved', [60.0, 0.3]);
+check('Kleine Leistungen (< 0,5 kW, z. B. Erhaltungsladung) werden nicht gelernt', !isset(call($ems, 'chargeCurveKw')[12]));
+call($ems, 'learnChargeLimit', [50.0, 30.0]);
+check('Meldung ueber Beobachtung: gilt die hoehere (30 kW), begrenzt durch EMS-Grenze', abs(call($ems, 'chargeCurveKw')[10] - 30.0) < 1e-6);
+prop('BAT_Charge_Max_kW', 24.0);
+check('Reale Obergrenze deckelt auch die beobachtete Kurve', abs(call($ems, 'chargeCurveKw')[10] - 24.0) < 1e-6 && abs(call($ems, 'chargeCurveKw')[18] - 21.5) < 1e-6);
+// Nachtladen: Ziel erreicht, kleiner Rueckgang
+$ems = freshEms(); prop('PLAN_NightGrid_Active', true); prop('PLAN_NightGrid_EndHour', 6);
+$ctxN = ['enwgActive' => false, 'avgHouseW' => 300.0, 'houseLoadSlots' => [], 'socTargetDay' => 86.0, 'hystSoc' => 2.0, 'socMin' => 0.0, 'socReserve' => 10.0,
+    'socTargetNight' => 100.0, 'capKwh' => 40.0, 'chargeKw' => 8.0, 'chargeCurve' => [], 'dischargeKw' => 8.0, 'maxW' => 34500.0, 'feedTariff' => 0.1836, 'refMode' => 0, 'cycleCost' => 0.0, 'spread' => 0.03];
+$pN = array_fill(0, 96, null); for ($i = 0; $i < 24; $i++) { $pN[$i] = 0.15; }
+$nw1 = call($ems, 'nightWindowPlan', [$pN, 18, 99.0, $ctxN]);
+check('Ohne "Ziel erreicht": bei 99 % wird fuer das letzte Prozent noch ein Ladeslot geplant', $nw1['n'] >= 1, json_encode($nw1));
+$nw2 = call($ems, 'nightWindowPlan', [$pN, 18, 99.0, array_merge($ctxN, ['nightDone' => true])]);
+check('Ziel schon erreicht, SOC nur 1 Punkt darunter: kein neues Netzladen', $nw2['n'] === 0, json_encode($nw2));
+$nw3 = call($ems, 'nightWindowPlan', [$pN, 18, 90.0, array_merge($ctxN, ['nightDone' => true])]);
+check('Ziel erreicht, aber SOC deutlich gefallen (90 %): es wird wieder geladen', $nw3['n'] >= 1, json_encode($nw3));
+
 echo "\n9) Regression 12.09.2026 -- Tagesplan darf die Batterie nicht per Sollwert-Modus ins Netz ziehen\n";
 $ems = freshEms();
 $ctx = ['enwgActive' => false, 'enwgStartH' => 0, 'enwgEndH' => 0, 'avgHouseW' => 300.0, 'houseLoadSlots' => [],

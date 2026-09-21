@@ -40,7 +40,7 @@ define('EMS_LOG_VERBOSE',     2);
 
 // Formular-Konvention (siehe EMS/SUITE.md "Einheitliche Formular-Optik"):
 // Was-ist-Neu-Panel ist versionsscharf dismissible, Referenzmuster InverterHub.
-define('EMS_NEWS_VERSION', '0.61.0');
+define('EMS_NEWS_VERSION', '0.62.0');
 
 // NRG-Stack Partnermodul-GUIDs (fuer automatische Discovery, siehe discoverPartners())
 define('GUID_CHARGERHUB',    '{9256C34E-5CFD-4F37-8BFE-E65390EBB37C}');
@@ -464,6 +464,8 @@ class EMS extends IPSModule
         $this->RegisterAttributeBoolean('LastGoodweEnable',  true);
         $this->RegisterAttributeInteger('LastGoodwePowerW',  0);
         $this->RegisterAttributeInteger('NoControlLoggedAt', 0);
+        $this->RegisterAttributeString('ChargeObsCurve',   '{}'); // real beobachtete Ladeleistung (Spitzenwert) je SOC-Stufe {stufe: [kW, Zeitstempel]}
+        $this->RegisterAttributeString('NightTargetDay',   '');   // Datum (Y-m-d), an dem das Nachtziel im Nachtfenster erreicht wurde (kein Neustart des Netzladens bei kleinem Rueckgang)
         $this->RegisterAttributeString('ChargeLimitCurve', '{}'); // gelernte BMS-Ladegrenze je SOC-Stufe {stufe: [kW, Zeitstempel]}
         $this->RegisterAttributeString('NoControlReason', ''); // leer = EMS kann schreiben; sonst Grund, warum es nur beobachtet
         $this->RegisterAttributeInteger('ChargeNoEffectSince', 0);
@@ -665,6 +667,10 @@ class EMS extends IPSModule
                 'caption'  => '🆕 Neu in Version ' . EMS_NEWS_VERSION,
                 'expanded' => true,
                 'items'    => array(
+                    array(
+                        'type'    => 'Label',
+                        'caption' => '• NEU: Ladekurve genauer: Neben der Meldung des Batteriemanagements lernt das EMS die tatsächlich beobachtete Ladeleistung je Ladestand und plant die Nachtladung damit. Ist das Nachtziel erreicht, lädt das EMS bei einem kleinen Rückgang im selben Nachtfenster nicht mehr neu.'
+                    ),
                     array(
                         'type'    => 'Label',
                         'caption' => '• NEU: Verschleißkosten aus Anschaffungspreis und Zyklenzahl: Preis des Speichers und Herstellerzyklen im Panel „Batterie“ eintragen, das EMS berechnet die Kosten je kWh selbst und zieht sie bei Netzladen, Vorentladen und Restwert ab. Ein direkt eingetragener Wert in ct/kWh gilt weiter vorrangig.'
@@ -2615,6 +2621,9 @@ class EMS extends IPSModule
         $missingKwh = max(0.0, ($ctx['socTargetNight'] - $soc) / 100.0 * $ctx['capKwh']);
         // Ladeleistung je SOC-Stufe (vom BMS gemeldet und gelernt), nie mehr als die EMS-Leistungsgrenze (Hausanschluss)
         $needed = ($missingKwh > 0.0) ? $this->chargeSlotsNeeded($ctx, $soc, $ctx['socTargetNight']) : 0;
+        // Ziel in diesem Nachtfenster schon erreicht: bei kleinem Rueckgang (Selbstverbrauch, Messrauschen) nicht neu laden
+        // (Nacht 21.09.2026: zweimal 2-3 Minuten Netzladen bei 99 % ohne Wirkung, der Waechter brach ab)
+        if (!empty($ctx['nightDone']) && ($ctx['socTargetNight'] - $soc) <= max(2.0, (float)($ctx['hystSoc'] ?? 2.0))) { $needed = 0; }
         $charge = $this->pickChargeSlots($cand, $needed);
         return array('end' => $endSlot, 'charge' => $charge, 'n' => count($charge), 'cand' => count($cand));
     }
@@ -2759,11 +2768,42 @@ class EMS extends IPSModule
         $this->WriteAttributeString('ChargeLimitCurve', json_encode($c));
     }
 
+    /**
+     * Lernt die real beobachtete Ladeleistung je SOC-Stufe (Spitzenwert): Das Batteriemanagement meldet in manchen Bereichen weniger,
+     * als die Batterie tatsaechlich annimmt (Nacht 21.09.2026: gemeldet 8-10 kW bei 88-95 %, gemessen 20-22 kW). Eine Beobachtung ist immer
+     * eine Untergrenze des Moeglichen, deshalb Spitzenwert (nach 30 Tagen ohne Bestaetigung verfaellt er). Der Plan nimmt je Stufe das
+     * Maximum aus Meldung und Beobachtung; zur Laufzeit gilt unveraendert die aktuelle BMS-Grenze.
+     */
+    private function learnChargeObserved(float $soc, float $kw): void
+    {
+        if ($kw < 0.5 || $soc < 0.0 || $soc > 100.0) { return; }
+        $c = json_decode($this->ReadAttributeString('ChargeObsCurve'), true);
+        if (!is_array($c)) { $c = array(); }
+        $b = (string)min(19, (int)floor($soc / 5.0));
+        $now = time();
+        $old = $c[$b] ?? null;
+        $fresh = ($old !== null && ($now - (int)$old[1]) < 30 * 86400);
+        $peak = $fresh ? max((float)$old[0], $kw) : $kw;
+        if ($fresh && $peak <= (float)$old[0] * 1.02 && ($now - (int)$old[1]) < 3600) { return; }   // nichts Neues, selten schreiben
+        $stamp = ($fresh && $kw < (float)$old[0] * 0.9) ? (int)$old[1] : $now;                     // nur Bestaetigungen frischen den Zeitstempel auf
+        $c[$b] = array(round($peak, 3), $stamp);
+        $this->WriteAttributeString('ChargeObsCurve', json_encode($c));
+    }
+
     /** Gelernte Ladegrenze je SOC-Stufe (kW, hoechstens 30 Tage alt), begrenzt durch BAT_Charge_Max_kW und Anschluss. Leer = keine Daten. */
     private function chargeCurveKw(): array
     {
         $c = json_decode($this->ReadAttributeString('ChargeLimitCurve'), true);
-        if (!is_array($c)) { return array(); }
+        if (!is_array($c)) { $c = array(); }
+        $obs = json_decode($this->ReadAttributeString('ChargeObsCurve'), true);
+        if (is_array($obs)) {
+            foreach ($obs as $b => $e) {
+                if ((time() - (int)$e[1]) > 30 * 86400) { continue; }
+                $bmsFresh = isset($c[$b]) && (time() - (int)$c[$b][1]) <= 30 * 86400;
+                $c[$b] = array($bmsFresh ? max((float)$c[$b][0], (float)$e[0]) : (float)$e[0], $bmsFresh ? (int)$c[$b][1] : (int)$e[1]);
+            }
+        }
+        if (empty($c)) { return array(); }
         $cap = (float)$this->ReadPropertyFloat('BAT_Charge_Max_kW');
         $maxKw = (float)$this->ReadPropertyInteger('EMS_Max_Power_W') / 1000.0;
         $out = array();
@@ -3417,7 +3457,7 @@ class EMS extends IPSModule
             $ppList = is_array($ppList) ? $ppList : array();
             if ($this->getPowerPriceInstance() > 0 && $this->getPowerPriceCurveJson() !== '' && (int)$this->ReadPropertyInteger('VAR_TIB_PT15M_Today') === 0) {
                 $ppId = $this->getPowerPriceInstance();
-                return sprintf('✅ Automatisch verbunden: Symcon-Strompreis #%d ("%s") — Preis inklusive der dort eingestellten Aufschläge. Feld unten wird ignoriert.', $ppId, IPS_GetName($ppId));
+                return sprintf('✅ Automatisch verbunden: Symcon-Strompreis #%d ("%s") — Preis inklusive der dort eingestellten Aufschläge, ohne zeitvariable Netzentgelte (§ 14a Modul 3). Feld unten wird ignoriert.', $ppId, IPS_GetName($ppId));
             }
             if (count($ppList) > 1 && (int)$this->ReadPropertyInteger('PRICE_Source_Instance') === 0) {
                 return '⚠️ Mehrere Symcon-Strompreis-Instanzen gefunden — bitte unten die zu verwendende auswählen (oder das Feld verknüpfen).';
@@ -4031,6 +4071,7 @@ class EMS extends IPSModule
             'cycleCost' => $this->cycleCostCt() / 100.0,
             'refMode' => $this->chargeReferenceMode(),
             'spread' => max(0.0, (float)$this->ReadPropertyFloat('OPT_Arbitrage_Min_Spread_ct')) / 100.0,
+            'nightDone' => ($this->ReadAttributeString('NightTargetDay') === date('Y-m-d') && (int)date('G') < $this->nightWindowEndHour()),
             'replacePrice' => $this->replacementPriceEur(array_merge(array_values($prices), array_values($tomorrowPrices)), $nowSlot),
         );
 
@@ -4176,6 +4217,7 @@ class EMS extends IPSModule
         $ctxTomorrow = $ctx;
         $ctxTomorrow['avgHouseW'] = $avgHouseWTomorrow;
         $ctxTomorrow['houseLoadSlots'] = $houseLoadSlotsTomorrow;
+        $ctxTomorrow['nightDone'] = false; // das Nachtfenster von morgen beginnt frisch
         if (!empty($ctx['restwert'])) { $ctxTomorrow['rwOffset'] = 96; }
 
         $tomorrowExpensiveReserve = $this->computeExpensiveReserveKwh($tomorrowPrices, $thDischarge, $avgHouseWTomorrow);
@@ -5288,6 +5330,14 @@ class EMS extends IPSModule
         if ($s['bat_active'] && $fromIhub) {
             $limLearn = $this->getBatteryPowerLimitsKw($inv, (float)$this->ReadPropertyInteger('EMS_Max_Power_W'), $this->batteryCapacityKwh());
             if (isset($limLearn['bmsChargeKw'])) { $this->learnChargeLimit((float)$s['bat_soc'], (float)$limLearn['bmsChargeKw']); }
+            // real beobachtete Ladeleistung (bat_pow_w: + = Entladen, - = Laden)
+            if ((float)$s['bat_pow_w'] < -500.0) { $this->learnChargeObserved((float)$s['bat_soc'], -(float)$s['bat_pow_w'] / 1000.0); }
+            // Nachtziel erreicht? Danach kein Neustart des Netzladens wegen kleinem Rueckgang
+            $tgt = (float)$this->ReadPropertyInteger('BAT_SOC_Target_Night');
+            if ($this->ReadPropertyBoolean('PLAN_NightGrid_Active') && (int)date('G') < $this->nightWindowEndHour() && (float)$s['bat_soc'] >= $tgt - 0.5
+                && $this->ReadAttributeString('NightTargetDay') !== date('Y-m-d')) {
+                $this->WriteAttributeString('NightTargetDay', date('Y-m-d'));
+            }
         }
 
         // Wallboxen

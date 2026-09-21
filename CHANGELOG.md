@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.62.0 (2026-09-21)
+- **Ladekurve aus beobachteter Leistung:** Das Batteriemanagement meldete in der Nacht 20./21.09.2026 bei 88 bis 95 % SOC 8 bis 10 kW, tatsächlich nahm die Batterie
+  20 bis 22 kW auf; der Plan hatte deshalb zu viele Ladeslots angenommen. Das EMS lernt jetzt zusätzlich die real beobachtete Ladeleistung je 5-%-Stufe
+  (Spitzenwert, nach 30 Tagen ohne Bestätigung verfällt er) und nimmt je Stufe das Maximum aus Meldung und Beobachtung (weiter begrenzt durch
+  `BAT_Charge_Max_kW` und Anschluss). Zur Laufzeit gilt unverändert die aktuelle BMS-Grenze; die Beobachtung kann die Kurve nur verbessern.
+- **Kein Neustart des Nachtladens bei kleinem Rückgang:** Ist das Nachtziel im Nachtfenster einmal erreicht, plant das EMS bei einem Rückgang von höchstens
+  2 Prozentpunkten (Selbstverbrauch, Rauschen) kein neues Netzladen mehr (Nacht 21.09.: zweimal 2 bis 3 Minuten Netzladen bei 99 % ohne Wirkung, der Wächter brach ab).
+  Fällt der SOC deutlich, wird wieder geladen. Das Nachtfenster von morgen beginnt frisch.
+- Hinweis im Formular: Der Symcon-Strompreis enthält keine zeitvariablen Netzentgelte (§ 14a Modul 3).
+
 ## 0.61.0 (2026-09-20)
 - **Verschleißkosten im Formular erfragt:** Neue optionale Felder „Anschaffungspreis des Speichers (EUR)“ und „Ladezyklen laut Hersteller“ (`BAT_Price_EUR`,
   `BAT_Cycles`). Steht bei „Verschleißkosten je kWh“ 0, berechnet das EMS Preis / (Zyklen × Kapazität) selbst; ein direkt eingetragener Wert gilt
