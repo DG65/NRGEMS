@@ -721,7 +721,7 @@ class EMS extends IPSModule
             if (($element['type'] ?? '') === 'ExpansionPanel' && ($element['caption'] ?? '') === '💰 Tibber & Tarif') {
                 foreach ($element['items'] as $idx => $item) {
                     if (($item['name'] ?? '') === 'VAR_TIB_PT15M_Today') {
-                        array_splice($element['items'], $idx, 0, array($this->statusLabel($this->getPT15MStatusLine())));
+                        array_splice($element['items'], $idx, 0, array(array_merge($this->statusLabel($this->getPT15MStatusLine()), array('name' => 'PT15MStatusLabel'))));
                         break;
                     }
                 }
@@ -731,17 +731,12 @@ class EMS extends IPSModule
         unset($element);
 
         // 3b2. Verschleisskosten: berechneten Wert anzeigen (aus Preis und Zyklen), damit der Nutzer sieht, was gilt
-        $cyc = $this->cycleCostCt();
-        $cycText = ((float)$this->ReadPropertyFloat('BAT_CycleCost_ct') > 0.0)
-            ? sprintf('ℹ️ Es gilt der eingetragene Wert von %.2f ct/kWh.', $cyc)
-            : ($cyc > 0.0
-                ? sprintf('✅ Berechnet aus Preis und Zyklen (bei %.1f kWh Kapazität): %.2f ct/kWh Verschleiß. Wird bei der Planung abgezogen.', $this->batteryCapacityKwh(), $cyc)
-                : 'ℹ️ Ohne Angabe werden keine Verschleißkosten berücksichtigt.');
+        $cycText = $this->cycleCostText();
         foreach ($form['elements'] as &$element) {
             if (($element['type'] ?? '') === 'ExpansionPanel') {
                 foreach ($element['items'] as $idx => $item) {
                     if (($item['name'] ?? '') === 'BAT_Cycles') {
-                        array_splice($element['items'], $idx + 1, 0, array($this->statusLabel($cycText)));
+                        array_splice($element['items'], $idx + 1, 0, array(array_merge($this->statusLabel($cycText), array('name' => 'CycleCostStatusLabel'))));
                         break 2;
                     }
                 }
@@ -953,6 +948,18 @@ class EMS extends IPSModule
         }
 
         return json_encode($form);
+    }
+
+    /** onChange der Preisquellen-Auswahl: die Statuszeile folgt der Auswahl im offenen Formular, nicht dem Speicherstand. */
+    public function PriceSourceChanged(int $instanceId)
+    {
+        $this->UpdateFormField('PT15MStatusLabel', 'caption', $this->getPT15MStatusLine($instanceId));
+    }
+
+    /** onChange der Verschleisskosten-Felder: Statuszeile mit den Werten aus dem offenen Formular. */
+    public function CycleCostChanged(float $manualCt, float $priceEur, int $cycles)
+    {
+        $this->UpdateFormField('CycleCostStatusLabel', 'caption', $this->cycleCostText($manualCt, $priceEur, $cycles));
     }
 
     public function AckNews()
@@ -2479,9 +2486,9 @@ class EMS extends IPSModule
      * Symcon-Strompreis (Bibliothek Strompreis, Modul PowerPrice): Instanz finden. Automatisch nur bei GENAU einer Instanz; bei mehreren
      * entscheidet die Einstellung PRICE_Source_Instance (nicht raten). 0 = keine Quelle.
      */
-    private function getPowerPriceInstance(): int
+    private function getPowerPriceInstance(?int $override = null): int
     {
-        $sel = (int)$this->ReadPropertyInteger('PRICE_Source_Instance');
+        $sel = ($override !== null) ? $override : (int)$this->ReadPropertyInteger('PRICE_Source_Instance');
         if ($sel > 0) {
             return (@IPS_InstanceExists($sel)) ? $sel : 0;
         }
@@ -2494,9 +2501,9 @@ class EMS extends IPSModule
      * Auflösung 15 oder 60 Minuten; der Preis enthaelt die dort eingestellten Aufschlaege des Nutzers (Grundpreis,
      * Aufschlag, MwSt) und gilt hier als Endkundenpreis. Leer = keine brauchbare Kurve.
      */
-    private function getPowerPriceCurveJson(): string
+    private function getPowerPriceCurveJson(?int $override = null): string
     {
-        $iid = $this->getPowerPriceInstance();
+        $iid = $this->getPowerPriceInstance($override);
         if ($iid <= 0) { return ''; }
         $vid = @IPS_GetObjectIDByIdent('MarketData', $iid);
         if (!$vid) { return ''; }
@@ -3463,17 +3470,17 @@ class EMS extends IPSModule
      * Feldern" -- jedes Modul mit einem manuellen SelectVariable-Fallback
      * neben einer automatischen Discovery sollte diese Zeile analog bauen.
      */
-    private function getPT15MStatusLine()
+    private function getPT15MStatusLine(?int $sourceOverride = null)
     {
         $tibberId = $this->getTibberGridRewardInstance();
         if ($tibberId <= 0) {
             $ppList = @IPS_GetInstanceListByModuleID(GUID_POWERPRICE);
             $ppList = is_array($ppList) ? $ppList : array();
-            if ($this->getPowerPriceInstance() > 0 && $this->getPowerPriceCurveJson() !== '' && (int)$this->ReadPropertyInteger('VAR_TIB_PT15M_Today') === 0) {
-                $ppId = $this->getPowerPriceInstance();
+            if ($this->getPowerPriceInstance($sourceOverride) > 0 && $this->getPowerPriceCurveJson($sourceOverride) !== '' && (int)$this->ReadPropertyInteger('VAR_TIB_PT15M_Today') === 0) {
+                $ppId = $this->getPowerPriceInstance($sourceOverride);
                 return sprintf('✅ Automatisch verbunden: Symcon-Strompreis #%d ("%s") — Preis inklusive der dort eingestellten Aufschläge, ohne zeitvariable Netzentgelte (§ 14a Modul 3). Feld unten wird ignoriert.', $ppId, IPS_GetName($ppId));
             }
-            if (count($ppList) > 1 && (int)$this->ReadPropertyInteger('PRICE_Source_Instance') === 0) {
+            if (count($ppList) > 1 && ($sourceOverride !== null ? $sourceOverride : (int)$this->ReadPropertyInteger('PRICE_Source_Instance')) === 0) {
                 return '⚠️ Mehrere Symcon-Strompreis-Instanzen gefunden — bitte unten die zu verwendende auswählen (oder das Feld verknüpfen).';
             }
             return 'ℹ️ Keine Tibber-Grid-Reward-Instanz und kein Symcon-Strompreis gefunden — Feld unten wird benötigt.';
@@ -6101,12 +6108,23 @@ class EMS extends IPSModule
      * Verschleisskosten je entladener kWh in ct: die eingetragenen ct/kWh gelten immer; steht dort 0, wird sie aus
      * Anschaffungspreis / (Zyklen x Kapazitaet) berechnet, sofern Preis und Zyklenzahl eingetragen sind. Sonst 0 (nicht beruecksichtigt).
      */
-    private function cycleCostCt(): float
+    /** Statuszeile zu den Verschleisskosten (gespeicherter Stand oder Werte aus dem offenen Formular). */
+    private function cycleCostText(?float $manualIn = null, ?float $priceIn = null, ?int $cyclesIn = null): string
     {
-        $manual = (float)$this->ReadPropertyFloat('BAT_CycleCost_ct');
+        $manual = ($manualIn !== null) ? $manualIn : (float)$this->ReadPropertyFloat('BAT_CycleCost_ct');
+        $cyc = $this->cycleCostCt($manualIn, $priceIn, $cyclesIn);
+        if ($manual > 0.0) { return sprintf('ℹ️ Es gilt der eingetragene Wert von %.2f ct/kWh.', $cyc); }
+        return ($cyc > 0.0)
+            ? sprintf('✅ Berechnet aus Preis und Zyklen (bei %.1f kWh Kapazität): %.2f ct/kWh Verschleiß. Wird bei der Planung abgezogen.', $this->batteryCapacityKwh(), $cyc)
+            : 'ℹ️ Ohne Angabe werden keine Verschleißkosten berücksichtigt.';
+    }
+
+    private function cycleCostCt(?float $manualIn = null, ?float $priceIn = null, ?int $cyclesIn = null): float
+    {
+        $manual = ($manualIn !== null) ? $manualIn : (float)$this->ReadPropertyFloat('BAT_CycleCost_ct');
         if ($manual > 0.0) { return $manual; }
-        $price  = (float)$this->ReadPropertyFloat('BAT_Price_EUR');
-        $cycles = (int)$this->ReadPropertyInteger('BAT_Cycles');
+        $price  = ($priceIn !== null) ? $priceIn : (float)$this->ReadPropertyFloat('BAT_Price_EUR');
+        $cycles = ($cyclesIn !== null) ? $cyclesIn : (int)$this->ReadPropertyInteger('BAT_Cycles');
         $cap    = $this->batteryCapacityKwh();
         if ($price > 0.0 && $cycles > 0 && $cap > 0.0) { return max(0.0, $price / ($cycles * $cap) * 100.0); }
         return 0.0;

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.62.3 (2026-09-21)
+- **Statuszeilen folgen der Auswahl im offenen Formular:** Die Zeile zur Preisquelle (Symcon-Strompreis-Instanz) und die Zeile zu den Verschleißkosten (Preis, Zyklen, ct/kWh)
+  zeigten bisher den zuletzt gespeicherten Stand, obwohl im Formular schon etwas anderes gewählt oder eingetragen war (Hinweis MeterHub, Symcon lässt die Zeile nicht live
+  umschalten). Jetzt aktualisieren sich beide per `onChange`. Prüfstand: Eingabe im Formular ohne Speichern erscheint sofort in der Zeile.
+
 ## 0.62.2 (2026-09-21)
 - **Formular zeigt, was gelernt wurde:** Unter „Reale max. Ladeleistung“ steht jetzt eine Statuszeile mit der gelernten Ladeleistung je Ladestand
   (z. B. „90–95 %: 21,5 kW“), oder der Grund, warum nichts gelernt wird (Wechselrichter nicht über den InverterHub angebunden, noch keine Ladung).

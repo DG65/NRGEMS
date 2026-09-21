@@ -159,7 +159,7 @@ class IPSModule
     protected function SetTimerInterval($n, $i) {}
     protected function SetStatus($s) {}
     protected function SendDebug($sender, $msg, $format) {}
-    public function UpdateFormField($f, $p, $v) {}
+    public function UpdateFormField($f, $p, $v) { $GLOBALS['FORMFIELD'][$f][$p] = $v; }
     protected function RegisterMessage($a, $b) {}
     public function Translate($s) { return $s; }
 }
@@ -1716,6 +1716,26 @@ call($ems, 'learnChargeObserved', [90.0, 21.5]);
 $f1 = json_encode(json_decode($ems->GetConfigurationForm(), true), JSON_UNESCAPED_UNICODE);
 check('Mit InverterHub und gelernter Stufe: Formular nennt Stufe und kW', strpos($f1, 'Ladeleistung je Ladestand (gelernt') !== false && strpos($f1, '90–95 %: 21.5 kW') !== false, (preg_match('/[✅ℹ️] Ladeleistung je Ladestand[^"]{0,200}/u', $f1, $mm) ? $mm[0] : 'keine Zeile'));
 unset($GLOBALS['INSTMOD'][IHUB_IID]);
+
+echo "\n8y) Statuszeilen folgen der Auswahl im offenen Formular (onChange), nicht dem Speicherstand\n";
+$ems = freshEms(); prop('BAT_Capacity_kWh', 40.0);
+$GLOBALS['FORMFIELD'] = [];
+$ems->CycleCostChanged(0.0, 9998.0, 8000);
+check('Verschleisskosten: Eingabe im offenen Formular (Preis 9998, 8000 Zyklen) ergibt sofort 3,12 ct in der Zeile, obwohl nichts gespeichert ist',
+    strpos((string)($GLOBALS['FORMFIELD']['CycleCostStatusLabel']['caption'] ?? ''), '3.12 ct/kWh') !== false, json_encode($GLOBALS['FORMFIELD']));
+$ems->CycleCostChanged(4.5, 9998.0, 8000);
+check('Direkt eingetragener Wert im Formular gilt sofort in der Zeile', strpos((string)$GLOBALS['FORMFIELD']['CycleCostStatusLabel']['caption'], '4.50 ct/kWh') !== false);
+$GLOBALS['INSTMOD'][7301] = GUID_POWERPRICE; obj(7301, 1, 'Strompreis A', 0); $mdv = [];
+$dd = strtotime('today'); for ($h = 0; $h < 24; $h++) { $mdv[] = ['start' => $dd + $h * 3600, 'end' => $dd + ($h + 1) * 3600, 'price' => 25.0]; }
+vari('Marktdaten', 7301, 'MarketData', json_encode($mdv), 3);
+$GLOBALS['INSTMOD'][7302] = GUID_POWERPRICE; obj(7302, 1, 'Strompreis B', 0); vari('Marktdaten', 7302, 'MarketData', '[]', 3);
+$ems->PriceSourceChanged(7301);
+check('Preisquelle: Auswahl der Instanz mit Daten im offenen Formular ergibt ✅ mit Namen', strpos((string)($GLOBALS['FORMFIELD']['PT15MStatusLabel']['caption'] ?? ''), 'Strompreis A') !== false && strpos((string)$GLOBALS['FORMFIELD']['PT15MStatusLabel']['caption'], '✅') !== false, json_encode($GLOBALS['FORMFIELD']['PT15MStatusLabel'] ?? null));
+$ems->PriceSourceChanged(0);
+check('Zwei Instanzen ohne Auswahl im Formular: Hinweis "bitte auswaehlen" statt raten', strpos((string)$GLOBALS['FORMFIELD']['PT15MStatusLabel']['caption'], 'Mehrere Symcon-Strompreis-Instanzen') !== false, (string)$GLOBALS['FORMFIELD']['PT15MStatusLabel']['caption']);
+unset($GLOBALS['INSTMOD'][7301], $GLOBALS['INSTMOD'][7302]);
+$fj = json_encode(json_decode($ems->GetConfigurationForm(), true), JSON_UNESCAPED_UNICODE);
+check('Die Zeilen haben Namen, damit UpdateFormField sie erreicht', strpos($fj, 'PT15MStatusLabel') !== false && strpos($fj, 'CycleCostStatusLabel') !== false);
 
 // ===========================================================================
 echo "\n" . ($fails === 0 ? "ALLE SZENARIEN BESTANDEN" : "$fails SZENARIO(S) VERLETZT") . "\n\n";

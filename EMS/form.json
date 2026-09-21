@@ -720,14 +720,16 @@
                     "digits": 0,
                     "minimum": 0,
                     "maximum": 200000,
-                    "suffix": " €"
+                    "suffix": " €",
+                    "onChange": "EMS_CycleCostChanged($id, $BAT_CycleCost_ct, $BAT_Price_EUR, $BAT_Cycles);"
                 },
                 {
                     "type": "NumberSpinner",
                     "name": "BAT_Cycles",
                     "caption": "Ladezyklen laut Hersteller (optional, z. B. 6000 bis 8000)",
                     "minimum": 0,
-                    "maximum": 50000
+                    "maximum": 50000,
+                    "onChange": "EMS_CycleCostChanged($id, $BAT_CycleCost_ct, $BAT_Price_EUR, $BAT_Cycles);"
                 },
                 {
                     "type": "NumberSpinner",
@@ -736,7 +738,8 @@
                     "digits": 1,
                     "minimum": 0,
                     "maximum": 50,
-                    "suffix": " ct"
+                    "suffix": " ct",
+                    "onChange": "EMS_CycleCostChanged($id, $BAT_CycleCost_ct, $BAT_Price_EUR, $BAT_Cycles);"
                 },
                 {
                     "type": "NumberSpinner",
@@ -1305,7 +1308,8 @@
                 {
                     "type": "SelectInstance",
                     "name": "PRICE_Source_Instance",
-                    "caption": "Symcon-Strompreis-Instanz (nur nötig, wenn mehrere vorhanden sind)"
+                    "caption": "Symcon-Strompreis-Instanz (nur nötig, wenn mehrere vorhanden sind)",
+                    "onChange": "EMS_PriceSourceChanged($id, $PRICE_Source_Instance);"
                 },
                 {
                     "type": "SelectVariable",
