@@ -813,6 +813,7 @@ $lim1 = call($ems, 'gridChargeLimitEur', [$ctxC]);
 check('Mit Verschleiss sinkt die Netzlade-Grenze um 3,1 ct: 17,44 -> ca. 14,3 ct', abs($lim0 - 0.17442) < 1e-4 && abs($lim1 - (0.17442 - 0.031244)) < 1e-4, "$lim0 / $lim1");
 $formJson = json_decode($ems->GetConfigurationForm(), true);
 check('Formular bleibt gueltig und enthaelt die neuen Felder', strpos(json_encode($formJson), 'BAT_Cycles') !== false && strpos(json_encode($formJson), 'BAT_Price_EUR') !== false);
+check('Formular zeigt die geltenden Verschleisskosten als Status (Berechnet aus Preis und Zyklen)', strpos(json_encode($formJson, JSON_UNESCAPED_UNICODE), 'Berechnet aus Preis und Zyklen') !== false, 'Statuszeile nicht im Formular');
 
 echo "\n8w) Ladekurve auch aus beobachteter Leistung; kein Neustart des Nachtladens bei kleinem Rueckgang\n";
 $ems = freshEms(); prop('EMS_Max_Power_W', 34500);
@@ -1705,6 +1706,16 @@ $GLOBALS['WP_FUNCS'] = []; call($ems, 'Discover');
 $un = json_decode($ems->ReadAttributeString('UnresponsiveInstances'), true);
 check('Antwortet ein Modul nicht, wird es als stumm gemeldet (wie HeishaMon)', ($un['wpmodbushub'] ?? []) === [910] && ($un['samsungehs'] ?? []) === [912], json_encode($un));
 unset($GLOBALS['INSTMOD'][909], $GLOBALS['INSTMOD'][910], $GLOBALS['INSTMOD'][911], $GLOBALS['INSTMOD'][912]); $GLOBALS['WP_FUNCS'] = [];
+
+echo "\n8x) Formular zeigt, was gelernt/verbunden wurde\n";
+$ems = freshEms(); prop('EMS_Max_Power_W', 34500);
+$f0 = json_encode(json_decode($ems->GetConfigurationForm(), true), JSON_UNESCAPED_UNICODE);
+check('Ohne InverterHub: Formular sagt, dass nichts gelernt wird und warum', strpos($f0, 'Es wird nichts gelernt, weil der Wechselrichter nicht über den InverterHub') !== false);
+$GLOBALS['INSTMOD'][IHUB_IID] = GUID_INVERTERHUB; $wr();
+call($ems, 'learnChargeObserved', [90.0, 21.5]);
+$f1 = json_encode(json_decode($ems->GetConfigurationForm(), true), JSON_UNESCAPED_UNICODE);
+check('Mit InverterHub und gelernter Stufe: Formular nennt Stufe und kW', strpos($f1, 'Ladeleistung je Ladestand (gelernt') !== false && strpos($f1, '90–95 %: 21.5 kW') !== false, (preg_match('/[✅ℹ️] Ladeleistung je Ladestand[^"]{0,200}/u', $f1, $mm) ? $mm[0] : 'keine Zeile'));
+unset($GLOBALS['INSTMOD'][IHUB_IID]);
 
 // ===========================================================================
 echo "\n" . ($fails === 0 ? "ALLE SZENARIEN BESTANDEN" : "$fails SZENARIO(S) VERLETZT") . "\n\n";

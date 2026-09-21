@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.62.2 (2026-09-21)
+- **Formular zeigt, was gelernt wurde:** Unter „Reale max. Ladeleistung“ steht jetzt eine Statuszeile mit der gelernten Ladeleistung je Ladestand
+  (z. B. „90–95 %: 21,5 kW“), oder der Grund, warum nichts gelernt wird (Wechselrichter nicht über den InverterHub angebunden, noch keine Ladung).
+  Prüfstand: die Zeile erscheint tatsächlich im Formular (auch die Zeilen zu Verschleißkosten).
+
 ## 0.62.1 (2026-09-21)
 - Formular: Die Beschreibung der realen max. Ladeleistung sagt jetzt, dass das EMS die Ladeleistung je Ladestand nur bei Anbindung über den InverterHub
   selbst lernt; mit von Hand eingetragenen Batterie-Variablen gilt nur der eingetragene Wert.

@@ -749,6 +749,20 @@ class EMS extends IPSModule
         }
         unset($element);
 
+        // 3b3. Gelernte Ladekurve: zeigen, was das EMS gelernt hat (oder warum nichts)
+        $curveText = $this->chargeCurveStatusLine();
+        foreach ($form['elements'] as &$element) {
+            if (($element['type'] ?? '') === 'ExpansionPanel') {
+                foreach ($element['items'] as $idx => $item) {
+                    if (($item['name'] ?? '') === 'BAT_Charge_Max_kW') {
+                        array_splice($element['items'], $idx + 1, 0, array($this->statusLabel($curveText)));
+                        break 2;
+                    }
+                }
+            }
+        }
+        unset($element);
+
         // 3c. Netzmesspunkte-Panel: pauschalen "schau oben"-Hinweis durch eine
         // Status-Zeile JE FELD ersetzen (Dietmars Praezisierung 20.08.2026:
         // nicht ein Panel-weiter Verweis, sondern direkt hinter jedem
@@ -6096,6 +6110,24 @@ class EMS extends IPSModule
         $cap    = $this->batteryCapacityKwh();
         if ($price > 0.0 && $cycles > 0 && $cap > 0.0) { return max(0.0, $price / ($cycles * $cap) * 100.0); }
         return 0.0;
+    }
+
+    /** Statuszeile fuer das Formular: was das EMS ueber die Ladeleistung der Batterie gelernt hat (je Ladestand), oder warum nichts. */
+    private function chargeCurveStatusLine(): string
+    {
+        $inv = $this->getInverterEntry();
+        if ($inv === null || ($inv['source'] ?? '') !== 'inverterhub') {
+            return 'ℹ️ Ladeleistung je Ladestand: Es wird nichts gelernt, weil der Wechselrichter nicht über den InverterHub angebunden ist. Es gilt der eingetragene Wert.';
+        }
+        $curve = $this->chargeCurveKw();
+        if (empty($curve)) {
+            return 'ℹ️ Ladeleistung je Ladestand: Noch nichts gelernt. Das EMS lernt sie, sobald die Batterie lädt (Meldung des Batteriemanagements und beobachtete Leistung).';
+        }
+        $parts = array();
+        foreach ($curve as $b => $kw) { $parts[] = sprintf('%d–%d %%: %.1f kW', $b * 5, $b * 5 + 5, $kw); }
+        // bei vielen Stufen nur jede zweite zeigen, damit die Zeile lesbar bleibt
+        if (count($parts) > 8) { $parts = array_values(array_filter($parts, function ($k) { return $k % 2 === 0; }, ARRAY_FILTER_USE_KEY)); }
+        return sprintf('✅ Ladeleistung je Ladestand (gelernt aus Batteriemanagement und Beobachtung, %d Stufen): %s.', count($curve), implode(', ', $parts));
     }
 
     private function batteryCapacityKwh(): float
