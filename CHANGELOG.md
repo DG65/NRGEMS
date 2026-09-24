@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.65.0 (2026-09-24)
+- **Verbund-Gesundheit erkennt schlafende Tesla-Fahrzeuge:** `EMS_FederationHealth` zählte ein über Tessie eingebundenes Fahrzeug bislang als auffällig, sobald dessen Telemetrie 900 s alt war (Status 203) — bei einem schlafenden Auto der Normalfall, kein Fehler. Ab `TESSIE_GetVehicleState` contractVersion 1.6 liefert Tessie den rohen Schlaf-/Wachzustand (`vehicleStatus`: `asleep`/`waiting_for_sleep`/`awake`/`null`) mit. Bei Status 203 gilt eine Instanz mit `asleep`/`waiting_for_sleep` jetzt als gesund und wird in der Zusammenfassung gesondert als „schläft“ genannt statt unter „auffällig“; `awake` oder `null` (noch nie erfolgreich abgefragt) bleibt weiterhin ein echter Verdacht. Andere Module sind von der Sonderregel nicht betroffen. Auslöser: Tagesauswertung 24.09.2026, mit Tessie geklärt.
+
 ## 0.64.2 (2026-09-21)
 - **🔗-Zeilen (automatisch übernommen) erscheinen grün** (Label-Farbe 0x2E8B3D), auch wenn sie im offenen Formular per `onChange` aktualisiert werden. Andere Statuszeilen bleiben unverändert.
 

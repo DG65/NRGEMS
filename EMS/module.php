@@ -41,7 +41,7 @@ define('EMS_LOG_VERBOSE',     2);
 // Formular-Konvention (siehe EMS/SUITE.md "Einheitliche Formular-Optik"):
 // Was-ist-Neu-Panel ist versionsscharf dismissible, Referenzmuster InverterHub.
 define('EMS_COLOR_AUTO', 0x2E8B3D); // Gruen: Wert wurde automatisch uebernommen (🔗-Zeilen im Formular)
-define('EMS_NEWS_VERSION', '0.62.0');
+define('EMS_NEWS_VERSION', '0.65.0');
 
 // NRG-Stack Partnermodul-GUIDs (fuer automatische Discovery, siehe discoverPartners())
 define('GUID_CHARGERHUB',    '{9256C34E-5CFD-4F37-8BFE-E65390EBB37C}');
@@ -668,6 +668,10 @@ class EMS extends IPSModule
                 'caption'  => '🆕 Neu in Version ' . EMS_NEWS_VERSION,
                 'expanded' => true,
                 'items'    => array(
+                    array(
+                        'type'    => 'Label',
+                        'caption' => '• NEU: Verbund-Gesundheit unterscheidet jetzt schlafende Tesla-Fahrzeuge (über Tessie) von einem echten Verbindungsproblem: Ein Fahrzeug ohne Telemetrie, das laut Tessie schläft, gilt als gesund und wird gesondert als „schläft“ genannt, statt als auffällig.'
+                    ),
                     array(
                         'type'    => 'Label',
                         'caption' => '• NEU: Ladekurve genauer: Neben der Meldung des Batteriemanagements lernt das EMS die tatsächlich beobachtete Ladeleistung je Ladestand und plant die Nachtladung damit. Ist das Nachtziel erreicht, lädt das EMS bei einem kleinen Rückgang im selben Nachtfenster nicht mehr neu.'
@@ -1423,12 +1427,29 @@ class EMS extends IPSModule
                 }
                 $status  = IPS_InstanceExists($id) ? IPS_GetInstance($id)['InstanceStatus'] : 0;
                 $healthy = ($status === 102);
+                $sleeping = false;
+                // Tessie Status 203 (STATUS_TELEMETRY_STALE) bedeutet nur "seit 900s keine
+                // Telemetrie empfangen" -- unabhaengig vom Grund, siehe TESSIE_GetVehicleState
+                // contractVersion 1.6 Feld 'vehicleStatus' (roh aus Tessies /status-Endpunkt:
+                // 'asleep'/'waiting_for_sleep'/'awake'/null). Ein schlafendes Fahrzeug sendet
+                // erwartungsgemaess keine Telemetrie -- das ist KEIN Fehler und zaehlt hier als
+                // gesund, nur mit eigenem Hinweis statt unter "auffaellig". 'awake' oder null
+                // (noch nie erfolgreich abgefragt) bei 203 bleibt ein echter Verdacht (Tessie-
+                // Vorschlag 24.09.2026, siehe ems-federation-health-tessie-schlaf.md).
+                if ($module === 'tessie' && $status === 203) {
+                    $vehicleStatus = $entry['vehicleStatus'] ?? null;
+                    if (in_array($vehicleStatus, array('asleep', 'waiting_for_sleep'), true)) {
+                        $healthy  = true;
+                        $sleeping = true;
+                    }
+                }
                 $entries[] = array(
                     'module'     => $module,
                     'instanceID' => $id,
                     'label'      => IPS_InstanceExists($id) ? IPS_GetName($id) : '(geloescht)',
                     'status'     => $status,
                     'healthy'    => $healthy,
+                    'sleeping'   => $sleeping,
                 );
             }
         }
@@ -1461,6 +1482,7 @@ class EMS extends IPSModule
         }
 
         $unhealthy = array_values(array_filter($entries, function ($e) { return !$e['healthy']; }));
+        $sleeping  = array_values(array_filter($entries, function ($e) { return $e['healthy'] && !empty($e['sleeping']); }));
 
         // Installiert, aber nicht (mehr) antwortend -- siehe Discover()/UnresponsiveInstances.
         // Getrennt von $unhealthy, weil diese Instanzen gar nicht erst in GetPartners()
@@ -1488,6 +1510,10 @@ class EMS extends IPSModule
                 return $e['label'] . ' (Status ' . $e['status'] . ')';
             }, $unhealthy);
             $summary .= ' -- auffaellig: ' . implode(', ', $labels);
+        }
+        if (!empty($sleeping)) {
+            $labels = array_map(function ($e) { return $e['label']; }, $sleeping);
+            $summary .= ' -- schlaeft: ' . implode(', ', $labels);
         }
         if (!empty($missing)) {
             $labels = array_map(function ($m) {
