@@ -1800,6 +1800,35 @@ $fx = json_encode(json_decode($ems->GetConfigurationForm(), true), JSON_UNESCAPE
 check('Zwei Boersenpreis-Instanzen: ⚠️ (EMS nutzt die erste) statt still zu raten', strpos($fx, '⚠️ Mehrere Börsenpreis-Instanzen gefunden') !== false);
 unset($GLOBALS['INSTMOD'][7401], $GLOBALS['INSTMOD'][7402]); $GLOBALS['SPOT_CURVE'] = [];
 
+echo "\n8ad) Fehlbetrag guenstiger aus dem Netz als aus der Batterie (Dietmar 27.09.2026)\n";
+$ems = freshEms();
+prop('BAT_Capacity_kWh', 40.0); prop('BAT_Price_EUR', 9998.0); prop('BAT_Cycles', 8000); // -> 3.124375 ct/kWh Zykluskosten
+$cc = call($ems, 'cycleCostCt');
+check('Zykluskosten wie in 8v: 3,12 ct/kWh', abs($cc - 3.124375) < 1e-6, (string)$cc);
+$ctxFB = ['enwgActive' => false, 'enwgStartH' => 0, 'enwgEndH' => 0, 'avgHouseW' => 400.0, 'houseLoadSlots' => [10940.0],
+    'fcMinPower' => 100.0, 'socTargetDay' => 86.0, 'hystSoc' => 2.0, 'socMin' => 0.0, 'socReserve' => 10.0,
+    'socTargetNight' => 100.0, 'capKwh' => 40.0, 'chargeKw' => 25.0, 'dischargeKw' => 25.0, 'maxW' => 34500.0,
+    'feedTariff' => 0.1836, 'thCharge' => 0.15, 'thDischarge' => 0.25, 'spread' => 0.03, 'restwert' => false];
+// Preis 18ct: mit 5% Abstand (18,9ct) noch unter den 3,12ct? Nein -- Zykluskosten sind ct/kWh, nicht ct*Faktor,
+// der Vergleich ist price*100*1.05 < cycleCostCt() in ct/kWh, bei 3,12ct greift die Regel nur unter ca. 2,98ct Bezug.
+// Realistisches Beispiel mit sehr guenstigem Nachtpreis (Vergleich zu 8n/8t-Faellen):
+$rCheap = call($ems, 'simulateDaySlot', [10, 0.0280, 4979.0, 50.0, [], $ctxFB, 0.0]); // 2,80ct: *1.05=2,94ct < 3,12ct Zykluskosten
+check('Guenstiger Bezug (2,80ct) unter Zykluskosten+5%: Batterie laedt exklusiv aus PV, kein Akku->Haus', $rCheap['plan']['op'] === EMS_OP_PV_SELFUSE && $rCheap['plan']['gw'] === GW_MODE_CHARGE_PV, json_encode($rCheap['plan']));
+check('SOC steigt trotz Fehlbetrag (laedt aus PV, nicht aus dem Fehlbetrag betroffen)', $rCheap['soc'] > 50.0, (string)$rCheap['soc']);
+$rExpensive = call($ems, 'simulateDaySlot', [10, 0.1800, 4979.0, 50.0, [], $ctxFB, 0.0]); // 18ct: *1.05=18,9ct > 3,12ct -- Regel greift NICHT
+check('Bezug (18ct) ueber Zykluskosten+5%: alte Automatik/Entladen-Logik unveraendert (nicht PV_SELFUSE mit Xmax=0 fuer den Fehlbetrag)', !($rExpensive['plan']['op'] === EMS_OP_PV_SELFUSE && $rExpensive['plan']['gw'] === GW_MODE_CHARGE_PV && strpos($rExpensive['plan']['reason'], 'Zykluskosten') !== false), json_encode($rExpensive['plan']));
+prop('BAT_Cycles', 0); prop('BAT_Price_EUR', 0.0); // Zykluskosten unbekannt -> Regel greift nie
+check('Ohne Zykluskosten-Angabe: Regel greift nicht, auch bei sehr guenstigem Preis', abs(call($ems, 'cycleCostCt')) < 1e-9);
+$rNoCost = call($ems, 'simulateDaySlot', [10, 0.0100, 4979.0, 50.0, [], $ctxFB, 0.0]);
+check('Ohne Zykluskosten kein "Zykluskosten"-Grund im Ergebnis dieses Zweigs', strpos($rNoCost['plan']['reason'] ?? '', 'Zykluskosten <') === false);
+// Live-Sicherheitsnetz in applyPlanSlot(): dieselbe Regel muss auch ohne realen PV-Ueberschuss aktiv bleiben duerfen.
+prop('BAT_Capacity_kWh', 40.0); prop('BAT_Price_EUR', 9998.0); prop('BAT_Cycles', 8000);
+$sFB = ['bat_active' => true, 'bat_soc' => 50.0, 'wb_active' => false, 'wb_count' => 0, 'wb1_cable' => 0, 'wb1_error' => 0, 'wb2_cable' => 0, 'wb2_error' => 0,
+    'tib_price_eff' => 0.0280, 'pv_total_w' => 4979.0, 'house_pow_w' => 10940.0, 'wb1_pow_kw' => 0.0, 'wb2_pow_kw' => 0.0];
+$GLOBALS['ATTR'][EMS_IID]['DayPlan'] = json_encode(array_fill(0, 96, ['op' => EMS_OP_PV_SELFUSE, 'gw' => GW_MODE_CHARGE_PV, 'power' => 0, 'reason' => 'Bezug 2.80ct + 5% Abstand < Zykluskosten 3.12ct: Batterie lädt exklusiv aus PV', 'price' => 0.028, 'soc' => 50.0]));
+$applied = call($ems, 'applyPlanSlot', [$sFB]);
+check('Live-Sicherheitsnetz laesst Xmax=0 auch ohne realen PV-Ueberschuss (10940W Last > 4979W PV) zu, wenn guenstig genug', $applied !== null && $applied['gw_mode'] === GW_MODE_CHARGE_PV && $applied['gw_enable'] === true, json_encode($applied));
+
 // ===========================================================================
 echo "\n" . ($fails === 0 ? "ALLE SZENARIEN BESTANDEN" : "$fails SZENARIO(S) VERLETZT") . "\n\n";
 exit($fails === 0 ? 0 : 1);

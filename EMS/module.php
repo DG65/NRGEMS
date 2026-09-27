@@ -41,7 +41,7 @@ define('EMS_LOG_VERBOSE',     2);
 // Formular-Konvention (siehe EMS/SUITE.md "Einheitliche Formular-Optik"):
 // Was-ist-Neu-Panel ist versionsscharf dismissible, Referenzmuster InverterHub.
 define('EMS_COLOR_AUTO', 0x2E8B3D); // Gruen: Wert wurde automatisch uebernommen (🔗-Zeilen im Formular)
-define('EMS_NEWS_VERSION', '0.65.0');
+define('EMS_NEWS_VERSION', '0.66.0');
 
 // NRG-Stack Partnermodul-GUIDs (fuer automatische Discovery, siehe discoverPartners())
 define('GUID_CHARGERHUB',    '{9256C34E-5CFD-4F37-8BFE-E65390EBB37C}');
@@ -668,6 +668,10 @@ class EMS extends IPSModule
                 'caption'  => '🆕 Neu in Version ' . EMS_NEWS_VERSION,
                 'expanded' => true,
                 'items'    => array(
+                    array(
+                        'type'    => 'Label',
+                        'caption' => '• NEU: Fehlbetrag zwischen PV und Hausverbrauch kommt jetzt bevorzugt aus dem Netz statt aus der Batterie, sofern der aktuelle Strompreis mit 5 % Sicherheitsabstand unter den eigenen Zykluskosten liegt. Die Batterie lädt dabei weiter ausschließlich aus der PV. Vermeidet unnötige Wandlungsverluste und Zyklen, ohne die Zykluskosten-Angabe im Panel „Batterie“ ändert sich am Verhalten nichts.'
+                    ),
                     array(
                         'type'    => 'Label',
                         'caption' => '• NEU: Verbund-Gesundheit unterscheidet jetzt schlafende Tesla-Fahrzeuge (über Tessie) von einem echten Verbindungsproblem: Ein Fahrzeug ohne Telemetrie, das laut Tessie schläft, gilt als gesund und wird gesondert als „schläft“ genannt, statt als auffällig.'
@@ -3206,6 +3210,33 @@ class EMS extends IPSModule
             }
         }
 
+        // Fehlbetrag guenstiger aus dem Netz als aus der Batterie decken (Dietmar,
+        // 27.09.2026, live am 27.09. 11:24 Uhr entdeckt: WB-Ladung zog die Batterie
+        // leer, obwohl der Bezugspreis mit 18ct moderat war). Physikalischer
+        // Hintergrund: Netz->Haus/WB ist reines AC/AC, keine Wandlung; PV->Akku laeuft
+        // ueber den DC/DC-Steller, ebenfalls ohne die 5%-AC-Wandlungsverluste (siehe
+        // Anlagen-Memory "Wandlungsverluste"). Wuerde die Batterie stattdessen den
+        // Fehlbetrag decken (Akku->Haus), fiele genau dieser Verlust an UND der
+        // Akku wird unnoetig zyklisiert. Regel gilt IMMER (nicht nur unterhalb von
+        // thDischarge), sobald der aktuelle Preis auch mit 5% Sicherheitsabstand
+        // noch unter den eigenen Zykluskosten liegt -- der Abstand verhindert ein
+        // Flattern nahe am Breakeven. Modus 2 (Laden-Solar) mit Xmax=0: die Batterie
+        // laedt ausschliesslich aus dem, was die PV gerade liefert (auch wenn das
+        // weniger als die Last ist), nie aus dem Netz und nie zu Lasten des Hauses --
+        // der Fehlbetrag zwischen PV und Last deckt der Netzanschluss automatisch
+        // (Kirchhoff, keine EMS-Entscheidung mehr noetig). Ohne Zykluskosten-Angabe
+        // (cycleCostCt()==0) greift die Regel nicht, dann bleibt das bisherige
+        // Verhalten (Automatik/Entladen) unveraendert -- siehe applyPlanSlot()
+        // fuer den passenden Live-Sicherheitsnetz-Zusatz (cheapVsCycle).
+        $cycleCost = $this->cycleCostCt();
+        if ($price !== null && $cycleCost > 0.0 && ($price * 100.0 * 1.05) < $cycleCost) {
+            $gainKwh = min(max(0.0, $pvW), $this->ctxChargeKw($ctx, $soc) * 1000.0) / 1000.0 * 0.25;
+            $soc = min(100.0, $soc + ($gainKwh / max(0.001, $ctx['capKwh']) * 100.0));
+            return array('plan' => array('op' => EMS_OP_PV_SELFUSE, 'gw' => GW_MODE_CHARGE_PV, 'power' => 0,
+                'reason' => sprintf('Bezug %.2fct + 5%% Abstand < Zykluskosten %.2fct: Batterie lädt exklusiv aus PV (%.0fW), Haus+WB aus dem Netz', $price * 100, $cycleCost, $pvW),
+                'price' => $price, 'soc' => round($soc, 1)), 'soc' => $soc);
+        }
+
         $missingKwh  = max(0.0, ($ctx['socTargetNight'] - $soc) / 100.0 * $ctx['capKwh']);
         $neededSlots = ($ctx['chargeKw'] > 0 || !empty($ctx['chargeCurve'])) ? $this->chargeSlotsNeeded($ctx, $soc, $ctx['socTargetNight']) : 0;
         $rank        = $cheapRank[$slot] ?? PHP_INT_MAX;
@@ -4820,7 +4851,12 @@ class EMS extends IPSModule
             $feed    = $this->planFeedTariffEur();
             $surplus = (float)$s['pv_total_w'] - (float)$s['house_pow_w'];
             $cheap   = ($price > 0 && $feed > 0 && $price < $feed * $this->convEff() - $this->cycleCostCt() / 100.0);
-            if ($surplus < 200.0 && !$cheap) {
+            // Fehlbetrag-Regel (Dietmar 27.09.2026, siehe simulateAutomatikSlot()-Kommentar):
+            // Xmax=0 ist auch OHNE realen PV-Ueberschuss zulaessig, solange der aktuelle
+            // Bezugspreis mit 5% Abstand unter den Zykluskosten liegt -- die Batterie soll
+            // dann bewusst NICHT den Fehlbetrag decken, egal wie gross er real ist.
+            $cheapVsCycle = ($price !== null && $this->cycleCostCt() > 0.0 && ($price * 100.0 * 1.05) < $this->cycleCostCt());
+            if ($surplus < 200.0 && !$cheap && !$cheapVsCycle) {
                 return array(
                     'op_mode' => EMS_OP_AUTO, 'gw_mode' => GW_MODE_AUTO, 'gw_power_w' => 0, 'gw_enable' => false,
                     'wb1_enable' => $wb1En, 'wb2_enable' => $wb2En,
