@@ -130,7 +130,15 @@
                 },
                 {
                     "type": "Label",
-                    "caption": "🌞 Mittagsspitze aufnehmen: Reicht der vorhergesagte PV-Überschuss des restlichen Tages sicher, um die Batterie trotzdem zu füllen, sperrt EMS vormittags das Laden. Der Überschuss geht dann ins Netz, und zur Mittagsspitze lädt die Batterie aus PV. Liegt die gemessene PV nicht mehr sicher über der Hauslast, gibt EMS sofort frei. Braucht die PV-Prognose (automatisch erkannt), die Lastprognose ist optional (sonst Durchschnittswert)."
+                    "caption": "🌞 Mittagsspitze aufnehmen: Reicht der vorhergesagte PV-Überschuss bis zum Beginn des Spitzenfensters sicher, um die Batterie bis dahin trotzdem zu füllen, sperrt EMS vorher das Laden. Der Überschuss geht dann ins Netz. Ab dem Spitzenfenster gibt EMS immer frei — dort soll die Batterie laden, nicht zusätzlich einspeisen (genau dann speisen alle PV-Anlagen im Netz am stärksten ein). Ist der Einkaufspreis gerade (inkl. Wandlung/Zyklus) günstiger als die Einspeisevergütung, sperrt EMS unabhängig vom Zeitpunkt immer — Zwischenspeichern lohnt sich dann nicht, günstiger Nachkauf ersetzt die Batterie. Liegt die gemessene PV nicht mehr sicher über der Hauslast, gibt EMS sofort frei. Braucht die PV-Prognose (automatisch erkannt), die Lastprognose ist optional (sonst Durchschnittswert)."
+                },
+                {
+                    "type": "NumberSpinner",
+                    "name": "NETZ_B1_Peak_Fraction_Pct",
+                    "caption": "Spitzenfenster = Prognose mindestens so viel Prozent des Tagesmaximums",
+                    "minimum": 50,
+                    "maximum": 100,
+                    "suffix": " %"
                 },
                 {
                     "type": "NumberSpinner",
@@ -143,7 +151,7 @@
                 {
                     "type": "NumberSpinner",
                     "name": "NETZ_B1_Latest_Hour",
-                    "caption": "Spätestens freigeben um",
+                    "caption": "Spätestens freigeben um (manuelle Notbremse, unabhängig vom Spitzenfenster)",
                     "minimum": 8,
                     "maximum": 18,
                     "suffix": " Uhr"

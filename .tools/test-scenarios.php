@@ -1037,34 +1037,61 @@ unset($GLOBALS['INSTMOD'][IHUB_IID]);
 
 // ===========================================================================
 echo "\n15) B1 Mittagsspitze aufnehmen -- Entscheidung (reine Funktion, feste Uhrzeit)\n";
+echo "    Umgebaut 30.09.2026: Reserve nicht mehr bis Tagesende, sondern nur noch bis zum\n";
+echo "    Beginn des (datengetriebenen) Spitzenfensters; ab der Spitze immer freigeben;\n";
+echo "    zeitunabhaengiger Preis-Override (Einkauf < Verguetung -. Wandlung/Zyklus).\n";
+
+// Trapezkurve 06:00-18:00: Rand (Slots 24-31/64-71) + Plateau (Slots 32-63, 08:00-16:00).
+// Schwelle 80 % vom Tagesmaximum liegt nur im Plateau -> Spitzenfenster 08:00-16:00 (32..63).
+$curve = function (float $rand, float $plateau): array {
+    $s = array_fill(0, 96, 0.0);
+    for ($i = 24; $i < 32; $i++) { $s[$i] = $rand; }
+    for ($i = 32; $i < 64; $i++) { $s[$i] = $plateau; }
+    for ($i = 64; $i < 72; $i++) { $s[$i] = $rand; }
+    return $s;
+};
+$sonne  = $curve(1000.0, 6000.0);   // Spitzenfenster 08:00-16:00
+$trueb  = $curve(400.0,  2500.0);   // dieselbe Lage, schwaechere Prognose
+$p10gut = $curve(800.0,  5000.0);
+$p10mau = $curve(400.0,  2500.0);
+
 $ems = freshEms();
-$sonne = array_fill(0, 96, 0.0); for ($i = 32; $i < 72; $i++) { $sonne[$i] = 6000.0; } // 08:00-18:00 je 6 kW
-$basis = ['nowSlot' => 36, 'latestSlot' => 52, 'pv' => $sonne, 'load' => array_fill(0, 96, null), 'avgHouseW' => 400.0,
-    'capKwh' => 40.0, 'soc' => 50.0, 'pvW' => 3000.0, 'houseW' => 400.0, 'marginW' => 300.0, 'safetyPct' => 130, 'wasActive' => false];
+// 07:00, vor dem Spitzenfenster (08:00). SOC 50 % von 40 kWh: 20 kWh Platz, x1,3 = 26 kWh.
+$basis = ['nowSlot' => 28, 'latestSlot' => 90, 'peakFractionPct' => 80, 'pv' => $sonne, 'load' => array_fill(0, 96, null),
+    'avgHouseW' => 400.0, 'capKwh' => 40.0, 'soc' => 50.0, 'pvW' => 3000.0, 'houseW' => 400.0, 'marginW' => 300.0,
+    'safetyPct' => 130, 'price' => null, 'feedTariff' => 0.0, 'wasActive' => false];
 $b1 = fn(array $o = []) => call($ems, 'b1Evaluate', [array_merge($basis, $o)]);
-// 09:00, SOC 50 % von 40 kWh: 20 kWh Platz, x1,3 = 26 kWh; Rest 09:15-18:00 = 35 Slots x 5,6 kW x 0,25 h = 49 kWh
-check('sonniger Vormittag, Rest 49 kWh >= 26 kWh: Laden sperren', $b1()['active'] === true, $b1()['reason']);
+
+echo "\n   Spitzenfenster selbst (peakWindowSlots(), isoliert)\n";
+$shoulder = array_fill(0, 96, 0.0);
+for ($i = 10; $i < 20; $i++) { $shoulder[$i] = 3000.0; }
+for ($i = 20; $i < 30; $i++) { $shoulder[$i] = 6000.0; }
+for ($i = 30; $i < 40; $i++) { $shoulder[$i] = 3000.0; }
+check('80 %-Schwelle: nur das echte Plateau (Slot 20-29)', call($ems, 'peakWindowSlots', [$shoulder, 80.0]) === [20, 29]);
+check('40 %-Schwelle: Schultern zaehlen mit (Slot 10-39)', call($ems, 'peakWindowSlots', [$shoulder, 40.0]) === [10, 39]);
+check('Kurve durchgaengig 0: kein Fenster', call($ems, 'peakWindowSlots', [array_fill(0, 96, 0.0), 80.0]) === [null, null]);
+
+echo "\n   Reserve vor dem Spitzenfenster (bis Fensterbeginn, nicht mehr bis Tagesende)\n";
 check('keine PV-Prognose: nie sperren', $b1(['pv' => []])['active'] === false && $b1(['pv' => array_fill(0, 96, 0.0)])['active'] === false);
-check('nach dem spaetesten Freigabezeitpunkt (13:00): freigeben', $b1(['nowSlot' => 52])['active'] === false);
+check('nach dem spaetesten Freigabezeitpunkt (manuelle Notbremse): freigeben', $b1(['nowSlot' => 25, 'latestSlot' => 24])['active'] === false);
 check('Batterie voll: nicht sperren', $b1(['soc' => 99.5])['active'] === false);
 $r = $b1(['pvW' => 600.0]);
 check('gemessene PV nur 200 W ueber Haus (Wolke): freigeben, als Sicherheitsausstieg', $r['active'] === false && !empty($r['safety']), $r['reason']);
 check('bei laufendem B1 reicht die halbe Marge (150 W < 200 W): bleibt gesperrt', $b1(['pvW' => 600.0, 'wasActive' => true])['active'] === true);
-$trueb = array_fill(0, 96, 0.0); for ($i = 32; $i < 72; $i++) { $trueb[$i] = 2500.0; }   // Rest 35 x 2,1 kW x 0,25 = 18,4 kWh
-check('truebe Prognose, Rest 18 kWh < 26 kWh: nicht sperren (Batterie soll voll werden)', $b1(['pv' => $trueb])['active'] === false, $b1(['pv' => $trueb])['reason']);
-check('Lastprognose wird genutzt: 5,5 kW Last je Slot -> Rest nur 1,75 kWh, nicht sperren', $b1(['load' => array_fill(0, 96, 5500.0)])['active'] === false);
+// Reserve 07:15-16:00 (Slot 29-63): 45,25 kWh >= 26 kWh Bedarf -> sperren
+check('sonniger Vormittag, Reserve bis Spitzenbeginn 45,25 kWh >= 26 kWh: Laden sperren', $b1()['active'] === true, $b1()['reason']);
+check('truebe Prognose, Reserve 16,8 kWh < 26 kWh: nicht sperren (Batterie soll voll werden)', $b1(['pv' => $trueb])['active'] === false, $b1(['pv' => $trueb])['reason']);
+check('Lastprognose wird genutzt: 5,5 kW Last je Slot -> Reserve nur 4 kWh, nicht sperren', $b1(['load' => array_fill(0, 96, 5500.0)])['active'] === false);
 check('Kapazitaet unbekannt (0 kWh): nicht sperren', $b1(['capKwh' => 0.0])['active'] === false);
 // p10 (vorsichtige Prognose): 20 kWh Platz x 1,1 = 22 kWh
-$p10gut = array_fill(0, 96, 0.0); for ($i = 32; $i < 72; $i++) { $p10gut[$i] = 5000.0; }   // Rest 35 x 4,6 x 0,25 = 40 kWh
-$p10mau = array_fill(0, 96, 0.0); for ($i = 32; $i < 72; $i++) { $p10mau[$i] = 2500.0; }   // Rest 35 x 2,1 x 0,25 = 18 kWh
 $r = $b1(['pv10' => $p10gut, 'safetyP10Pct' => 110]);
-check('p10 vorhanden und ausreichend (40 kWh >= 22 kWh): sperren, Basis p10', $r['active'] === true && ($r['basis'] ?? '') === 'p10', $r['reason']);
+check('p10 vorhanden und ausreichend (37,1 kWh >= 22 kWh): sperren, Basis p10', $r['active'] === true && ($r['basis'] ?? '') === 'p10', $r['reason']);
 $r = $b1(['pv10' => $p10mau, 'safetyP10Pct' => 110]);
-check('unsicherer Tag: Median reicht (49 kWh), p10 nicht (18 kWh < 22 kWh) -> NICHT sperren', $r['active'] === false && ($r['basis'] ?? '') === 'p10', $r['reason']);
+check('unsicherer Tag: Median reicht (45,25 kWh), p10 nicht (16,8 kWh < 22 kWh) -> NICHT sperren', $r['active'] === false && ($r['basis'] ?? '') === 'p10', $r['reason']);
 $r = $b1(['pv10' => [], 'safetyP10Pct' => 110]);
 check('p10 fehlt: Rueckfall auf Median mit 130 %, Basis p50', $r['active'] === true && ($r['basis'] ?? '') === 'p50', $r['reason']);
 check('p10 nur Nullen (nicht geliefert): Rueckfall auf Median', ($b1(['pv10' => array_fill(0, 96, 0.0)])['basis'] ?? '') === 'p50');
-// Prognoseguete (PVF_GetAccuracy 1.0). Basisfall p50: Rest 49 kWh, Bedarf 20 x 1,3 = 26 kWh
+// Prognoseguete (PVF_GetAccuracy 1.0). Basisfall p50: Reserve 45,25 kWh, Bedarf 20 x 1,3 = 26 kWh
 $acc = fn(array $o = []) => array_merge(['contractVersion' => '1.0', 'days' => 9, 'bias' => -12.58, 'mape' => 16.75,
     'byDaylightFraction' => [['from' => 0, 'to' => 0.125, 'factor' => 0.497, 'n' => 62]]], $o);
 $g = ['maxMape' => 30, 'minDays' => 5];
@@ -1073,27 +1100,74 @@ check('Dietmars Livewerte (9 Tage, 16,8 % Fehler, Bias -12,6 %): unveraendert sp
     ($r = $b1(array_merge($g, ['accuracy' => $acc()])))['active'] === true && strpos($r['reason'], 'Güte') !== false, $r['reason']);
 check('Fehlerquote 45 % > 30 %: B1 setzt aus', ($r = $b1(array_merge($g, ['accuracy' => $acc(['mape' => 45.0])])))['active'] === false && strpos($r['reason'], 'Prognosegüte') !== false, $r['reason']);
 check('zu wenig Tage (3 < 5): Guete wird ignoriert, auch bei 45 %', $b1(array_merge($g, ['accuracy' => $acc(['mape' => 45.0, 'days' => 3])]))['active'] === true);
-check('Prognose zuletzt 100 % zu HOCH (bias +100): Zuschlag verdoppelt, 52 kWh > 49 kWh -> nicht sperren',
+check('Prognose zuletzt 100 % zu HOCH (bias +100): Zuschlag verdoppelt, 52 kWh Bedarf > 45,25 kWh Reserve -> nicht sperren',
     ($r = $b1(array_merge($g, ['accuracy' => $acc(['bias' => 100.0])])))['active'] === false, $r['reason']);
 check('Prognose zu NIEDRIG (bias -40): kein Abschlag, unveraendert sperren', $b1(array_merge($g, ['accuracy' => $acc(['bias' => -40.0])]))['active'] === true);
 check('fremde Vertrags-Major 2.0: Guete ignoriert', $b1(array_merge($g, ['accuracy' => $acc(['contractVersion' => '2.0', 'mape' => 90.0])]))['active'] === true);
 check('Tageszeit-Faktoren werden NICHT erneut angewendet (0,497 am Morgen aendert nichts)',
     $b1(array_merge($g, ['accuracy' => $acc()]))['active'] === $b1(array_merge($g, ['accuracy' => $acc(['byDaylightFraction' => []])]))['active']);
 
+echo "\n   Uebergang ins/aus dem Spitzenfenster (unabhaengig von der Reserve)\n";
+$r = $b1(['nowSlot' => 32]); // 08:00, Fensterbeginn
+check('Fensterbeginn (08:00): immer freigeben, egal wie viel Reserve fehlen wuerde', $r['active'] === false && strpos($r['reason'], 'Spitzenfenster erreicht') === 0, $r['reason']);
+$r = $b1(['nowSlot' => 63]); // 15:45, letzter Slot im Fenster
+check('letzter Spitzen-Slot (15:45): weiterhin freigeben', $r['active'] === false && strpos($r['reason'], 'Spitzenfenster erreicht') === 0, $r['reason']);
+$r = $b1(['nowSlot' => 64]); // 16:00, Fenster vorbei
+check('nach dem Fenster (16:00): freigeben, "Spitzenfenster vorbei"', $r['active'] === false && strpos($r['reason'], 'Spitzenfenster vorbei') === 0, $r['reason']);
+check('truebe Prognose waere vor der Spitze eh schon nicht gesperrt -- am Fensterende trotzdem "erreicht"',
+    $b1(['pv' => $trueb, 'nowSlot' => 32])['active'] === false);
+
+echo "\n   Preis-Override (Einkauf inkl. Wandlung/Zyklus guenstiger als Verguetung -> immer sperren)\n";
+// Basis (vor der Spitze): ohne Preis/Verguetung unveraendert wie oben (sperren, da Reserve reicht).
+check('kein Preis/keine Verguetung uebergeben: Override inaktiv, normale Reserve-Pruefung', $b1()['active'] === true);
+// Truebe Prognose wuerde OHNE Preis-Override nicht sperren (Reserve reicht nicht) --
+// mit guenstigem Einkauf (10 ct < 18,36 ct x 0,95 = 17,44 ct, keine Zykluskosten) doch.
+$r = $b1(['pv' => $trueb, 'price' => 0.10, 'feedTariff' => 0.1836]);
+check('Einkauf 10 ct < Verguetung x Wandlung 17,44 ct: sperren, obwohl Reserve fuer sich allein nicht reichen wuerde',
+    $r['active'] === true && strpos($r['reason'], 'Einkauf') !== false, $r['reason']);
+$r = $b1(['pv' => $trueb, 'price' => 0.30, 'feedTariff' => 0.1836]);
+check('Einkauf 30 ct > Verguetung x Wandlung 17,44 ct: Override greift nicht, Reserve entscheidet (nicht sperren)',
+    $r['active'] === false && strpos($r['reason'], 'Einkauf') === false, $r['reason']);
+check('Verguetung 0 (nicht bekannt): Override inaktiv, kein Fehler', $b1(['pv' => $trueb, 'price' => 0.05, 'feedTariff' => 0.0])['active'] === false);
+// Zykluskosten senken die Grenze: 9.998 EUR / 8.000 Zyklen / 40 kWh = 3,124375 ct -> Grenze 17,44 - 3,12 = 14,32 ct
+prop('BAT_Capacity_kWh', 40.0); prop('BAT_Price_EUR', 9998.0); prop('BAT_Cycles', 8000);
+$r = $b1(['pv' => $trueb, 'price' => 0.15, 'feedTariff' => 0.1836]);
+check('mit Zykluskosten (Grenze 14,32 ct): 15 ct ist NICHT mehr guenstiger, Override greift nicht',
+    $r['active'] === false && strpos($r['reason'], 'Einkauf') === false, $r['reason']);
+$r = $b1(['pv' => $trueb, 'price' => 0.14, 'feedTariff' => 0.1836]);
+check('mit Zykluskosten (Grenze 14,32 ct): 14 ct ist guenstiger, Override greift', $r['active'] === true && strpos($r['reason'], 'Einkauf') !== false, $r['reason']);
+prop('BAT_Capacity_kWh', 0.0); prop('BAT_Price_EUR', 0.0); prop('BAT_Cycles', 0);
+// Override wirkt auch WAEHREND/NACH der Spitze (zeitunabhaengig) -- sonst wuerde die
+// Spitzen-Freigabe die Batterie trotzdem laden lassen, obwohl Einkauf billiger waere.
+$r = $b1(['nowSlot' => 40, 'price' => 0.10, 'feedTariff' => 0.1836]); // 10:00, mitten im Fenster
+check('guenstiger Einkauf WAEHREND des Spitzenfensters: trotzdem sperren (Override zeitunabhaengig)',
+    $r['active'] === true && strpos($r['reason'], 'Einkauf') !== false, $r['reason']);
+
 echo "\n16) B1 im Zusammenspiel -- Vorrang, Faehigkeit, Steuerpfad svc_* statt ctl_*\n";
 $ems = freshEms();
 $GLOBALS['INSTMOD'][IHUB_IID] = GUID_INVERTERHUB;
 $wr();                                                    // GoodWe, Vertrag 1.3, alle Faehigkeiten
-attr('FcPvToday', json_encode(array_fill(0, 96, 50000.0)));  // Prognose: ueberall reichlich Ueberschuss (uhrzeitunabhaengig)
+// Trapezkurve mit Spitzenfenster 10:00-16:00 (Slot 40-63, >=80 % des Maximums), davor/danach
+// eine schwaechere Schulter (06:00-10:00/16:00-20:00) -- ueberall reichlich Ueberschuss, aber
+// mit einer echten, zeitabhaengigen Spitze (applyGridServiceB1() nutzt die reale Uhrzeit).
+$fcSonnig = array_fill(0, 96, 0.0);
+for ($i = 24; $i < 40; $i++) { $fcSonnig[$i] = 3000.0; }
+for ($i = 40; $i < 64; $i++) { $fcSonnig[$i] = 50000.0; }
+for ($i = 64; $i < 80; $i++) { $fcSonnig[$i] = 3000.0; }
+attr('FcPvToday', json_encode($fcSonnig));
 attr('FcLoadToday', json_encode(array_fill(0, 96, null)));
 prop('NETZ_B1_Latest_Hour', 24);
 prop('BAT_Capacity_kWh', 40.0);
 $sonnig = state(['bat_soc' => 50.0, 'pv_total_w' => 5000.0, 'house_pow_w' => 400.0]);
 $autoD = ['op_mode' => EMS_OP_AUTO, 'gw_mode' => GW_MODE_AUTO, 'gw_power_w' => 0, 'gw_enable' => false,
     'wb1_enable' => false, 'wb2_enable' => false, 'reason' => 'Automatik', 'source' => 'ems'];
-$spaet = ((int)((time() - strtotime('today')) / 900)) >= 88; // ab 22:00 fehlt der Restueberschuss des Tages fuer diese Faelle
+$nowSlotReal = (int)(((int)date('H') * 60 + (int)date('i')) / 15);
 $d = call($ems, 'applyGridServiceB1', [$autoD, $sonnig]);
-check('Automatik-Entscheidung + Faehigkeit + sonnig: B1 sperrt das Laden (svc, Quelle netzdienlich)', $spaet || (($d['svc'] ?? '') === 'chargeInhibit' && $d['source'] === 'netzdienlich'), fmt($d) . ($spaet ? ' (23:45, uebersprungen)' : ''));
+if ($nowSlotReal < 40) {
+    check('vor der Spitze (10:00): B1 sperrt das Laden (svc, Quelle netzdienlich)', ($d['svc'] ?? '') === 'chargeInhibit' && $d['source'] === 'netzdienlich', fmt($d) . " (Slot $nowSlotReal)");
+} else {
+    check('in/nach der Spitze: B1 greift nicht, Automatik laedt', empty($d['svc']) && $d['op_mode'] === EMS_OP_AUTO, fmt($d) . " (Slot $nowSlotReal)");
+}
 $planD = array_merge($autoD, ['op_mode' => EMS_OP_NET_CHARGE, 'gw_mode' => GW_MODE_AC_IMPORT, 'gw_power_w' => 8000, 'gw_enable' => true, 'source' => 'tagesplan']);
 check('Tagesplan-Sollwert (Netzladen, Preis sticht): B1 greift nicht', call($ems, 'applyGridServiceB1', [$planD, $sonnig]) === $planD);
 $grD = array_merge($planD, ['op_mode' => EMS_OP_GRIDREWARDS, 'source' => 'tibber']);
@@ -1361,13 +1435,20 @@ echo "\n   B1 an der Einspeisegrenze\n";
 $ems = freshEms(); prop('ANL_IBN_Datum', '01.06.2025'); prop('ANL_kWp_Manuell', 9.0); prop('EMS_Active', true);
 attr('PartnerCache', json_encode(['inverterhub' => [['instanceID' => IHUB_IID, 'contractVersion' => '1.3', 'controlAuthority' => 'ems', 'controllable' => true,
     'gridServiceCapabilities' => ['chargeInhibit', 'gridCharge', 'dischargeToGrid', 'release']]]]));
-attr('FcPvToday', json_encode(array_fill(0, 96, 50000.0))); prop('NETZ_B1_Latest_Hour', 24); prop('BAT_Capacity_kWh', 40.0);
+// Trapezkurve mit Spitzenfenster 10:00-16:00 (Slot 40-63), wie in Block 16 -- eine
+// durchgaengig flache Kurve wuerde seit der Spitzenfenster-Logik (30.09.2026) den ganzen
+// Tag als "Spitze" zaehlen und B1 nie mehr sperren lassen.
+$fc19 = array_fill(0, 96, 0.0);
+for ($i = 24; $i < 40; $i++) { $fc19[$i] = 3000.0; }
+for ($i = 40; $i < 64; $i++) { $fc19[$i] = 50000.0; }
+for ($i = 64; $i < 80; $i++) { $fc19[$i] = 3000.0; }
+attr('FcPvToday', json_encode($fc19)); prop('NETZ_B1_Latest_Hour', 24); prop('BAT_Capacity_kWh', 40.0);
 $auto19 = ['op_mode' => EMS_OP_AUTO, 'gw_mode' => GW_MODE_AUTO, 'gw_power_w' => 0, 'gw_enable' => false, 'wb1_enable' => false, 'wb2_enable' => false, 'reason' => 'Automatik', 'source' => 'ems'];
 $d = call($ems, 'applyGridServiceB1', [$auto19, state(['bat_soc' => 50.0, 'pv_total_w' => 7000.0, 'house_pow_w' => 400.0])]);
 check('Überschuss 6600 W über der Grenze 5400 W: B1 sperrt NICHT, Batterie nimmt auf', empty($d['svc']) && strpos($d['reason'], 'Einspeisegrenze') !== false, $d['reason']);
-$spaet19 = ((int)((time() - strtotime('today')) / 900)) >= 88;
+$nowSlot19 = (int)(((int)date('H') * 60 + (int)date('i')) / 15);
 $d = call($ems, 'applyGridServiceB1', [$auto19, state(['bat_soc' => 50.0, 'pv_total_w' => 3000.0, 'house_pow_w' => 400.0])]);
-check('Überschuss 2600 W deutlich unter der Grenze: B1 darf sperren', $spaet19 || ($d['svc'] ?? '') === 'chargeInhibit', $d['reason']);
+check('Überschuss 2600 W deutlich unter der Grenze: B1 darf sperren (vor der Spitze)', $nowSlot19 >= 40 || ($d['svc'] ?? '') === 'chargeInhibit', $d['reason'] . " (Slot $nowSlot19)");
 unset($GLOBALS['INSTMOD'][IHUB_IID]);
 
 // ===========================================================================

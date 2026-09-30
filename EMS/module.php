@@ -41,7 +41,7 @@ define('EMS_LOG_VERBOSE',     2);
 // Formular-Konvention (siehe EMS/SUITE.md "Einheitliche Formular-Optik"):
 // Was-ist-Neu-Panel ist versionsscharf dismissible, Referenzmuster InverterHub.
 define('EMS_COLOR_AUTO', 0x2E8B3D); // Gruen: Wert wurde automatisch uebernommen (🔗-Zeilen im Formular)
-define('EMS_NEWS_VERSION', '0.66.0');
+define('EMS_NEWS_VERSION', '0.67.0');
 
 // NRG-Stack Partnermodul-GUIDs (fuer automatische Discovery, siehe discoverPartners())
 define('GUID_CHARGERHUB',    '{9256C34E-5CFD-4F37-8BFE-E65390EBB37C}');
@@ -294,7 +294,8 @@ class EMS extends IPSModule
         $this->RegisterPropertyInteger('BEZ_Preisvariable_Einheit', 0);   // 0 ct/kWh, 1 EUR/kWh
         $this->RegisterPropertyBoolean('NETZ_Aktiv',          true);
         $this->RegisterPropertyInteger('NETZ_B1_Margin_W',    300); // gemessene PV mindestens so weit ueber der Hauslast
-        $this->RegisterPropertyInteger('NETZ_B1_Latest_Hour', 13);  // spaetester Freigabezeitpunkt (volle Stunde)
+        $this->RegisterPropertyInteger('NETZ_B1_Latest_Hour', 13);  // spaetester Freigabezeitpunkt (volle Stunde), manuelle Notbremse
+        $this->RegisterPropertyInteger('NETZ_B1_Peak_Fraction_Pct', 80); // Spitzenfenster = Slots >= X % des Tagesmaximums (PV-Prognose)
         $this->RegisterPropertyInteger('NETZ_B1_Safety_Pct',  130); // Restueberschuss >= Platzbedarf x Faktor (Median p50)
         $this->RegisterPropertyInteger('NETZ_B1_Safety_P10_Pct', 110); // dasselbe, wenn die vorsichtige Prognose p10 vorliegt
         $this->RegisterPropertyInteger('NETZ_B1_Max_MAPE',    30);  // Prognose-Fehlerquote (%), ab der B1 aussetzt
@@ -668,6 +669,10 @@ class EMS extends IPSModule
                 'caption'  => '🆕 Neu in Version ' . EMS_NEWS_VERSION,
                 'expanded' => true,
                 'items'    => array(
+                    array(
+                        'type'    => 'Label',
+                        'caption' => '• NEU: „Mittagsspitze aufnehmen“ (Netzdienlich-Baustein B1) lädt die Batterie jetzt gezielt im stärksten PV-Fenster des Tages statt möglichst spät: Vorher gesperrt (Überschuss ins Netz), sobald genug Reserve bis zum Fensterbeginn erwartet wird; ab dem Fenster immer freigegeben. Neu einstellbar im Panel „Netzdienliche Bausteine“, welcher Anteil vom Tagesmaximum als „Spitze“ zählt. Zusätzlich neu: Ist der Einkaufspreis (inkl. Wandlungsverlust und Zykluskosten) gerade günstiger als die Einspeisevergütung, sperrt EMS unabhängig von der Uhrzeit immer — Zwischenspeichern lohnt sich dann nicht.'
+                    ),
                     array(
                         'type'    => 'Label',
                         'caption' => '• NEU: Fehlbetrag zwischen PV und Hausverbrauch kommt jetzt bevorzugt aus dem Netz statt aus der Batterie, sofern der aktuelle Strompreis mit 5 % Sicherheitsabstand unter den eigenen Zykluskosten liegt. Die Batterie lädt dabei weiter ausschließlich aus der PV. Vermeidet unnötige Wandlungsverluste und Zyklen, ohne die Zykluskosten-Angabe im Panel „Batterie“ ändert sich am Verhalten nichts.'
@@ -6908,16 +6913,66 @@ class EMS extends IPSModule
     }
 
     /**
+     * Spitzenfenster des Tages aus der PV-Prognose (Slot-Index, beide Grenzen
+     * inklusive) -- alle Slots vom ersten bis zum letzten Treffer, deren
+     * Prognosewert mindestens $fractionPct % des Tagesmaximums erreicht.
+     * Nicht zwingend jeder Slot dazwischen ueber der Schwelle (Wolkenluecke
+     * in der Kurve zaehlt trotzdem als "im Fenster") -- fuer einen
+     * eingipfligen Tagesgang reicht das, ohne die Kurve extra zu glaetten.
+     * array(null, null), wenn die Kurve durchgaengig 0 ist.
+     */
+    private function peakWindowSlots(array $series, float $fractionPct): array
+    {
+        $max = 0.0;
+        foreach ($series as $v) {
+            $max = max($max, (float)$v);
+        }
+        if ($max <= 0.0) {
+            return array(null, null);
+        }
+        $threshold = $max * max(0.0, min(100.0, $fractionPct)) / 100.0;
+        $start = null;
+        $end   = null;
+        foreach ($series as $i => $v) {
+            if ((float)$v >= $threshold) {
+                if ($start === null) { $start = (int)$i; }
+                $end = (int)$i;
+            }
+        }
+        return array($start, $end);
+    }
+
+    /**
      * B1 -- Mittagsspitze aufnehmen ("Platz freihalten"), Netzdienlich-
      * Konzept §5. Reine Entscheidung ohne Seiteneffekte (Pruefstand).
      *
+     * Ueberarbeitet 30.09.2026 (Dietmar, Live-Beobachtung 12:28 Uhr): Die
+     * urspruengliche Fassung sperrte das Laden, SOLANGE der Tagesrest noch
+     * reichlich Ueberschuss zeigte -- das schob das eigentliche Laden immer
+     * weiter hinaus und sperrte dabei auch noch waehrend der Mittagsspitze
+     * selbst, obwohl das Konzept ausdruecklich "zur Spitze laedt die
+     * Batterie aus PV" vorsah. Netzdienlich ist das Gegenteil: die Spitze
+     * ist der Moment, in dem alle PV-Anlagen im Netz gleichzeitig am
+     * staerksten einspeisen (Grund fuer §14a-Dimmung ueberhaupt) -- genau
+     * dort soll die Batterie aufnehmen, nicht zusaetzlich einspeisen.
+     *
      * Laden gesperrt, wenn ALLES zutrifft:
      * - PV-Prognose fuer heute vorhanden,
-     * - vor dem spaetesten Freigabezeitpunkt, Batterie nicht voll,
+     * - vor dem spaetesten Freigabezeitpunkt UND vor dem Spitzenfenster
+     *   (NETZ_B1_Peak_Fraction_Pct % des Tagesmaximums), Batterie nicht voll,
      * - gemessene PV mindestens NETZ_B1_Margin_W ueber der Hauslast (bei
      *   laufendem B1 die halbe Marge, gegen Pendeln),
-     * - der prognostizierte PV-Ueberschuss AB DEM NAECHSTEN Slot reicht,
-     *   um die Batterie trotzdem bis 100 % zu fuellen, x Sicherheitsfaktor.
+     * - der prognostizierte PV-Ueberschuss vom NAECHSTEN Slot BIS ZUM ENDE
+     *   DES SPITZENFENSTERS reicht, um die Batterie bis dahin trotzdem auf
+     *   100 % zu bringen, x Sicherheitsfaktor (nicht mehr bis Tagesende --
+     *   das war der Grund fuer das Hinausschieben).
+     * Ab Beginn des Spitzenfensters (bzw. danach) gibt B1 immer frei, egal
+     * wie viel Ueberschuss noch fuer den Tag erwartet wird.
+     * Ausnahme unabhaengig vom Zeitpunkt: Ist der Einkaufspreis (inkl.
+     * Wandlungsverlust und Zykluskosten) guenstiger als die Einspeise-
+     * verguetung, sperrt B1 immer (egal ob vor, in oder nach dem
+     * Spitzenfenster) -- Zwischenspeichern waere teurer als spaeter billig
+     * nachzukaufen.
      * 'safety' => true heisst: sofort freigeben, keine Wechselsperre
      * (Hauslast nicht mehr sicher aus PV gedeckt).
      */
@@ -6944,6 +6999,25 @@ class EMS extends IPSModule
         if ($surplusNowW < $margin) {
             return array('active' => false, 'safety' => true,
                 'reason' => sprintf('PV %.0f W deckt die Hauslast %.0f W nicht sicher (Marge %.0f W)', $in['pvW'], $in['houseW'], $margin));
+        }
+        // Preis-Override (Dietmar 30.09.2026): Ist der Einkaufspreis -- inklusive
+        // Wandlungsverlust und Zykluskosten, dieselbe "cheap"-Formel wie beim
+        // PV_SELFUSE-Live-Sicherheitsnetz -- guenstiger als die Einspeise-
+        // verguetung, lohnt sich Zwischenspeichern in der Batterie gar nicht
+        // erst: der Ueberschuss geht komplett ins Netz (bringt die Verguetung),
+        // ein spaeterer Bedarf wird einfach billig nachgekauft. Das gilt
+        // unabhaengig vom Spitzenfenster -- deshalb VOR der Reserve-/
+        // Spitzen-Pruefung, nicht danach.
+        $feedTariff = (float)($in['feedTariff'] ?? 0.0);
+        $price      = $in['price'] ?? null;
+        if ($price !== null && $feedTariff > 0.0) {
+            $cycleCostEur = $this->cycleCostCt() / 100.0;
+            $effLimitEur  = $feedTariff * $this->convEff() - $cycleCostEur;
+            if ((float)$price < $effLimitEur) {
+                return array('active' => true,
+                    'reason' => sprintf('Einkauf %.2f ct günstiger als Einspeisevergütung %.2f ct (abzüglich Wandlung/Zyklus, Grenze %.2f ct): Überschuss einspeisen statt Batterie laden, Bedarf aus dem Netz',
+                        (float)$price * 100.0, $feedTariff * 100.0, $effLimitEur * 100.0));
+            }
         }
         // Prognoseguete (PVF_GetAccuracy). NUR als Sicherheitspruefung: die
         // Tageszeit-Faktoren (byDaylightFraction) stecken laut Prognose schon
@@ -6972,19 +7046,35 @@ class EMS extends IPSModule
         $safety = $useP10 ? (float)($in['safetyP10Pct'] ?? 110) : (float)$in['safetyPct'];
         $safety = $safety * (1.0 + $biasUp / 100.0); // Prognose war zuletzt zu hoch -> entsprechend mehr Reserve
         $basis  = $useP10 ? 'p10' : 'p50';
+
+        list($peakStart, $peakEnd) = $this->peakWindowSlots($series, (float)($in['peakFractionPct'] ?? 80));
+        if ($peakStart !== null && $nowSlot >= $peakStart) {
+            $label = ($nowSlot <= $peakEnd) ? 'Spitzenfenster erreicht' : 'Spitzenfenster vorbei';
+            return array('active' => false, 'basis' => $basis,
+                'reason' => sprintf('%s (%02d:%02d–%02d:%02d, %s), Batterie lädt aus PV', $label,
+                    intdiv($peakStart, 4), ($peakStart % 4) * 15, intdiv($peakEnd, 4), ($peakEnd % 4) * 15, $basis));
+        }
+        // Vor dem Spitzenfenster: reicht der Ueberschuss bis zu dessen Ende
+        // (nicht bis Tagesende!), um die Batterie bis dahin trotzdem
+        // vollzukriegen? Wenn ja, jetzt noch sperren -- die Spitze selbst
+        // uebernimmt das Laden. Kein erkennbares Spitzenfenster (Kurve
+        // durchgaengig 0, sollte wegen der PV-Summenpruefung oben nicht
+        // vorkommen): Fallback auf den Tagesrest wie bisher.
+        $endSlot = $peakEnd ?? 95;
         $load = array_values((array)($in['load'] ?? array()));
         $restKwh = 0.0;
-        for ($i = $nowSlot + 1; $i < 96; $i++) {
+        for ($i = $nowSlot + 1; $i <= $endSlot; $i++) {
             $l = (isset($load[$i]) && $load[$i] !== null) ? (float)$load[$i] : (float)$in['avgHouseW'];
             $restKwh += max(0.0, (float)$series[$i] - $l) * 0.25 / 1000.0;
         }
         $reqKwh = $needKwh * $safety / 100.0;
+        $bisWann = $peakStart !== null ? sprintf(' bis zur Spitze %02d:%02d', intdiv($peakStart, 4), ($peakStart % 4) * 15) : ' bis Tagesende';
         if ($restKwh < $reqKwh) {
             return array('active' => false, 'basis' => $basis,
-                'reason' => sprintf('Restüberschuss heute (%s) %.1f kWh reicht nicht für %.1f kWh Platz (+%d %% Sicherheit%s)', $basis, $restKwh, $needKwh, (int)round($safety) - 100, $guete));
+                'reason' => sprintf('Resterwartung%s (%s) %.1f kWh reicht nicht für %.1f kWh Platz (+%d %% Sicherheit%s)', $bisWann, $basis, $restKwh, $needKwh, (int)round($safety) - 100, $guete));
         }
         return array('active' => true, 'basis' => $basis,
-            'reason' => sprintf('Restüberschuss heute (%s) %.1f kWh >= %.1f kWh Platz (+%d %%%s), PV %.0f W > Haus %.0f W', $basis, $restKwh, $needKwh, (int)round($safety) - 100, $guete, $in['pvW'], $in['houseW']));
+            'reason' => sprintf('Resterwartung%s (%s) %.1f kWh >= %.1f kWh Platz (+%d %%%s), PV %.0f W > Haus %.0f W', $bisWann, $basis, $restKwh, $needKwh, (int)round($safety) - 100, $guete, $in['pvW'], $in['houseW']));
     }
 
     /**
@@ -7033,6 +7123,9 @@ class EMS extends IPSModule
             'accuracy'   => json_decode($this->ReadAttributeString('FcAccuracy'), true),
             'maxMape'    => $this->ReadPropertyInteger('NETZ_B1_Max_MAPE'),
             'minDays'    => $this->ReadPropertyInteger('NETZ_B1_Min_Days'),
+            'peakFractionPct' => $this->ReadPropertyInteger('NETZ_B1_Peak_Fraction_Pct'),
+            'price'      => isset($s['tib_price_eff']) ? (float)$s['tib_price_eff'] : null,
+            'feedTariff' => (float)($s['tib_feed'] ?? 0.0),
             'wasActive'  => $was,
         ));
         // Wechselsperre gegen Pendeln (Wolken) -- nie beim Sicherheitsausstieg
