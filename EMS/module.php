@@ -41,7 +41,7 @@ define('EMS_LOG_VERBOSE',     2);
 // Formular-Konvention (siehe EMS/SUITE.md "Einheitliche Formular-Optik"):
 // Was-ist-Neu-Panel ist versionsscharf dismissible, Referenzmuster InverterHub.
 define('EMS_COLOR_AUTO', 0x2E8B3D); // Gruen: Wert wurde automatisch uebernommen (🔗-Zeilen im Formular)
-define('EMS_NEWS_VERSION', '0.68.0');
+define('EMS_NEWS_VERSION', '0.69.0');
 
 // NRG-Stack Partnermodul-GUIDs (fuer automatische Discovery, siehe discoverPartners())
 define('GUID_CHARGERHUB',    '{9256C34E-5CFD-4F37-8BFE-E65390EBB37C}');
@@ -318,6 +318,8 @@ class EMS extends IPSModule
         $this->RegisterPropertyInteger('WB_Quelle',            0);   // 0 automatisch, 1 ChargerHub, 2 OCPPHub, 3 beide (verschiedene Geraete)
         $this->RegisterPropertyInteger('WB1_Mode',            0);   // Wallbox-Modus: 0 automatisch, 1 Smart Charging (Tibber hat die Hoheit), 2 EMS steuert, 3 nur beobachten
         $this->RegisterPropertyInteger('WB2_Mode',            0);
+        $this->RegisterPropertyString('WB1_TibberVehicle',    ''); // Tibber-deviceId des Fahrzeugs an dieser Wallbox (vom Nutzer bestaetigt, nie per Namensabgleich geraten)
+        $this->RegisterPropertyString('WB2_TibberVehicle',    '');
         $this->RegisterPropertyInteger('WB_Cooldown_Sec',      120);
         $this->RegisterPropertyInteger('WB_Min_Charge_Min',    5);
         $this->RegisterPropertyInteger('BOOST_Duration_Min',   30);
@@ -480,6 +482,8 @@ class EMS extends IPSModule
         $this->RegisterAttributeBoolean('WB2LastSentEnable', false);
         $this->RegisterAttributeBoolean('WB1EmsLocked',      false); // EMS hat diese Wallbox selbst gesperrt (nur dann gibt es sie im Modus Smart Charging wieder frei)
         $this->RegisterAttributeBoolean('WB2EmsLocked',      false);
+        $this->RegisterAttributeInteger('WB1SmartSeen',      -1);    // zuletzt gesehener Smart-Charging-Stand des zugeordneten Tibber-Fahrzeugs (-1 unbekannt, 0 aus, 1 an)
+        $this->RegisterAttributeInteger('WB2SmartSeen',      -1);
         $this->RegisterAttributeInteger('LastWB1Switch',     0);
         $this->RegisterAttributeInteger('LastWB2Switch',     0);
         $this->RegisterAttributeInteger('LastDecision',      0);
@@ -675,6 +679,10 @@ class EMS extends IPSModule
                 'items'    => array(
                     array(
                         'type'    => 'Label',
+                        'caption' => '• NEU: Smart Charging wird automatisch erkannt: Wähle im Panel „Wallboxen“ je Wallbox einmal das Tibber-Fahrzeug aus (EMS rät die Zuordnung nie). Meldet Tibber für dieses Fahrzeug Smart Charging, überlässt EMS die Wallbox Tibber (kein Sperren, kein Erzwingen). Meldet Tibber das Fahrzeug kurz nicht, gilt der zuletzt bekannte Stand. Braucht das Tibber-Modul ab Version 2.9.2.'
+                    ),
+                    array(
+                        'type'    => 'Label',
                         'caption' => '• NEU: Wallbox-Modus je Wallbox im Panel „Wallboxen“: Smart Charging (Tibber hat die Hoheit, EMS sperrt und erzwingt nichts), EMS steuert (Freigabe nach Preis und PV-Überschuss) oder nur beobachten. „Automatisch“ erkennt, ob EMS die Wallbox schalten darf. Hat EMS eine Wallbox früher selbst gesperrt, gibt es sie im Modus Smart Charging einmal wieder frei. Grid Rewards sperrt die Wallbox außerdem nicht mehr.'
                     ),
                     array(
@@ -805,17 +813,20 @@ class EMS extends IPSModule
         }
         unset($element);
 
-        // 3b5. Wallbox-Modus: Statuszeile unter jeder Auswahl (live, folgt per onChange der Auswahl im offenen Formular)
+        // 3b5. Wallbox-Modus: Fahrzeugauswahl aus Tibbers Liste fuellen, Statuszeile darunter (live, folgt per onChange)
         foreach ($form['elements'] as &$element) {
             if (($element['type'] ?? '') !== 'ExpansionPanel') { continue; }
             for ($wbn = 2; $wbn >= 1; $wbn--) {
                 foreach ($element['items'] as $idx => $item) {
-                    if (($item['name'] ?? '') === 'WB' . $wbn . '_Mode') {
-                        $label = array_merge($this->statusLabel($this->wallboxModeStatusLine($wbn)), array('name' => 'WB' . $wbn . 'ModeStatus'));
-                        if (isset($item['visible'])) { $label['visible'] = $item['visible']; }
-                        array_splice($element['items'], $idx + 1, 0, array($label));
-                        break;
-                    }
+                    if (($item['name'] ?? '') !== 'WB' . $wbn . '_TibberVehicle') { continue; }
+                    $element['items'][$idx]['options'] = $this->tibberVehicleOptions(trim($this->ReadPropertyString('WB' . $wbn . '_TibberVehicle')));
+                    $line = $this->wallboxModeStatusLine($wbn);
+                    $text = is_array($line) ? (string)$line['caption'] : (string)$line;
+                    if (trim($this->ReadPropertyString('WB' . $wbn . '_TibberVehicle')) === '') { $text .= $this->tibberVehicleHint($wbn); }
+                    $label = array_merge($this->statusLabel(is_array($line) ? array('caption' => $text, 'color' => $line['color']) : $text), array('name' => 'WB' . $wbn . 'ModeStatus'));
+                    if (isset($item['visible'])) { $label['visible'] = $item['visible']; }
+                    array_splice($element['items'], $idx + 1, 0, array($label));
+                    break;
                 }
             }
         }
@@ -7589,31 +7600,117 @@ class EMS extends IPSModule
     }
 
     /**
-     * Aufgeloester Modus einer Wallbox: array('mode' => 'smart'|'ems'|'observe', 'manual' => bool, 'writable' => bool).
-     * Einstellung 0 = automatisch: schaltbar -> 'ems', sonst 'observe'. ($override: Auswahl aus dem offenen Formular.)
+     * Tibbers Fahrzeugliste (TIBBERGR_GetFlexDevices, Vertrag 1.0, seit Tibber 2.9.2): array('available' => bool,
+     * 'vehicles' => deviceId => Eintrag). 'available' false, wenn Tibber fehlt oder den Aufruf noch nicht kennt
+     * oder eine fremde Vertrags-Major liefert (dann bleibt die Kopplung aus, der Rest laeuft normal weiter).
      */
-    private function wallboxMode(int $n, ?int $override = null): array
+    private function getTibberVehicles(): array
+    {
+        $out = array('available' => false, 'vehicles' => array());
+        if (!function_exists('TIBBERGR_GetFlexDevices')) { return $out; }
+        $tibberId = $this->getTibberGridRewardInstance();
+        if ($tibberId <= 0) { return $out; }
+        $list = @TIBBERGR_GetFlexDevices($tibberId);
+        if (!is_array($list)) { return $out; }
+        $out['available'] = true;
+        foreach ($list as $e) {
+            if (!is_array($e) || ($e['type'] ?? '') !== 'vehicle') { continue; }
+            if ((int)explode('.', (string)($e['contractVersion'] ?? '1.0'))[0] !== 1) { $out['available'] = false; continue; }
+            $id = (string)($e['deviceId'] ?? '');
+            if ($id !== '') { $out['vehicles'][$id] = $e; }
+        }
+        return $out;
+    }
+
+    /**
+     * Stand des einer Wallbox zugeordneten Tibber-Fahrzeugs: array('name', 'smart' => bool|null, 'plugged' => bool|null,
+     * 'stale' => bool, 'found' => bool). Wird das Fahrzeug gerade nicht gemeldet, gilt der zuletzt gesehene Stand
+     * ('stale' => true), damit ein kurzer Tibber-Ausfall den Modus nicht umschlagen laesst. $persist: Stand merken.
+     */
+    private function tibberVehicleState(int $n, string $deviceId, bool $persist, array $tib): array
+    {
+        if ($tib['available'] && isset($tib['vehicles'][$deviceId])) {
+            $v     = $tib['vehicles'][$deviceId];
+            $smart = array_key_exists('isSmartChargingEnabled', $v) && $v['isSmartChargingEnabled'] !== null ? (bool)$v['isSmartChargingEnabled'] : null;
+            if ($persist && $smart !== null) {
+                $seen = $smart ? 1 : 0;
+                if ($this->ReadAttributeInteger('WB' . $n . 'SmartSeen') !== $seen) { $this->WriteAttributeInteger('WB' . $n . 'SmartSeen', $seen); }
+            }
+            return array('found' => true, 'stale' => false, 'smart' => $smart, 'name' => (string)($v['name'] ?? '?'),
+                'plugged' => array_key_exists('isPluggedIn', $v) && $v['isPluggedIn'] !== null ? (bool)$v['isPluggedIn'] : null);
+        }
+        $seen = $this->ReadAttributeInteger('WB' . $n . 'SmartSeen');
+        return array('found' => false, 'stale' => true, 'smart' => $seen >= 0 ? ($seen === 1) : null, 'name' => '', 'plugged' => null,
+            'available' => $tib['available']);
+    }
+
+    /**
+     * Aufgeloester Modus einer Wallbox: array('mode' => 'smart'|'ems'|'observe', 'manual' => bool, 'writable' => bool
+     * [, 'tibber' => Stand des zugeordneten Tibber-Fahrzeugs]).
+     * Einstellung 0 = automatisch: meldet Tibber fuer das zugeordnete Fahrzeug Smart Charging -> 'smart'; sonst
+     * schaltbar -> 'ems', nicht schaltbar -> 'observe'. ($override*: Auswahl aus dem offenen Formular.)
+     */
+    private function wallboxMode(int $n, ?int $override = null, ?string $vehicleOverride = null): array
     {
         $setting  = ($override !== null) ? $override : $this->ReadPropertyInteger('WB' . $n . '_Mode');
         $writable = $this->wallboxWritable($n);
+        $vehicle  = ($vehicleOverride !== null) ? trim($vehicleOverride) : trim($this->ReadPropertyString('WB' . $n . '_TibberVehicle'));
+        $tibber   = ($vehicle !== '') ? $this->tibberVehicleState($n, $vehicle, $vehicleOverride === null, $this->getTibberVehicles()) : null;
         switch ($setting) {
-            case 1:  return array('mode' => 'smart',   'manual' => true,  'writable' => $writable);
-            case 2:  return array('mode' => 'ems',     'manual' => true,  'writable' => $writable);
-            case 3:  return array('mode' => 'observe', 'manual' => true,  'writable' => $writable);
-            default: return array('mode' => $writable ? 'ems' : 'observe', 'manual' => false, 'writable' => $writable);
+            case 1:  $r = array('mode' => 'smart',   'manual' => true,  'writable' => $writable); break;
+            case 2:  $r = array('mode' => 'ems',     'manual' => true,  'writable' => $writable); break;
+            case 3:  $r = array('mode' => 'observe', 'manual' => true,  'writable' => $writable); break;
+            default:
+                $mode = ($tibber !== null && $tibber['smart'] === true) ? 'smart' : ($writable ? 'ems' : 'observe');
+                $r = array('mode' => $mode, 'manual' => false, 'writable' => $writable);
         }
+        if ($tibber !== null) { $r['tibber'] = $tibber; }
+        return $r;
+    }
+
+    /** "Name (Hersteller)" fuer die Fahrzeugauswahl. */
+    private function tibberVehicleLabel(array $v): string
+    {
+        $name = (string)($v['name'] ?? '?');
+        $make = (string)($v['make'] ?? '');
+        return $make !== '' ? $name . ' (' . $make . ')' : $name;
+    }
+
+    /** Auswahlliste "Tibber-Fahrzeug" fuer das Formular; eine gespeicherte, aktuell nicht gemeldete Auswahl bleibt erhalten. */
+    private function tibberVehicleOptions(string $selected): array
+    {
+        $opts = array(array('caption' => '(keine Zuordnung)', 'value' => ''));
+        $tib  = $this->getTibberVehicles();
+        foreach ($tib['vehicles'] as $id => $v) {
+            $opts[] = array('caption' => $this->tibberVehicleLabel($v) . (($v['isPluggedIn'] ?? false) ? ' — angesteckt' : ''), 'value' => (string)$id);
+        }
+        if ($selected !== '' && !isset($tib['vehicles'][$selected])) {
+            $opts[] = array('caption' => '(bei Tibber gerade nicht gemeldet) ' . $selected, 'value' => $selected);
+        }
+        return $opts;
     }
 
     /** Statuszeile je Wallbox fuers Formular (🔗 automatisch, ✏️ eigene Wahl, ⚠️ Widerspruch, ℹ️ nichts gefunden). */
-    private function wallboxModeStatusLine(int $n, ?int $override = null)
+    private function wallboxModeStatusLine(int $n, ?int $override = null, ?string $vehicleOverride = null)
     {
-        $m   = $this->wallboxMode($n, $override);
+        $m   = $this->wallboxMode($n, $override, $vehicleOverride);
         $has = (count($this->getChargerList()) >= $n) || $this->ReadPropertyInteger('WB' . $n . '_Instance') > 0;
-        if (!$has && !$m['manual']) {
+        $t   = $m['tibber'] ?? null;
+        $who = ($t !== null && $t['name'] !== '') ? '„' . $t['name'] . '“' : 'dem zugeordneten Fahrzeug';
+        $old = ($t !== null && $t['stale']) ? ' (letzter bekannter Stand, Tibber meldet das Fahrzeug gerade nicht)' : '';
+
+        if (!$has && !$m['manual'] && $t === null) {
             return 'ℹ️ Wallbox ' . $n . ': keine Wallbox gefunden. Sobald ChargerHub oder OCPPHub eine meldet, erkennt EMS selbst, ob es sie schalten darf.';
         }
         if ($m['mode'] === 'smart') {
-            return array('caption' => '✏️ Wallbox ' . $n . ': Smart Charging (eigene Wahl). Tibber hat die Hoheit, EMS sperrt und erzwingt nichts. Hat EMS die Wallbox früher selbst gesperrt, gibt es sie einmal wieder frei.', 'color' => -1);
+            if (!$m['manual']) {
+                return array('caption' => '🔗 Wallbox ' . $n . ': Smart Charging (automatisch erkannt: Tibber meldet es für ' . $who . ' als an' . $old . '). Tibber hat die Hoheit, EMS sperrt und erzwingt nichts.', 'color' => EMS_COLOR_AUTO);
+            }
+            $text = '✏️ Wallbox ' . $n . ': Smart Charging (eigene Wahl). Tibber hat die Hoheit, EMS sperrt und erzwingt nichts. Hat EMS die Wallbox früher selbst gesperrt, gibt es sie einmal wieder frei.';
+            if ($t !== null && $t['smart'] === false) {
+                return '⚠️ Wallbox ' . $n . ': Smart Charging gewählt, aber bei Tibber ist Smart Charging für ' . $who . ' aus' . $old . '. Grid Rewards kann hier nicht greifen, und niemand lädt das Fahrzeug gezielt.';
+            }
+            return array('caption' => $text, 'color' => -1);
         }
         if ($m['mode'] === 'observe') {
             if (!$m['manual']) {
@@ -7621,20 +7718,36 @@ class EMS extends IPSModule
             }
             return array('caption' => '✏️ Wallbox ' . $n . ': nur beobachten (eigene Wahl). EMS misst die Leistung und schaltet nichts.', 'color' => -1);
         }
+        if ($t !== null && $t['smart'] === true) {
+            return '⚠️ Wallbox ' . $n . ': „EMS steuert“ gewählt, aber bei Tibber ist Smart Charging für ' . $who . ' an' . $old . '. Dann regeln zwei Stellen dieselbe Wallbox. Stelle Smart Charging im Fahrzeug aus oder wähle hier Smart Charging.';
+        }
         if (!$m['writable']) {
             return '⚠️ Wallbox ' . $n . ': „EMS steuert“ gewählt, aber EMS darf diese Wallbox nicht schalten (fremd gesteuert). Es passiert nichts.';
         }
+        $tail = ($t !== null) ? ' Tibber meldet Smart Charging für ' . $who . ' als aus' . $old . '.' : ' Smart Charging im Fahrzeug sollte aus sein, sonst regeln zwei Stellen.';
         if (!$m['manual']) {
-            return array('caption' => '🔗 Wallbox ' . $n . ': EMS steuert die Freigabe (automatisch erkannt, Wallbox ist schaltbar). Smart Charging im Fahrzeug sollte aus sein, sonst regeln zwei Stellen.', 'color' => EMS_COLOR_AUTO);
+            return array('caption' => '🔗 Wallbox ' . $n . ': EMS steuert die Freigabe (automatisch erkannt, Wallbox ist schaltbar).' . $tail, 'color' => EMS_COLOR_AUTO);
         }
-        return array('caption' => '✏️ Wallbox ' . $n . ': EMS steuert die Freigabe (eigene Wahl). Smart Charging im Fahrzeug sollte aus sein, sonst regeln zwei Stellen.', 'color' => -1);
+        return array('caption' => '✏️ Wallbox ' . $n . ': EMS steuert die Freigabe (eigene Wahl).' . $tail, 'color' => -1);
     }
 
-    /** onChange der Modus-Auswahl: die Statuszeile folgt der Auswahl im offenen Formular, nicht dem Speicherstand. */
-    public function WallboxModeChanged(int $num, int $mode)
+    /** Vorschlag, wenn Tibber genau ein Fahrzeug meldet und genau eine Wallbox da ist (nie stilles Uebernehmen). */
+    private function tibberVehicleHint(int $n): string
     {
-        $line = $this->wallboxModeStatusLine($num, $mode);
-        $this->UpdateFormField('WB' . $num . 'ModeStatus', 'caption', is_array($line) ? (string)$line['caption'] : (string)$line);
+        if ($this->ReadPropertyInteger('WB_Count') !== 1 || trim($this->ReadPropertyString('WB' . $n . '_TibberVehicle')) !== '') { return ''; }
+        $tib = $this->getTibberVehicles();
+        if (count($tib['vehicles']) !== 1) { return ''; }
+        $v = reset($tib['vehicles']);
+        return ' ℹ️ Tibber meldet genau ein Fahrzeug (' . $this->tibberVehicleLabel($v) . '). Wähle es bei „Tibber-Fahrzeug“, dann erkennt EMS Smart Charging automatisch.';
+    }
+
+    /** onChange der Modus- oder Fahrzeug-Auswahl: die Statuszeile folgt der Auswahl im offenen Formular, nicht dem Speicherstand. */
+    public function WallboxModeChanged(int $num, int $mode, string $vehicleId)
+    {
+        $line = $this->wallboxModeStatusLine($num, $mode, $vehicleId);
+        $text = is_array($line) ? (string)$line['caption'] : (string)$line;
+        if (trim($vehicleId) === '') { $text .= $this->tibberVehicleHint($num); }
+        $this->UpdateFormField('WB' . $num . 'ModeStatus', 'caption', $text);
         $this->UpdateFormField('WB' . $num . 'ModeStatus', 'color', is_array($line) ? (int)$line['color'] : -1);
     }
 

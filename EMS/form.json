@@ -946,7 +946,7 @@
                 },
                 {
                     "type": "Label",
-                    "caption": "Smart Charging: Tibber lädt das Fahrzeug (z. B. Grid Rewards) und braucht dafür eine freigegebene Wallbox. EMS sperrt und erzwingt dann nichts. EMS steuert: EMS gibt die Wallbox nach Preis und PV-Überschuss frei (Smart Charging im Fahrzeug dann aus). Nur beobachten: EMS misst nur. Automatisch erkennt, ob EMS die Wallbox schalten darf."
+                    "caption": "Smart Charging: Tibber lädt das Fahrzeug (z. B. Grid Rewards) und braucht dafür eine freigegebene Wallbox. EMS sperrt und erzwingt dann nichts. EMS steuert: EMS gibt die Wallbox nach Preis und PV-Überschuss frei (Smart Charging im Fahrzeug dann aus). Nur beobachten: EMS misst nur. Automatisch erkennt, ob EMS die Wallbox schalten darf und, sobald unten das Tibber-Fahrzeug gewählt ist, ob Tibber für dieses Fahrzeug Smart Charging meldet. Die Zuordnung Fahrzeug zu Wallbox wählst du einmal selbst, EMS rät sie nie."
                 },
                 {
                     "type": "Select",
@@ -958,7 +958,14 @@
                         {"caption": "EMS steuert", "value": 2},
                         {"caption": "Nur beobachten", "value": 3}
                     ],
-                    "onChange": "EMS_WallboxModeChanged($id, 1, $WB1_Mode);"
+                    "onChange": "EMS_WallboxModeChanged($id, 1, $WB1_Mode, $WB1_TibberVehicle);"
+                },
+                {
+                    "type": "Select",
+                    "name": "WB1_TibberVehicle",
+                    "caption": "Tibber-Fahrzeug an Wallbox 1 (einmal bestätigen, damit EMS Smart Charging automatisch erkennt)",
+                    "options": [{"caption": "(keine Zuordnung)", "value": ""}],
+                    "onChange": "EMS_WallboxModeChanged($id, 1, $WB1_Mode, $WB1_TibberVehicle);"
                 },
                 {
                     "type": "Select",
@@ -970,7 +977,19 @@
                         {"caption": "EMS steuert", "value": 2},
                         {"caption": "Nur beobachten", "value": 3}
                     ],
-                    "onChange": "EMS_WallboxModeChanged($id, 2, $WB2_Mode);",
+                    "onChange": "EMS_WallboxModeChanged($id, 2, $WB2_Mode, $WB2_TibberVehicle);",
+                    "visible": {
+                        "type": "PropertyCondition",
+                        "property": "WB_Count",
+                        "value": 2
+                    }
+                },
+                {
+                    "type": "Select",
+                    "name": "WB2_TibberVehicle",
+                    "caption": "Tibber-Fahrzeug an Wallbox 2 (einmal bestätigen, damit EMS Smart Charging automatisch erkennt)",
+                    "options": [{"caption": "(keine Zuordnung)", "value": ""}],
+                    "onChange": "EMS_WallboxModeChanged($id, 2, $WB2_Mode, $WB2_TibberVehicle);",
                     "visible": {
                         "type": "PropertyCondition",
                         "property": "WB_Count",

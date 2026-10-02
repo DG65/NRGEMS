@@ -111,6 +111,8 @@ function SBH_GetState($iid)               { return $GLOBALS['SBH_STATE']; }
 function SPOT_GetPriceCurve($iid)         { return $GLOBALS['SPOT_CURVE'] ?? []; }
 function TIBBERGR_GetPriceCurve($iid)     { return $GLOBALS['TIBBER_CURVE']; }
 function TIBBERGR_GetActiveControls($iid) { return $GLOBALS['ACTIVE_CONTROLS']; }
+$GLOBALS['FLEX_DEVICES'] = [];
+function TIBBERGR_GetFlexDevices($iid)    { return $GLOBALS['FLEX_DEVICES']; }
 function SGW_GetState($iid)               { return $GLOBALS['SGW_STATE']; }
 $GLOBALS['OHUB_FUNCS'] = [];
 function OHUB_GetFunctions($iid)          { return $GLOBALS['OHUB_FUNCS']; }
@@ -421,6 +423,78 @@ check('Situation: Smart-Charging-Wallbox ist Situation B, Quelle tibber, nicht s
 prop('WB1_Mode', 0);
 $sit = array_values(array_filter(call($ems, 'GetSituation'), fn($x) => $x['domain'] === 'wallbox'));
 check('Situation: automatisch schaltbar bleibt Situation A (unveraendert zu vorher), Modus ems', $sit[0]['situation'] === 'A' && $sit[0]['writable'] === true && $sit[0]['mode'] === 'ems', json_encode($sit[0]));
+
+// ===========================================================================
+echo "\n4c) Wallbox-Modus automatisch aus Tibber (TIBBERGR_GetFlexDevices 1.0): Fahrzeug-Zuordnung\n";
+$ems = freshEms();
+prop('WB_Active', true); prop('WB_Count', 2);
+$cenA = vari('CHUB WB1 Ladefreigabe', 600, 'ctl_enable', true, 0);
+$cenB = vari('CHUB WB2 Ladefreigabe', 602, 'ctl_enable', true, 0);
+$whA = ['instanceID' => 600, 'source' => 'chargerhub', 'chargeEnableID' => $cenA, 'maxCurrent' => 16, 'managedBy' => 'none', 'powerID' => 0, 'plugStateID' => 0];
+$whB = ['instanceID' => 602, 'source' => 'chargerhub', 'chargeEnableID' => $cenB, 'maxCurrent' => 16, 'managedBy' => 'other', 'powerID' => 0, 'plugStateID' => 0];
+attr('PartnerCache', json_encode(['chargerhub' => [$whA, $whB]]));
+$GLOBALS['INSTMOD'][900] = GUID_TIBBERGRIDREWARD;
+$vehicle = fn(bool $smart, bool $plugged = true, string $ver = '1.0') => ['contractVersion' => $ver, 'type' => 'vehicle', 'deviceId' => 'veh-1', 'name' => 'Schneeflocke',
+    'make' => 'TESLA', 'isPluggedIn' => $plugged, 'isSmartChargingEnabled' => $smart, 'isSmartModeEnabled' => null];
+$battery = ['contractVersion' => '1.0', 'type' => 'battery', 'deviceId' => 'bat-1', 'name' => 'Speicher', 'make' => 'X', 'isPluggedIn' => null, 'isSmartChargingEnabled' => null, 'isSmartModeEnabled' => true];
+$GLOBALS['FLEX_DEVICES'] = [$vehicle(true), $battery];
+$txt = fn($l) => is_array($l) ? $l['caption'] : $l;
+
+check('ohne Zuordnung: Verhalten unveraendert (EMS steuert), kein Tibber-Stand im Ergebnis', ($m = call($ems, 'wallboxMode', [1])) && $m['mode'] === 'ems' && !isset($m['tibber']), json_encode($m));
+prop('WB1_TibberVehicle', 'veh-1');
+$m = call($ems, 'wallboxMode', [1]);
+check('zugeordnet, Tibber meldet Smart Charging an: automatisch Smart Charging', $m['mode'] === 'smart' && $m['manual'] === false && $m['tibber']['smart'] === true && $m['tibber']['name'] === 'Schneeflocke', json_encode($m));
+$l = call($ems, 'wallboxModeStatusLine', [1]);
+check('Statuszeile: 🔗 gruen, automatisch erkannt, nennt das Fahrzeug', strpos($l['caption'], '🔗') === 0 && strpos($l['caption'], 'automatisch erkannt: Tibber meldet es für „Schneeflocke“') !== false && $l['color'] === EMS_COLOR_AUTO, json_encode($l));
+$GLOBALS['FLEX_DEVICES'] = [$vehicle(false), $battery];
+$m = call($ems, 'wallboxMode', [1]);
+check('Smart Charging bei Tibber aus: Rueckfall auf EMS steuert (schaltbare Wallbox)', $m['mode'] === 'ems' && $m['tibber']['smart'] === false, json_encode($m));
+check('Statuszeile nennt, dass Tibber Smart Charging als aus meldet', strpos($txt(call($ems, 'wallboxModeStatusLine', [1])), 'Tibber meldet Smart Charging für „Schneeflocke“ als aus') !== false);
+$GLOBALS['FLEX_DEVICES'] = [$vehicle(true), $battery];
+check('manuell EMS steuert, Tibber Smart Charging an: ⚠️ zwei Regler', strpos($txt(call($ems, 'wallboxModeStatusLine', [1, 2])), '⚠️') === 0 && strpos($txt(call($ems, 'wallboxModeStatusLine', [1, 2])), 'zwei Stellen') !== false);
+$GLOBALS['FLEX_DEVICES'] = [$vehicle(false), $battery];
+check('manuell Smart Charging, Tibber Smart Charging aus: ⚠️ Grid Rewards kann nicht greifen', strpos($txt(call($ems, 'wallboxModeStatusLine', [1, 1])), '⚠️') === 0 && strpos($txt(call($ems, 'wallboxModeStatusLine', [1, 1])), 'Grid Rewards kann hier nicht greifen') !== false);
+check('Override Fahrzeug aus dem offenen Formular (leer) ignoriert die gespeicherte Zuordnung', !isset(call($ems, 'wallboxMode', [1, 0, ''])['tibber']));
+
+echo "   Ausfall und fremde Vertragsversion\n";
+$GLOBALS['FLEX_DEVICES'] = [$vehicle(true), $battery];
+call($ems, 'wallboxMode', [1]);   // merkt den Stand "an"
+$GLOBALS['FLEX_DEVICES'] = [];
+$m = call($ems, 'wallboxMode', [1]);
+check('Tibber meldet das Fahrzeug kurz nicht: zuletzt bekannter Stand gilt, Modus schlaegt nicht um', $m['mode'] === 'smart' && $m['tibber']['stale'] === true, json_encode($m));
+check('Statuszeile weist auf den zuletzt bekannten Stand hin', strpos($txt(call($ems, 'wallboxModeStatusLine', [1])), 'letzter bekannter Stand') !== false);
+attr('WB1SmartSeen', -1);
+check('nie gesehen und nicht gemeldet: Rueckfall auf EMS steuert, kein Absturz', call($ems, 'wallboxMode', [1])['mode'] === 'ems');
+$GLOBALS['FLEX_DEVICES'] = [$vehicle(true, true, '2.0')];
+check('fremde Vertrags-Major 2.0: Kopplung aus, Rueckfall ohne Absturz', call($ems, 'wallboxMode', [1])['mode'] === 'ems' && call($ems, 'getTibberVehicles')['available'] === false);
+unset($GLOBALS['INSTMOD'][900]);
+$GLOBALS['FLEX_DEVICES'] = [$vehicle(true), $battery];
+check('keine Tibber-Instanz: Kopplung aus', call($ems, 'getTibberVehicles') === ['available' => false, 'vehicles' => []]);
+$GLOBALS['INSTMOD'][900] = GUID_TIBBERGRIDREWARD;
+
+echo "   Verhalten, Auswahlliste, Vorschlag\n";
+prop('WB1_TibberVehicle', 'veh-1'); attr('WB1SmartSeen', -1);
+$sWb = state(['wb_active' => true, 'wb_count' => 2]);
+$wbActs = fn() => array_values(array_filter($GLOBALS['ACTIONS'], fn($a) => in_array($a[1], ['ctl_enable', 'ctl_curr_limit'], true)));
+$GLOBALS['VAL'][$cenA] = false; attr('WB1EmsLocked', true); attr('LastWB1Switch', 0); $GLOBALS['ACTIONS'] = [];
+$d = ['wb1_enable' => false, 'wb2_enable' => false];
+call($ems, 'applyWallboxControl', [&$d, $sWb]);
+check('automatisch Smart Charging: eigene Sperre wird geloest, es wird nichts gesperrt', $wbActs() === [[600, 'ctl_curr_limit', 16], [600, 'ctl_enable', true]], json_encode($GLOBALS['ACTIONS']));
+$f = json_decode($ems->GetConfigurationForm(), true);
+$findSel = function (array $nodes, string $name) use (&$findSel) { foreach ($nodes as $n) { if (is_array($n)) { if (($n['name'] ?? '') === $name) { return $n; } foreach (['items', 'elements'] as $k) { if (isset($n[$k])) { $r = $findSel($n[$k], $name); if ($r) { return $r; } } } } } return null; };
+$sel = $findSel($f['elements'], 'WB1_TibberVehicle');
+check('Formular: Fahrzeugauswahl enthaelt "Name (Hersteller) — angesteckt" mit deviceId als Wert, keine Batterie', $sel && in_array(['caption' => 'Schneeflocke (TESLA) — angesteckt', 'value' => 'veh-1'], $sel['options'], true) && count($sel['options']) === 2, json_encode($sel['options'] ?? null));
+prop('WB1_TibberVehicle', 'weg-1');
+$sel = $findSel(json_decode($ems->GetConfigurationForm(), true)['elements'], 'WB1_TibberVehicle');
+check('gespeicherte, aktuell nicht gemeldete Zuordnung bleibt in der Auswahl erhalten (kein stilles Loeschen)', (bool)array_filter($sel['options'], fn($o) => $o['value'] === 'weg-1'));
+prop('WB1_TibberVehicle', ''); prop('WB_Count', 1);
+$lbl = $findSel(json_decode($ems->GetConfigurationForm(), true)['elements'], 'WB1ModeStatus');
+check('genau ein Fahrzeug und eine Wallbox: Statuszeile schlaegt es vor (kein stilles Uebernehmen)', $lbl && strpos($lbl['caption'], 'Tibber meldet genau ein Fahrzeug (Schneeflocke (TESLA))') !== false && (int)$ems->ReadPropertyString('WB1_TibberVehicle') === 0, $lbl['caption'] ?? '');
+prop('WB_Count', 2);
+$lbl = $findSel(json_decode($ems->GetConfigurationForm(), true)['elements'], 'WB1ModeStatus');
+check('zwei Wallboxen: kein Vorschlag (nicht eindeutig)', strpos($lbl['caption'], 'Tibber meldet genau ein Fahrzeug') === false);
+prop('WB1_TibberVehicle', '');
+unset($GLOBALS['INSTMOD'][900]); $GLOBALS['FLEX_DEVICES'] = []; // nichts in die folgenden Bloecke verschleppen
 
 // ===========================================================================
 echo "\n5) §14a-Netzbetreiber-Lastbegrenzung -- oberste Prioritaet, auch ueber Grid Rewards\n";
