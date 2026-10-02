@@ -305,6 +305,31 @@ $target = $ems->ReadPropertyInteger('BAT_SOC_Target_Night');
 $d = call($ems, 'optimize', [state(['grid_rewards' => true, 'wb1_pow_kw' => 5.0, 'enwg_in_window' => true, 'bat_soc' => max(5, $target - 30)])]);
 check('Grid Rewards schlaegt §14a-Nachtladen', $d['op_mode'] === EMS_OP_GRIDREWARDS, fmt($d));
 
+echo "\n   Grid Rewards sperrt die Wallbox nicht (Fund 02.10.2026: controlWallbox(n, false) nahm Tibbers Smart Charging die Freigabe)\n";
+$ems = freshEms();
+prop('WB_Active', true); prop('WB_Count', 1);
+$cenGr = vari('CHUB WB1 Ladefreigabe', 600, 'ctl_enable', true, 0); // Freigabe ist gerade AN (Auto laedt)
+attr('PartnerCache', json_encode(['chargerhub' => [['instanceID' => 600, 'source' => 'chargerhub', 'chargeEnableID' => $cenGr,
+    'maxCurrent' => 16, 'managedBy' => 'none', 'powerID' => 0, 'plugStateID' => 0]]]));
+$sGr = state(['grid_rewards' => true, 'wb_active' => true, 'wb_count' => 1, 'wb1_pow_kw' => 7.4, 'wb1_cable' => 1]);
+$dGr = call($ems, 'optimize', [$sGr]);
+check('Grid-Rewards-Entscheidung traegt wb_hands_off (EMS entscheidet nichts an der Wallbox)', !empty($dGr['wb_hands_off']), fmt($dGr));
+check('Grund nennt die unangetastete Wallbox-Freigabe', strpos($dGr['reason'], 'Wallbox-Freigabe bleibt unangetastet') !== false, $dGr['reason']);
+$GLOBALS['ACTIONS'] = [];
+call($ems, 'applyDecision', [$dGr, $sGr]);
+check('applyDecision bei Grid Rewards: KEIN ctl_enable/ctl_curr_limit an die Wallbox (nicht sperren)',
+    array_filter($GLOBALS['ACTIONS'], fn($a) => in_array($a[1], ['ctl_enable', 'ctl_curr_limit'], true)) === [], json_encode($GLOBALS['ACTIONS']));
+// Gegenprobe: dieselbe Wallbox, normale Entscheidung mit wb1_enable=false -> Sperren wird weiterhin gesendet
+$dNormal = array_merge($dGr, ['op_mode' => EMS_OP_AUTO, 'gw_mode' => GW_MODE_AUTO, 'gw_power_w' => 0, 'gw_enable' => false,
+    'source' => 'ems', 'reason' => 'Automatik', 'wb1_enable' => false]);
+unset($dNormal['wb_hands_off']);
+attr('LastWB1Switch', 0);
+attr('LastDecision', 0); // sonst greift der Moduswechsel-Cooldown und applyDecision kehrt vor dem Wallbox-Teil zurueck
+$GLOBALS['ACTIONS'] = [];
+call($ems, 'applyDecision', [$dNormal, $sGr]);
+check('Gegenprobe: ohne Grid Rewards wird die Wallbox bei wb1_enable=false weiterhin gesperrt',
+    (bool)array_filter($GLOBALS['ACTIONS'], fn($a) => $a[1] === 'ctl_enable' && $a[2] === false), json_encode($GLOBALS['ACTIONS']));
+
 // ===========================================================================
 echo "\n5) §14a-Netzbetreiber-Lastbegrenzung -- oberste Prioritaet, auch ueber Grid Rewards\n";
 $ems = freshEms();

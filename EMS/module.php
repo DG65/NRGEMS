@@ -5739,8 +5739,12 @@ class EMS extends IPSModule
             $d['gw_enable']  = true;
             $d['wb1_enable'] = false; // Tibber steuert Wallbox direkt
             $d['wb2_enable'] = false;
+            // "false" heisst hier "EMS entscheidet nichts", NICHT "sperren": ohne dieses Flag haette
+            // applyDecision() controlWallbox(n, false) aufgerufen und die Freigabe der Wallbox
+            // genommen, die Tibbers Smart Charging zum Laden braucht (Dietmar 02.10.2026).
+            $d['wb_hands_off'] = true;
             $d['reason']     = sprintf(
-                'Grid Rewards: Stromeinkauf=%.0fW (= aktuelle Wallbox-Leistung), Haus+Batterie laeuft ueber WR-Automatik',
+                'Grid Rewards: Stromeinkauf=%.0fW (= aktuelle Wallbox-Leistung), Haus+Batterie laeuft ueber WR-Automatik, Wallbox-Freigabe bleibt unangetastet',
                 $wbTotalW
             );
             $d['source'] = 'tibber';
@@ -7266,7 +7270,7 @@ class EMS extends IPSModule
             $this->WriteAttributeInteger('LastGoodweMode', $b1Now ? GW_MODE_DISCHARGE : GW_MODE_AUTO);
             $this->WriteAttributeBoolean('LastGoodweEnable', false);
             $this->WriteAttributeInteger('LastDecision', time());
-            if ($s['wb_active']) {
+            if ($s['wb_active'] && empty($d['wb_hands_off'])) {
                 $this->enforceGridImportBudget($d, $s);
                 $this->controlWallbox(1, $d['wb1_enable']);
                 if ($s['wb_count'] >= 2) {
@@ -7359,7 +7363,7 @@ class EMS extends IPSModule
         // evcc: Leistung ueber mehrere Ladepunkte verteilen, Netzanschluss vor
         // Ueberlast schuetzen). Kann die Wallbox-Freigaben aus optimize() noch
         // nachtraeglich zurücknehmen, bevor sie an ChargerHub geschickt werden.
-        if ($s['wb_active']) {
+        if ($s['wb_active'] && empty($d['wb_hands_off'])) {
             $this->enforceGridImportBudget($d, $s);
             $this->controlWallbox(1, $d['wb1_enable']);
             if ($s['wb_count'] >= 2) {
@@ -7394,13 +7398,16 @@ class EMS extends IPSModule
             $this->WriteAttributeInteger('LastGoodwePowerW', 0);
             $this->emsLog(EMS_LOG_BASIC, 'Trockenlauf: aktiver Sollwert einmal an die Automatik zurueckgegeben');
         }
+        $handsOff = !empty($d['wb_hands_off']);
         $tuple = (int)($d['gw_mode'] ?? 0) . '/' . (int)($d['gw_power_w'] ?? 0) . '/' . (!empty($d['gw_enable']) ? 1 : 0)
-            . '/W' . (!empty($d['wb1_enable']) ? 1 : 0) . (!empty($d['wb2_enable']) ? 1 : 0);
+            . '/W' . ($handsOff ? 'x' : ((!empty($d['wb1_enable']) ? 1 : 0) . (!empty($d['wb2_enable']) ? 1 : 0)));
         if ($this->ReadAttributeString('DryRunLast') !== $tuple) {
             $this->WriteAttributeString('DryRunLast', $tuple);
+            $wb1Txt = $handsOff ? 'unveraendert' : (!empty($d['wb1_enable']) ? 'frei' : 'gesperrt');
+            $wb2Txt = $handsOff ? 'unveraendert' : (!empty($d['wb2_enable']) ? 'frei' : 'gesperrt');
             $this->emsLog(EMS_LOG_BASIC, sprintf('Trockenlauf: wuerde Modus %d, %d W, enable=%s, Wallbox 1=%s 2=%s senden | %s',
                 (int)($d['gw_mode'] ?? 0), (int)($d['gw_power_w'] ?? 0), !empty($d['gw_enable']) ? 'ja' : 'nein',
-                !empty($d['wb1_enable']) ? 'frei' : 'gesperrt', !empty($d['wb2_enable']) ? 'frei' : 'gesperrt', $d['reason'] ?? ''));
+                $wb1Txt, $wb2Txt, $d['reason'] ?? ''));
         }
         $text = 'Trockenlauf (nichts geschrieben): ' . ($d['reason'] ?? '');
         $this->SetValue('EMS_Mode',       $d['op_mode'] ?? EMS_OP_AUTO);

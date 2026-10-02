@@ -2,6 +2,12 @@
 
 Ältere Versionen: [CHANGELOG-Archiv.md](CHANGELOG-Archiv.md)
 
+## 0.67.1 (2026-10-02)
+- **Grid Rewards sperrt die Wallbox nicht mehr:** Im Grid-Rewards-Zweig stand `wb1_enable=false` mit dem Kommentar „Tibber steuert die Wallbox direkt", `applyDecision()` rief danach aber trotzdem `controlWallbox(n, false)` auf — und das ist ein echtes Sperren (`ctl_enable=false`), sobald die Freigabe gerade an war. Tibbers Smart Charging lädt das Fahrzeug über die Tesla-API (außerhalb von EMS), braucht dafür aber eine freigegebene Wallbox; EMS hätte ihm die Freigabe genommen. Aufgefallen beim Durcharbeiten der Frage „Was passiert bei einem oder zwei angesteckten Autos?" (Dietmar, 02.10.2026). Grid Rewards war live bisher nie aktiv, deshalb unbemerkt.
+  Neu: Die Grid-Rewards-Entscheidung trägt das Flag `wb_hands_off`; `applyDecision()` (auch im Netzdienlich-Pfad) schreibt dann weder Freigabe noch Strombegrenzung an die Wallboxen und lässt die Lastverteilung aus. Der Grund-Text nennt es („Wallbox-Freigabe bleibt unangetastet"), der Trockenlauf zeigt „unverändert".
+  Bewusst nicht Teil dieser Änderung: Hat EMS die Wallbox VOR Grid Rewards aus Preisgründen gesperrt, gibt es sie auch jetzt nicht von sich aus frei — das gehört zum geplanten Konzept „Smart Charging / EMS steuert / fremd gesteuert" je Wallbox.
+  Drei neue Prüfungen im Prüfstand (Block 4), inklusive Gegenprobe; Mutationstest bestätigt: ohne den Fix sendet `applyDecision` tatsächlich `ctl_enable=false`.
+
 ## 0.67.0 (2026-09-30)
 - **Netzdienlicher Baustein B1 ("Mittagsspitze aufnehmen") lädt jetzt gezielt im PV-Spitzenfenster, statt das Laden möglichst lange hinauszuschieben:** Auslöser war ein Live-Fund (30.09.2026, 12:28 Uhr) — die Batterie war morgens von 73 % auf 90 % geladen, dann sperrte B1 exakt zur Mittagsspitze das weitere Laden und schickte den Überschuss ins Netz. Das widersprach dem eigenen Konzept ("zur Spitze lädt die Batterie aus PV", `EMS-Netzdienlich-Konzept.md` §5) und Dietmars Punkt: Die Mittagsspitze ist genau der Moment, in dem alle PV-Anlagen im Netz gleichzeitig am stärksten einspeisen (deshalb gibt es §14a-Dimmung) — dort sollte die Batterie aufnehmen, nicht zusätzlich einspeisen.
   Ursache: Die alte Reserve-Rechnung verglich den Platzbedarf gegen den PV-Überschuss des GESAMTEN Tagesrests (bis Mitternacht), nicht nur bis zur Spitze — bei reichlich Prognose blieb die Sperre dadurch auch während und nach der eigentlichen Spitze aktiv.
