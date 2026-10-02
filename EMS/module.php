@@ -41,7 +41,7 @@ define('EMS_LOG_VERBOSE',     2);
 // Formular-Konvention (siehe EMS/SUITE.md "Einheitliche Formular-Optik"):
 // Was-ist-Neu-Panel ist versionsscharf dismissible, Referenzmuster InverterHub.
 define('EMS_COLOR_AUTO', 0x2E8B3D); // Gruen: Wert wurde automatisch uebernommen (🔗-Zeilen im Formular)
-define('EMS_NEWS_VERSION', '0.67.0');
+define('EMS_NEWS_VERSION', '0.68.0');
 
 // NRG-Stack Partnermodul-GUIDs (fuer automatische Discovery, siehe discoverPartners())
 define('GUID_CHARGERHUB',    '{9256C34E-5CFD-4F37-8BFE-E65390EBB37C}');
@@ -316,6 +316,8 @@ class EMS extends IPSModule
         // (Dietmar 13.09.2026) -- nie doppelt zaehlen.
         $this->RegisterPropertyBoolean('WB_PV_Ueberschuss',     true);  // Wallbox darf bei echtem PV-Ueberschuss auch ueber der Preisschwelle laden
         $this->RegisterPropertyInteger('WB_Quelle',            0);   // 0 automatisch, 1 ChargerHub, 2 OCPPHub, 3 beide (verschiedene Geraete)
+        $this->RegisterPropertyInteger('WB1_Mode',            0);   // Wallbox-Modus: 0 automatisch, 1 Smart Charging (Tibber hat die Hoheit), 2 EMS steuert, 3 nur beobachten
+        $this->RegisterPropertyInteger('WB2_Mode',            0);
         $this->RegisterPropertyInteger('WB_Cooldown_Sec',      120);
         $this->RegisterPropertyInteger('WB_Min_Charge_Min',    5);
         $this->RegisterPropertyInteger('BOOST_Duration_Min',   30);
@@ -476,6 +478,8 @@ class EMS extends IPSModule
         $this->RegisterAttributeInteger('LastGoodweWriteAt', 0);
         $this->RegisterAttributeBoolean('WB1LastSentEnable', false);
         $this->RegisterAttributeBoolean('WB2LastSentEnable', false);
+        $this->RegisterAttributeBoolean('WB1EmsLocked',      false); // EMS hat diese Wallbox selbst gesperrt (nur dann gibt es sie im Modus Smart Charging wieder frei)
+        $this->RegisterAttributeBoolean('WB2EmsLocked',      false);
         $this->RegisterAttributeInteger('LastWB1Switch',     0);
         $this->RegisterAttributeInteger('LastWB2Switch',     0);
         $this->RegisterAttributeInteger('LastDecision',      0);
@@ -671,6 +675,10 @@ class EMS extends IPSModule
                 'items'    => array(
                     array(
                         'type'    => 'Label',
+                        'caption' => '• NEU: Wallbox-Modus je Wallbox im Panel „Wallboxen“: Smart Charging (Tibber hat die Hoheit, EMS sperrt und erzwingt nichts), EMS steuert (Freigabe nach Preis und PV-Überschuss) oder nur beobachten. „Automatisch“ erkennt, ob EMS die Wallbox schalten darf. Hat EMS eine Wallbox früher selbst gesperrt, gibt es sie im Modus Smart Charging einmal wieder frei. Grid Rewards sperrt die Wallbox außerdem nicht mehr.'
+                    ),
+                    array(
+                        'type'    => 'Label',
                         'caption' => '• NEU: „Mittagsspitze aufnehmen“ (Netzdienlich-Baustein B1) lädt die Batterie jetzt gezielt im stärksten PV-Fenster des Tages statt möglichst spät: Vorher gesperrt (Überschuss ins Netz), sobald genug Reserve bis zum Fensterbeginn erwartet wird; ab dem Fenster immer freigegeben. Neu einstellbar im Panel „Netzdienliche Bausteine“, welcher Anteil vom Tagesmaximum als „Spitze“ zählt. Zusätzlich neu: Ist der Einkaufspreis (inkl. Wandlungsverlust und Zykluskosten) gerade günstiger als die Einspeisevergütung, sperrt EMS unabhängig von der Uhrzeit immer — Zwischenspeichern lohnt sich dann nicht.'
                     ),
                     array(
@@ -791,6 +799,22 @@ class EMS extends IPSModule
                     if (($item['name'] ?? '') === 'NETZ_Aktiv') {
                         array_splice($element['items'], $idx + 1, 0, array(array_merge($this->statusLabel($spotText), array('name' => 'SpotStatusLabel'))));
                         break 2;
+                    }
+                }
+            }
+        }
+        unset($element);
+
+        // 3b5. Wallbox-Modus: Statuszeile unter jeder Auswahl (live, folgt per onChange der Auswahl im offenen Formular)
+        foreach ($form['elements'] as &$element) {
+            if (($element['type'] ?? '') !== 'ExpansionPanel') { continue; }
+            for ($wbn = 2; $wbn >= 1; $wbn--) {
+                foreach ($element['items'] as $idx => $item) {
+                    if (($item['name'] ?? '') === 'WB' . $wbn . '_Mode') {
+                        $label = array_merge($this->statusLabel($this->wallboxModeStatusLine($wbn)), array('name' => 'WB' . $wbn . 'ModeStatus'));
+                        if (isset($item['visible'])) { $label['visible'] = $item['visible']; }
+                        array_splice($element['items'], $idx + 1, 0, array($label));
+                        break;
                     }
                 }
             }
@@ -3838,6 +3862,16 @@ class EMS extends IPSModule
             $ctl = $this->getControlEntry($i + 1);
             $managedBy = $ctl !== null ? ($ctl['managedBy'] ?? 'none') : ($chg['managedBy'] ?? 'none');
             $isEmsOwned = $ctl !== null;
+            // Wallbox-Modus (02.10.2026): bei Smart Charging hat Tibber das Sagen, bei "nur beobachten" niemand
+            // ueber EMS -- in beiden Faellen darf EMS dort nicht schreiben (Situation B).
+            $wbMode = ($i < 2) ? $this->wallboxMode($i + 1)['mode'] : 'ems';
+            if ($wbMode === 'smart') {
+                $isEmsOwned = false;
+                $managedBy  = 'tibber';
+            } elseif ($wbMode === 'observe') {
+                $isEmsOwned = false;
+                if ($managedBy === 'none' || $managedBy === 'ems') { $managedBy = 'manual'; }
+            }
             $situation[] = array(
                 'domain'     => 'wallbox',
                 'instanceID' => $chg['instanceID'] ?? 0,
@@ -3845,6 +3879,7 @@ class EMS extends IPSModule
                 'situation'  => $isEmsOwned ? 'A' : 'B',
                 'source'     => $managedBy,
                 'writable'   => $isEmsOwned,
+                'mode'       => $wbMode,
             );
         }
 
@@ -5863,15 +5898,18 @@ class EMS extends IPSModule
             return; // Feature deaktiviert
         }
 
-        $wbs = array(
-            1 => array(
+        // Nur Wallboxen im Modus "EMS steuert" lassen sich drosseln; Smart-Charging- und fremd gesteuerte
+        // Wallboxen (deren Bezug steckt schon im gemessenen Netzbezug) bleiben aussen vor.
+        $wbs = array();
+        if ($this->wallboxMode(1)['mode'] === 'ems') {
+            $wbs[1] = array(
                 'enable'   => $d['wb1_enable'],
                 'currentW' => $s['wb1_pow_kw'] * 1000,
                 'maxW'     => (float)$this->ReadPropertyInteger('WB1_Max_Power_W'),
                 'priority' => (int)$this->ReadPropertyInteger('WB1_Priority'),
-            ),
-        );
-        if ($s['wb_count'] >= 2) {
+            );
+        }
+        if ($s['wb_count'] >= 2 && $this->wallboxMode(2)['mode'] === 'ems') {
             $wbs[2] = array(
                 'enable'   => $d['wb2_enable'],
                 'currentW' => $s['wb2_pow_kw'] * 1000,
@@ -7270,13 +7308,7 @@ class EMS extends IPSModule
             $this->WriteAttributeInteger('LastGoodweMode', $b1Now ? GW_MODE_DISCHARGE : GW_MODE_AUTO);
             $this->WriteAttributeBoolean('LastGoodweEnable', false);
             $this->WriteAttributeInteger('LastDecision', time());
-            if ($s['wb_active'] && empty($d['wb_hands_off'])) {
-                $this->enforceGridImportBudget($d, $s);
-                $this->controlWallbox(1, $d['wb1_enable']);
-                if ($s['wb_count'] >= 2) {
-                    $this->controlWallbox(2, $d['wb2_enable']);
-                }
-            }
+            $this->applyWallboxControl($d, $s);
             $reason = $b1Now ? ($d['reason'] ?? '') : '🌞 Netzdienlich beendet, Freigabe an WR-Automatik | ' . ($d['reason'] ?? '');
             $this->SetValue('EMS_Mode',       $d['op_mode']);
             $this->SetValue('EMS_LastAction', $reason);
@@ -7363,13 +7395,7 @@ class EMS extends IPSModule
         // evcc: Leistung ueber mehrere Ladepunkte verteilen, Netzanschluss vor
         // Ueberlast schuetzen). Kann die Wallbox-Freigaben aus optimize() noch
         // nachtraeglich zurücknehmen, bevor sie an ChargerHub geschickt werden.
-        if ($s['wb_active'] && empty($d['wb_hands_off'])) {
-            $this->enforceGridImportBudget($d, $s);
-            $this->controlWallbox(1, $d['wb1_enable']);
-            if ($s['wb_count'] >= 2) {
-                $this->controlWallbox(2, $d['wb2_enable']);
-            }
-        }
+        $this->applyWallboxControl($d, $s);
 
         $this->SetValue('EMS_Mode',       $d['op_mode']);
         $this->SetValue('EMS_LastAction', $d['reason']);
@@ -7541,6 +7567,113 @@ class EMS extends IPSModule
         if ($varPower > 0 && $powerW > 0) { $this->writeVar($varPower, $powerW); }
     }
 
+    // ----------------------------------------------------------------
+    //  Wallbox-Modi (Dietmar 02.10.2026): wer hat an dieser Wallbox das Sagen?
+    //   'smart'   Smart Charging -- Tibber hat die Hoheit (laedt das Fahrzeug ueber dessen eigene
+    //             Schnittstelle, braucht aber eine freigegebene Wallbox): EMS sperrt und erzwingt nichts.
+    //   'ems'     EMS steuert die Freigabe nach Preis und PV-Ueberschuss.
+    //   'observe' EMS beobachtet nur (fremd gesteuert, z. B. go-e Controller): Leistung zaehlt zum Hausverbrauch.
+    // ----------------------------------------------------------------
+
+    /** Darf EMS diese Wallbox ueberhaupt schalten? Spiegelt die Auswahl in controlWallbox(). */
+    private function wallboxWritable(int $n): bool
+    {
+        $configured = $this->ReadPropertyInteger('WB' . $n . '_Instance');
+        if ($configured > 0) {
+            foreach ($this->getWritableChargers() as $c) {
+                if (($c['instanceID'] ?? 0) === $configured) { return true; }
+            }
+            return function_exists('GOeCharger_SetMode');
+        }
+        return $this->getControlEntry($n) !== null;
+    }
+
+    /**
+     * Aufgeloester Modus einer Wallbox: array('mode' => 'smart'|'ems'|'observe', 'manual' => bool, 'writable' => bool).
+     * Einstellung 0 = automatisch: schaltbar -> 'ems', sonst 'observe'. ($override: Auswahl aus dem offenen Formular.)
+     */
+    private function wallboxMode(int $n, ?int $override = null): array
+    {
+        $setting  = ($override !== null) ? $override : $this->ReadPropertyInteger('WB' . $n . '_Mode');
+        $writable = $this->wallboxWritable($n);
+        switch ($setting) {
+            case 1:  return array('mode' => 'smart',   'manual' => true,  'writable' => $writable);
+            case 2:  return array('mode' => 'ems',     'manual' => true,  'writable' => $writable);
+            case 3:  return array('mode' => 'observe', 'manual' => true,  'writable' => $writable);
+            default: return array('mode' => $writable ? 'ems' : 'observe', 'manual' => false, 'writable' => $writable);
+        }
+    }
+
+    /** Statuszeile je Wallbox fuers Formular (🔗 automatisch, ✏️ eigene Wahl, ⚠️ Widerspruch, ℹ️ nichts gefunden). */
+    private function wallboxModeStatusLine(int $n, ?int $override = null)
+    {
+        $m   = $this->wallboxMode($n, $override);
+        $has = (count($this->getChargerList()) >= $n) || $this->ReadPropertyInteger('WB' . $n . '_Instance') > 0;
+        if (!$has && !$m['manual']) {
+            return 'ℹ️ Wallbox ' . $n . ': keine Wallbox gefunden. Sobald ChargerHub oder OCPPHub eine meldet, erkennt EMS selbst, ob es sie schalten darf.';
+        }
+        if ($m['mode'] === 'smart') {
+            return array('caption' => '✏️ Wallbox ' . $n . ': Smart Charging (eigene Wahl). Tibber hat die Hoheit, EMS sperrt und erzwingt nichts. Hat EMS die Wallbox früher selbst gesperrt, gibt es sie einmal wieder frei.', 'color' => -1);
+        }
+        if ($m['mode'] === 'observe') {
+            if (!$m['manual']) {
+                return array('caption' => '🔗 Wallbox ' . $n . ': fremd gesteuert (automatisch erkannt, EMS darf dort nicht schalten). EMS misst nur, die Leistung zählt zum Hausverbrauch.', 'color' => EMS_COLOR_AUTO);
+            }
+            return array('caption' => '✏️ Wallbox ' . $n . ': nur beobachten (eigene Wahl). EMS misst die Leistung und schaltet nichts.', 'color' => -1);
+        }
+        if (!$m['writable']) {
+            return '⚠️ Wallbox ' . $n . ': „EMS steuert“ gewählt, aber EMS darf diese Wallbox nicht schalten (fremd gesteuert). Es passiert nichts.';
+        }
+        if (!$m['manual']) {
+            return array('caption' => '🔗 Wallbox ' . $n . ': EMS steuert die Freigabe (automatisch erkannt, Wallbox ist schaltbar). Smart Charging im Fahrzeug sollte aus sein, sonst regeln zwei Stellen.', 'color' => EMS_COLOR_AUTO);
+        }
+        return array('caption' => '✏️ Wallbox ' . $n . ': EMS steuert die Freigabe (eigene Wahl). Smart Charging im Fahrzeug sollte aus sein, sonst regeln zwei Stellen.', 'color' => -1);
+    }
+
+    /** onChange der Modus-Auswahl: die Statuszeile folgt der Auswahl im offenen Formular, nicht dem Speicherstand. */
+    public function WallboxModeChanged(int $num, int $mode)
+    {
+        $line = $this->wallboxModeStatusLine($num, $mode);
+        $this->UpdateFormField('WB' . $num . 'ModeStatus', 'caption', is_array($line) ? (string)$line['caption'] : (string)$line);
+        $this->UpdateFormField('WB' . $num . 'ModeStatus', 'color', is_array($line) ? (int)$line['color'] : -1);
+    }
+
+    /**
+     * Gibt eine Wallbox wieder frei, die EMS selbst gesperrt hatte (Modus Smart Charging: Tibber braucht die Freigabe).
+     * Eine vom Nutzer gesperrte Wallbox bleibt unberuehrt. Das Merkmal faellt beim Senden der Freigabe weg; war die
+     * Wallbox real schon frei (nichts zu senden) und kein Cooldown aktiv, wird es hier aufgeraeumt.
+     */
+    private function releaseOwnWallboxLock(int $n): void
+    {
+        if (!$this->ReadAttributeBoolean('WB' . $n . 'EmsLocked')) { return; }
+        $this->controlWallbox($n, true);
+        $cooldownOver = (time() - $this->ReadAttributeInteger('LastWB' . $n . 'Switch')) >= $this->ReadPropertyInteger('WB_Cooldown_Sec');
+        if ($this->ReadAttributeBoolean('WB' . $n . 'EmsLocked') && $cooldownOver) {
+            $this->WriteAttributeBoolean('WB' . $n . 'EmsLocked', false);
+        }
+    }
+
+    /**
+     * Wallbox-Freigaben der Entscheidung an die Wallboxen schreiben -- je nach Modus:
+     * 'smart' loest nur eine eigene Sperre (auch waehrend Grid Rewards, Tibber braucht sie), 'ems' schreibt die
+     * Entscheidung (ausser bei wb_hands_off), 'observe' schreibt nichts.
+     */
+    private function applyWallboxControl(array &$d, array $s): void
+    {
+        if (empty($s['wb_active'])) { return; }
+        $count = (($s['wb_count'] ?? 1) >= 2) ? 2 : 1;
+        $modes = array();
+        for ($n = 1; $n <= $count; $n++) {
+            $modes[$n] = $this->wallboxMode($n)['mode'];
+            if ($modes[$n] === 'smart') { $this->releaseOwnWallboxLock($n); }
+        }
+        if (!empty($d['wb_hands_off'])) { return; }
+        $this->enforceGridImportBudget($d, $s);
+        for ($n = 1; $n <= $count; $n++) {
+            if ($modes[$n] === 'ems') { $this->controlWallbox($n, $d['wb' . $n . '_enable']); }
+        }
+    }
+
     /**
      * Wallbox $num (1 oder 2) freigeben/sperren. Bevorzugt den NRG-Stack-
      * ChargerHub-Kontrollkanal (nur Instanzen mit managedBy none/ems,
@@ -7629,11 +7762,13 @@ class EMS extends IPSModule
             IPS_RequestAction($instance, 'ctl_curr_limit', $maxCurrentA);
             IPS_RequestAction($instance, 'ctl_enable', true);
             $this->WriteAttributeBoolean('WB' . (int)$num . 'LastSentEnable', true);
+            $this->WriteAttributeBoolean('WB' . (int)$num . 'EmsLocked', false);
             $this->WriteAttributeInteger('LastWB' . $num . 'Switch', time());
             $this->emsLog(EMS_LOG_BASIC, 'WB' . $num . ' (' . $this->chargerSourceLabel($entry) . ' #' . $instance . ') freigegeben (' . $maxCurrentA . ' A)');
         } elseif (!$enable && $isActive) {
             IPS_RequestAction($instance, 'ctl_enable', false);
             $this->WriteAttributeBoolean('WB' . (int)$num . 'LastSentEnable', false);
+            $this->WriteAttributeBoolean('WB' . (int)$num . 'EmsLocked', true);
             $this->WriteAttributeInteger('LastWB' . $num . 'Switch', time());
             $this->emsLog(EMS_LOG_BASIC, 'WB' . $num . ' (' . $this->chargerSourceLabel($entry) . ' #' . $instance . ') gesperrt');
         }

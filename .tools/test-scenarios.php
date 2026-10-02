@@ -331,6 +331,98 @@ check('Gegenprobe: ohne Grid Rewards wird die Wallbox bei wb1_enable=false weite
     (bool)array_filter($GLOBALS['ACTIONS'], fn($a) => $a[1] === 'ctl_enable' && $a[2] === false), json_encode($GLOBALS['ACTIONS']));
 
 // ===========================================================================
+echo "\n4b) Wallbox-Modi (02.10.2026): Smart Charging / EMS steuert / nur beobachten\n";
+$ems = freshEms();
+prop('WB_Active', true); prop('WB_Count', 2);
+$cenA = vari('CHUB WB1 Ladefreigabe', 600, 'ctl_enable', true, 0);
+$cenB = vari('CHUB WB2 Ladefreigabe', 602, 'ctl_enable', true, 0);
+$whA = ['instanceID' => 600, 'source' => 'chargerhub', 'chargeEnableID' => $cenA, 'maxCurrent' => 16, 'managedBy' => 'none', 'powerID' => 0, 'plugStateID' => 0];
+$whB = ['instanceID' => 602, 'source' => 'chargerhub', 'chargeEnableID' => $cenB, 'maxCurrent' => 16, 'managedBy' => 'other', 'powerID' => 0, 'plugStateID' => 0];
+attr('PartnerCache', json_encode(['chargerhub' => [$whA, $whB]]));
+$wbActs = fn() => array_values(array_filter($GLOBALS['ACTIONS'], fn($a) => in_array($a[1], ['ctl_enable', 'ctl_curr_limit'], true)));
+$sWb = state(['wb_active' => true, 'wb_count' => 2]);
+
+echo "   Moduswahl\n";
+check('automatisch, schaltbare Wallbox 1: EMS steuert', call($ems, 'wallboxMode', [1]) === ['mode' => 'ems', 'manual' => false, 'writable' => true], json_encode(call($ems, 'wallboxMode', [1])));
+check('automatisch, fremd gesteuerte Wallbox 2: nur beobachten', call($ems, 'wallboxMode', [2]) === ['mode' => 'observe', 'manual' => false, 'writable' => false], json_encode(call($ems, 'wallboxMode', [2])));
+prop('WB1_Mode', 1);
+check('manuell Smart Charging', call($ems, 'wallboxMode', [1])['mode'] === 'smart' && call($ems, 'wallboxMode', [1])['manual'] === true);
+prop('WB1_Mode', 3);
+check('manuell nur beobachten, obwohl schaltbar', call($ems, 'wallboxMode', [1])['mode'] === 'observe' && call($ems, 'wallboxMode', [1])['writable'] === true);
+prop('WB2_Mode', 2);
+check('manuell EMS steuert, aber nicht schaltbar: Modus ems, writable=false (die Statuszeile warnt)', call($ems, 'wallboxMode', [2])['mode'] === 'ems' && call($ems, 'wallboxMode', [2])['writable'] === false);
+check('Override aus dem offenen Formular schlaegt die gespeicherte Einstellung', call($ems, 'wallboxMode', [1, 1])['mode'] === 'smart');
+prop('WB1_Mode', 0); prop('WB2_Mode', 0);
+
+echo "   Statuszeilen\n";
+$txt = fn($l) => is_array($l) ? $l['caption'] : $l;
+check('automatisch schaltbar: 🔗 grün, EMS steuert', ($l = call($ems, 'wallboxModeStatusLine', [1])) && strpos($l['caption'], '🔗') === 0 && strpos($l['caption'], 'EMS steuert') !== false && $l['color'] === EMS_COLOR_AUTO, json_encode($l));
+check('automatisch fremd gesteuert: 🔗 grün, fremd gesteuert', ($l = call($ems, 'wallboxModeStatusLine', [2])) && strpos($l['caption'], '🔗') === 0 && strpos($l['caption'], 'fremd gesteuert') !== false, json_encode($l));
+check('manuell Smart Charging: ✏️, Tibber hat die Hoheit', strpos($txt(call($ems, 'wallboxModeStatusLine', [1, 1])), '✏️') === 0 && strpos($txt(call($ems, 'wallboxModeStatusLine', [1, 1])), 'Tibber hat die Hoheit') !== false);
+check('manuell EMS steuert an fremder Wallbox: ⚠️ Widerspruch statt stillem Nichtstun', strpos($txt(call($ems, 'wallboxModeStatusLine', [2, 2])), '⚠️') === 0);
+$pcSave = $GLOBALS['ATTR'][EMS_IID]['PartnerCache'];
+attr('PartnerCache', '{}');
+check('keine Wallbox gefunden (automatisch): ℹ️ statt falscher Behauptung', strpos($txt(call($ems, 'wallboxModeStatusLine', [1])), 'ℹ️') === 0);
+attr('PartnerCache', $pcSave);
+$f = json_encode(json_decode($ems->GetConfigurationForm(), true), JSON_UNESCAPED_UNICODE);
+check('Formular enthaelt die Statuszeile von Wallbox 1 live berechnet (kein statischer Ersatztext)', strpos($f, '"name":"WB1ModeStatus"') !== false && strpos($f, 'EMS steuert die Freigabe (automatisch erkannt') !== false);
+check('Formular: Statuszeile von Wallbox 2 hat die Sichtbarkeitsbedingung der Auswahl', (bool)preg_match('/"name":"WB2ModeStatus"[^}]*"visible":\{"type":"PropertyCondition","property":"WB_Count"/', $f), '');
+
+echo "   Verhalten je Modus\n";
+$dLock = ['wb1_enable' => false, 'wb2_enable' => false];
+$resetWb = function () use ($cenA, $cenB) { $GLOBALS['VAL'][$cenA] = true; $GLOBALS['VAL'][$cenB] = true; attr('LastWB1Switch', 0); attr('LastWB2Switch', 0); attr('WB1EmsLocked', false); attr('WB2EmsLocked', false); $GLOBALS['ACTIONS'] = []; };
+$resetWb(); $d = $dLock;
+call($ems, 'applyWallboxControl', [&$d, $sWb]);
+check('EMS steuert (automatisch): Wallbox 1 wird bei wb1_enable=false gesperrt, Sperre gemerkt', $wbActs() === [[600, 'ctl_enable', false]] && $ems->ReadAttributeBoolean('WB1EmsLocked') === true, json_encode($GLOBALS['ACTIONS']));
+check('fremd gesteuerte Wallbox 2 bleibt unberuehrt', array_filter($GLOBALS['ACTIONS'], fn($a) => $a[0] === 602) === []);
+$resetWb(); prop('WB1_Mode', 1); $d = $dLock;
+call($ems, 'applyWallboxControl', [&$d, $sWb]);
+check('Smart Charging: nichts wird gesperrt, auch wenn die Entscheidung wb1_enable=false sagt', $wbActs() === [], json_encode($GLOBALS['ACTIONS']));
+$resetWb(); prop('WB1_Mode', 3); $d = $dLock;
+call($ems, 'applyWallboxControl', [&$d, $sWb]);
+check('nur beobachten: nichts wird geschrieben, auch bei schaltbarer Wallbox', $wbActs() === [], json_encode($GLOBALS['ACTIONS']));
+
+echo "   Smart Charging gibt NUR eine eigene Sperre wieder frei\n";
+prop('WB1_Mode', 1);
+$resetWb(); attr('WB1EmsLocked', true); $GLOBALS['VAL'][$cenA] = false; $d = $dLock;
+call($ems, 'applyWallboxControl', [&$d, $sWb]);
+check('eigene Sperre: Freigabe (Strom + ctl_enable=true) wird einmal gesendet, Merkmal gelöscht',
+    $wbActs() === [[600, 'ctl_curr_limit', 16], [600, 'ctl_enable', true]] && $ems->ReadAttributeBoolean('WB1EmsLocked') === false, json_encode($GLOBALS['ACTIONS']));
+$GLOBALS['ACTIONS'] = []; attr('LastWB1Switch', 0); call($ems, 'applyWallboxControl', [&$d, $sWb]);
+check('beim naechsten Zyklus nichts mehr (nur einmal)', $wbActs() === [], json_encode($GLOBALS['ACTIONS']));
+$resetWb(); $GLOBALS['VAL'][$cenA] = false; $d = $dLock; // Nutzer hat selbst gesperrt, EMS nicht
+call($ems, 'applyWallboxControl', [&$d, $sWb]);
+check('vom Nutzer gesperrte Wallbox (keine eigene Sperre): bleibt gesperrt', $wbActs() === [], json_encode($GLOBALS['ACTIONS']));
+$resetWb(); attr('WB1EmsLocked', true); $GLOBALS['VAL'][$cenA] = false; $d = array_merge($dLock, ['wb_hands_off' => true]);
+call($ems, 'applyWallboxControl', [&$d, $sWb]);
+check('waehrend Grid Rewards (wb_hands_off): eigene Sperre wird trotzdem geloest, Tibber braucht die Freigabe', $wbActs() === [[600, 'ctl_curr_limit', 16], [600, 'ctl_enable', true]], json_encode($GLOBALS['ACTIONS']));
+$resetWb(); attr('WB1EmsLocked', true); $GLOBALS['VAL'][$cenA] = false; attr('LastWB1Switch', time()); $d = $dLock;
+call($ems, 'applyWallboxControl', [&$d, $sWb]);
+check('Cooldown aktiv: noch nichts gesendet, Merkmal bleibt fuer den naechsten Zyklus', $wbActs() === [] && $ems->ReadAttributeBoolean('WB1EmsLocked') === true, json_encode($GLOBALS['ACTIONS']));
+$resetWb(); attr('WB1EmsLocked', true); $d = $dLock; // Wallbox real schon frei
+call($ems, 'applyWallboxControl', [&$d, $sWb]);
+check('Wallbox real schon frei: nichts zu senden, Merkmal wird aufgeraeumt', $wbActs() === [] && $ems->ReadAttributeBoolean('WB1EmsLocked') === false, json_encode($GLOBALS['ACTIONS']));
+prop('WB1_Mode', 0);
+
+echo "   Lastverteilung und Situationsanzeige\n";
+prop('SITE_Max_Grid_Import_W', 12000);
+$dB = ['wb1_enable' => true, 'wb2_enable' => false, 'reason' => ''];
+$sB = state(['grid_total_w' => -6000.0, 'wb1_pow_kw' => 0.0, 'wb_count' => 2]);
+prop('WB1_Max_Power_W', 11000);
+call($ems, 'enforceGridImportBudget', [&$dB, $sB]);
+check('EMS steuert: das Budget drosselt Wallbox 1', $dB['wb1_enable'] === false, json_encode($dB));
+$dB = ['wb1_enable' => true, 'wb2_enable' => false, 'reason' => ''];
+prop('WB1_Mode', 1);
+call($ems, 'enforceGridImportBudget', [&$dB, $sB]);
+check('Smart Charging: das Budget fasst Wallbox 1 nicht an', $dB['wb1_enable'] === true, json_encode($dB));
+prop('SITE_Max_Grid_Import_W', 0);
+$sit = array_values(array_filter(call($ems, 'GetSituation'), fn($x) => $x['domain'] === 'wallbox'));
+check('Situation: Smart-Charging-Wallbox ist Situation B, Quelle tibber, nicht schaltbar', $sit[0]['situation'] === 'B' && $sit[0]['source'] === 'tibber' && $sit[0]['writable'] === false && $sit[0]['mode'] === 'smart', json_encode($sit[0]));
+prop('WB1_Mode', 0);
+$sit = array_values(array_filter(call($ems, 'GetSituation'), fn($x) => $x['domain'] === 'wallbox'));
+check('Situation: automatisch schaltbar bleibt Situation A (unveraendert zu vorher), Modus ems', $sit[0]['situation'] === 'A' && $sit[0]['writable'] === true && $sit[0]['mode'] === 'ems', json_encode($sit[0]));
+
+// ===========================================================================
 echo "\n5) §14a-Netzbetreiber-Lastbegrenzung -- oberste Prioritaet, auch ueber Grid Rewards\n";
 $ems = freshEms();
 $GLOBALS['INSTMOD'][300] = GUID_STEUERBOXHUB;
@@ -522,6 +614,7 @@ $ems = freshEms();
 prop('ANL_Verguetung_ct', 0.0); prop('ANL_IBN_Datum', '2012-10-24'); prop('ANL_kWp_Manuell', 9.18);
 check('aus Inbetriebnahme und Groesse berechnete Verguetung ist BEKANNT und gilt fuer Planung (Referenz 0)', call($ems, 'planFeedTariffEur') > 0.15 && call($ems, 'chargeReferenceMode') === 0, json_encode(call($ems, 'getFeedTariffEur')));
 $ems = freshEms(); prop('SITE_Max_Grid_Import_W', 12000); prop('WB_Active', true); prop('WB_Count', 1); prop('WB1_Max_Power_W', 11000);
+prop('WB1_Mode', 2); // Modus "EMS steuert": nur solche Wallboxen drosselt das Budget (ohne ChargerHub im Prüfstand ist 'automatisch' = nur beobachten)
 $dW = ['wb1_enable' => true, 'wb2_enable' => false];
 call($ems, 'enforceGridImportBudget', [&$dW, state(['grid_total_w' => -6000.0, 'wb1_pow_kw' => 0.0, 'wb_count' => 1])]);
 check('Netzbezug 6 kW + neue Wallbox 11 kW ueberschreitet 12 kW: Wallbox wird gedrosselt (Vorzeichen: Bezug negativ)', $dW['wb1_enable'] === false, json_encode($dW));

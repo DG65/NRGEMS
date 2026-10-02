@@ -941,6 +941,43 @@
                     "caption": "Erscheint dieselbe Wallbox in beiden Modulen, wähle die Quelle, die zuverlässig misst. Sonst würde EMS die Ladeleistung doppelt zählen, und Grid Rewards bestellte doppelt so viel Netzstrom."
                 },
                 {
+                    "type": "Label",
+                    "caption": "── Wer steuert die Wallbox? ─────────────────────────"
+                },
+                {
+                    "type": "Label",
+                    "caption": "Smart Charging: Tibber lädt das Fahrzeug (z. B. Grid Rewards) und braucht dafür eine freigegebene Wallbox. EMS sperrt und erzwingt dann nichts. EMS steuert: EMS gibt die Wallbox nach Preis und PV-Überschuss frei (Smart Charging im Fahrzeug dann aus). Nur beobachten: EMS misst nur. Automatisch erkennt, ob EMS die Wallbox schalten darf."
+                },
+                {
+                    "type": "Select",
+                    "name": "WB1_Mode",
+                    "caption": "Wallbox 1",
+                    "options": [
+                        {"caption": "Automatisch (schaltbar: EMS steuert, sonst nur beobachten)", "value": 0},
+                        {"caption": "Smart Charging (Tibber hat die Hoheit)", "value": 1},
+                        {"caption": "EMS steuert", "value": 2},
+                        {"caption": "Nur beobachten", "value": 3}
+                    ],
+                    "onChange": "EMS_WallboxModeChanged($id, 1, $WB1_Mode);"
+                },
+                {
+                    "type": "Select",
+                    "name": "WB2_Mode",
+                    "caption": "Wallbox 2",
+                    "options": [
+                        {"caption": "Automatisch (schaltbar: EMS steuert, sonst nur beobachten)", "value": 0},
+                        {"caption": "Smart Charging (Tibber hat die Hoheit)", "value": 1},
+                        {"caption": "EMS steuert", "value": 2},
+                        {"caption": "Nur beobachten", "value": 3}
+                    ],
+                    "onChange": "EMS_WallboxModeChanged($id, 2, $WB2_Mode);",
+                    "visible": {
+                        "type": "PropertyCondition",
+                        "property": "WB_Count",
+                        "value": 2
+                    }
+                },
+                {
                     "type": "NumberSpinner",
                     "name": "VEH_Home_Radius_Km",
                     "caption": "Heimfahrt-Umkreis (km) — Fahrzeug-Ladebedarf bei Rückkehr",
