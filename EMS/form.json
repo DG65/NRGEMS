@@ -997,6 +997,15 @@
                     }
                 },
                 {
+                    "type": "CheckBox",
+                    "name": "WB_Smart_GridBuy",
+                    "caption": "Smart-Charging-Auto aus dem Netz laden, Batterie schonen (empfohlen)"
+                },
+                {
+                    "type": "Label",
+                    "caption": "Lädt ein Auto an einer Wallbox im Modus Smart Charging, lädt die Batterie nur noch aus PV und entlädt nicht. Haus und Auto kommen aus PV bzw. Netz. Wirkt nur, wenn EMS sonst die WR-Automatik fährt: Grid Rewards, Netzbetreiber, Boost und Plan-Sollwerte haben Vorrang."
+                },
+                {
                     "type": "NumberSpinner",
                     "name": "VEH_Home_Radius_Km",
                     "caption": "Heimfahrt-Umkreis (km) — Fahrzeug-Ladebedarf bei Rückkehr",

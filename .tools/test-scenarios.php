@@ -497,6 +497,64 @@ prop('WB1_TibberVehicle', '');
 unset($GLOBALS['INSTMOD'][900]); $GLOBALS['FLEX_DEVICES'] = []; // nichts in die folgenden Bloecke verschleppen
 
 // ===========================================================================
+echo "\n4d) Smart Charging: Auto aus dem Netz laden, Batterie schonen (Modus 2, Xmax=0, 03.10.2026)\n";
+$ems = freshEms();
+prop('WB_Active', true); prop('WB_Count', 2); prop('WB1_Mode', 1); // WB1 = Smart Charging (manuell)
+$invE = ['instanceID' => IHUB_IID, 'contractVersion' => '1.3', 'controlAuthority' => 'ems', 'controllable' => true];
+$whA = ['instanceID' => 600, 'source' => 'chargerhub', 'chargeEnableID' => 0, 'maxCurrent' => 16, 'managedBy' => 'none', 'powerID' => 0, 'plugStateID' => 0];
+$whB = ['instanceID' => 602, 'source' => 'chargerhub', 'chargeEnableID' => 0, 'maxCurrent' => 16, 'managedBy' => 'other', 'powerID' => 0, 'plugStateID' => 0];
+attr('PartnerCache', json_encode(['inverterhub' => [$invE], 'chargerhub' => [$whA, $whB]]));
+$GLOBALS['INSTMOD'][IHUB_IID] = GUID_INVERTERHUB;
+$autoSc = ['op_mode' => EMS_OP_AUTO, 'gw_mode' => GW_MODE_AUTO, 'gw_power_w' => 0, 'gw_enable' => false,
+    'wb1_enable' => false, 'wb2_enable' => false, 'reason' => 'Automatik', 'source' => 'ems'];
+$sSc = fn(array $o = []) => state(array_merge(['wb_active' => true, 'wb_count' => 2, 'wb1_pow_kw' => 11.0, 'wb1_cable' => 1, 'bat_soc' => 80.0], $o));
+$sc = fn(array $d, array $s) => call($ems, 'applySmartChargingGridBuy', [$d, $s]);
+
+$r = $sc($autoSc, $sSc());
+check('Smart-Charging-Wallbox laedt (11 kW), reine Automatik: Modus 2 (Laden aus PV), Leistung 0 (Xmax=0), enable=true',
+    $r['op_mode'] === EMS_OP_PV_SELFUSE && $r['gw_mode'] === GW_MODE_CHARGE_PV && (int)$r['gw_power_w'] === 0 && $r['gw_enable'] === true, fmt($r));
+check('Quelle smartcharging, Grund nennt Leistung und urspruenglichen Grund', $r['source'] === 'smartcharging' && strpos($r['reason'], 'Auto lädt mit 11.0 kW') !== false && strpos($r['reason'], '| Automatik') !== false, $r['reason']);
+check('Entscheidung ohne Smart-Charging-Last bleibt unveraendert (Wallbox 0 W)', $sc($autoSc, $sSc(['wb1_pow_kw' => 0.0])) === $autoSc);
+check('unter 500 W (Ruhestrom): unveraendert', $sc($autoSc, $sSc(['wb1_pow_kw' => 0.3])) === $autoSc);
+check('Quelle tagesplan mit nativer Automatik wird ebenfalls umgestellt', $sc(array_merge($autoSc, ['source' => 'tagesplan']), $sSc())['source'] === 'smartcharging');
+foreach ([['Grid Rewards', ['op_mode' => EMS_OP_GRIDREWARDS, 'gw_mode' => GW_MODE_AC_IMPORT, 'gw_enable' => true, 'source' => 'tibber']],
+          ['§14a-Netzbetreiber', ['source' => 'netzbetreiber']],
+          ['Tagesplan-Netzladen', ['op_mode' => EMS_OP_NET_CHARGE, 'gw_mode' => GW_MODE_AC_IMPORT, 'gw_power_w' => 8000, 'gw_enable' => true, 'source' => 'tagesplan']],
+          ['Nutzer-Boost', ['op_mode' => EMS_OP_DISCHARGE, 'gw_mode' => GW_MODE_DISCHARGE, 'gw_enable' => true, 'source' => 'nutzer']],
+          ['Tibber steuert die Batterie (no_write)', ['no_write' => true, 'source' => 'tibber']]] as [$name, $over]) {
+    $dd = array_merge($autoSc, $over);
+    check("$name hat Vorrang: nichts wird umgestellt", $sc($dd, $sSc()) === $dd);
+}
+prop('WB1_Mode', 2);
+check('Wallbox im Modus "EMS steuert": nicht Sache dieser Regel', $sc($autoSc, $sSc()) === $autoSc);
+prop('WB1_Mode', 3);
+check('Wallbox "nur beobachten": nicht Sache dieser Regel', $sc($autoSc, $sSc()) === $autoSc);
+prop('WB1_Mode', 1); prop('WB2_Mode', 3);
+$r = $sc($autoSc, $sSc(['wb1_pow_kw' => 5.0, 'wb2_pow_kw' => 6.0, 'wb2_cable' => 1]));
+check('zwei Wallboxen: nur die Smart-Charging-Last zaehlt (5,0 kW, nicht 11 kW)', $r['source'] === 'smartcharging' && strpos($r['reason'], 'mit 5.0 kW') !== false, $r['reason']);
+prop('WB_Smart_GridBuy', false);
+check('Schalter aus: unveraendert', $sc($autoSc, $sSc()) === $autoSc);
+prop('WB_Smart_GridBuy', true);
+check('ohne Batterie: unveraendert', $sc($autoSc, $sSc(['bat_active' => false])) === $autoSc);
+
+echo "   Plausibilitaetswaechter und Schreibpfad\n";
+$sGuard = $sSc(['pv_total_w' => 0.0, 'bat_pow_w' => 0.0, 'grid_total_w' => -12000.0, 'wb1_pow_kw' => 11.0]);
+$dSc = $sc($autoSc, $sGuard);
+attr('PlausiSince', time() - 3600);
+$g = call($ems, 'applyPlausibilityGuard', [$dSc, $sGuard]);
+check('Waechter greift bei Quelle smartcharging NICHT ein (Batterie ~0 W bei Netzbezug ist gewollt)', $g['op_mode'] === EMS_OP_PV_SELFUSE && $g['gw_mode'] === GW_MODE_CHARGE_PV && $g['source'] === 'smartcharging', fmt($g));
+attr('PlausiSince', time() - 3600); attr('PlausiHoldUntil', 0);
+$gCtl = call($ems, 'applyPlausibilityGuard', [array_merge($dSc, ['source' => 'ems']), $sGuard]);
+check('Gegenprobe: dieselbe Entscheidung mit Quelle ems loest den Waechter aus (Rueckfall Automatik)', $gCtl['gw_mode'] === GW_MODE_AUTO && $gCtl['gw_enable'] === false, fmt($gCtl));
+attr('PlausiSince', 0); attr('PlausiHoldUntil', 0);
+$GLOBALS['ACTIONS'] = []; attr('LastDecision', 0);
+call($ems, 'applyDecision', [$dSc, $sGuard]);
+$wrt = array_values(array_filter($GLOBALS['ACTIONS'], fn($a) => $a[0] === IHUB_IID && in_array($a[1], ['ctl_ems_mode', 'ctl_ems_power', 'ctl_ems_enable'], true)));
+check('Schreibpfad: ctl_ems_mode=2, ctl_ems_power=0, ctl_ems_enable=true am Wechselrichter', in_array([IHUB_IID, 'ctl_ems_mode', 2], $wrt, true) && in_array([IHUB_IID, 'ctl_ems_enable', true], $wrt, true) && !array_filter($wrt, fn($a) => $a[1] === 'ctl_ems_power' && $a[2] > 0), json_encode($wrt));
+check('Quelle smartcharging wird als letzte Entscheidungsquelle gemerkt', $ems->ReadAttributeString('LastDecisionSource') === 'smartcharging');
+unset($GLOBALS['INSTMOD'][IHUB_IID]);
+
+// ===========================================================================
 echo "\n5) §14a-Netzbetreiber-Lastbegrenzung -- oberste Prioritaet, auch ueber Grid Rewards\n";
 $ems = freshEms();
 $GLOBALS['INSTMOD'][300] = GUID_STEUERBOXHUB;

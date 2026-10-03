@@ -41,7 +41,7 @@ define('EMS_LOG_VERBOSE',     2);
 // Formular-Konvention (siehe EMS/SUITE.md "Einheitliche Formular-Optik"):
 // Was-ist-Neu-Panel ist versionsscharf dismissible, Referenzmuster InverterHub.
 define('EMS_COLOR_AUTO', 0x2E8B3D); // Gruen: Wert wurde automatisch uebernommen (🔗-Zeilen im Formular)
-define('EMS_NEWS_VERSION', '0.69.0');
+define('EMS_NEWS_VERSION', '0.70.0');
 
 // NRG-Stack Partnermodul-GUIDs (fuer automatische Discovery, siehe discoverPartners())
 define('GUID_CHARGERHUB',    '{9256C34E-5CFD-4F37-8BFE-E65390EBB37C}');
@@ -318,6 +318,7 @@ class EMS extends IPSModule
         $this->RegisterPropertyInteger('WB_Quelle',            0);   // 0 automatisch, 1 ChargerHub, 2 OCPPHub, 3 beide (verschiedene Geraete)
         $this->RegisterPropertyInteger('WB1_Mode',            0);   // Wallbox-Modus: 0 automatisch, 1 Smart Charging (Tibber hat die Hoheit), 2 EMS steuert, 3 nur beobachten
         $this->RegisterPropertyInteger('WB2_Mode',            0);
+        $this->RegisterPropertyBoolean('WB_Smart_GridBuy',    true); // Smart-Charging-Auto aus dem Netz laden, Batterie bleibt geschont (Modus 2, Xmax=0)
         $this->RegisterPropertyString('WB1_TibberVehicle',    ''); // Tibber-deviceId des Fahrzeugs an dieser Wallbox (vom Nutzer bestaetigt, nie per Namensabgleich geraten)
         $this->RegisterPropertyString('WB2_TibberVehicle',    '');
         $this->RegisterPropertyInteger('WB_Cooldown_Sec',      120);
@@ -677,6 +678,10 @@ class EMS extends IPSModule
                 'caption'  => '🆕 Neu in Version ' . EMS_NEWS_VERSION,
                 'expanded' => true,
                 'items'    => array(
+                    array(
+                        'type'    => 'Label',
+                        'caption' => '• NEU: Lädt ein Auto an einer Wallbox im Modus Smart Charging, schont EMS jetzt die Hausbatterie: Sie lädt dann nur noch aus PV und entlädt nicht, Haus und Auto kommen aus PV bzw. Netz. Abschaltbar im Panel „Wallboxen“. Gilt nur, wenn EMS sonst die Wechselrichter-Automatik fährt; Grid Rewards, Netzbetreiber, Boost und Plan-Sollwerte haben Vorrang.'
+                    ),
                     array(
                         'type'    => 'Label',
                         'caption' => '• NEU: Smart Charging wird automatisch erkannt: Wähle im Panel „Wallboxen“ je Wallbox einmal das Tibber-Fahrzeug aus (EMS rät die Zuordnung nie). Meldet Tibber für dieses Fahrzeug Smart Charging, überlässt EMS die Wallbox Tibber (kein Sperren, kein Erzwingen). Meldet Tibber das Fahrzeug kurz nicht, gilt der zuletzt bekannte Stand. Braucht das Tibber-Modul ab Version 2.9.2.'
@@ -1207,6 +1212,7 @@ class EMS extends IPSModule
             $this->updateStatusVars($state);
             $this->refreshForecastCache();
             $decision = $this->optimize($state);
+            $decision = $this->applySmartChargingGridBuy($decision, $state);
             $decision = $this->applyGridServiceB1($decision, $state);
             $neg = $this->negativePriceStatus();
             if ($neg['active']) {
@@ -6006,7 +6012,7 @@ class EMS extends IPSModule
         if (!$this->ReadPropertyBoolean('PLAUSI_Enabled')) { return $d; }
 
         $checkedOps       = array(EMS_OP_AUTO, EMS_OP_PV_SELFUSE, EMS_OP_DISCHARGE);
-        $protectedSources = array('netzbetreiber', 'tibber', 'nutzer', 'stromgedacht');
+        $protectedSources = array('netzbetreiber', 'tibber', 'nutzer', 'stromgedacht', 'smartcharging');
         $applicable = !empty($s['bat_active'])
             && in_array($d['op_mode'], $checkedOps, true)
             && !in_array($d['source'] ?? 'ems', $protectedSources, true);
@@ -7128,6 +7134,40 @@ class EMS extends IPSModule
         }
         return array('active' => true, 'basis' => $basis,
             'reason' => sprintf('Resterwartung%s (%s) %.1f kWh >= %.1f kWh Platz (+%d %%%s), PV %.0f W > Haus %.0f W', $bisWann, $basis, $restKwh, $needKwh, (int)round($safety) - 100, $guete, $in['pvW'], $in['houseW']));
+    }
+
+    /**
+     * Smart Charging: Auto aus dem Netz laden, Hausbatterie schonen (Dietmar 03.10.2026, Anlass 27.09.: ein per
+     * Smart Charging ladendes Auto zog 7,4 kW aus der Batterie). Solange eine Wallbox im Modus "Smart Charging"
+     * (Tibber hat die Hoheit) tatsaechlich laedt und EMS sonst nur die WR-Automatik faehrt, geht der WR in
+     * "Laden aus PV" mit Xmax=0 (GoodWe-Modus 2): die Batterie laedt nur aus PV und entlaedt nicht, Haus und Auto
+     * kommen aus PV bzw. Netz. Dasselbe Stellglied wie die Fehlbetrag-Regel (0.66.0) und der Tagesplan, im Live-
+     * Betrieb erprobt und drosselt die PV nicht. BEWUSST NICHT Modus 4 (AC-Import) mit Wallbox-Leistung als
+     * Netzeinkauf-Sollwert wie bei Grid Rewards: Modus 4 drosselt die PV und nahm am 20.09.2026 3 h 43 min lang
+     * nichts auf (SUITE.md, GoodWe-Modi). Nur auf reinen Automatik-Entscheidungen (wie B1: Netzbetreiber, Grid
+     * Rewards, Boost, Plan-Sollwerte haben Vorrang). Quelle 'smartcharging' ist fuer den Plausibilitaetswaechter
+     * geschuetzt: Batterie ~0 W bei Netzbezug ist hier gewollt.
+     */
+    private function applySmartChargingGridBuy($d, $s)
+    {
+        if (!$this->ReadPropertyBoolean('WB_Smart_GridBuy') || empty($s['wb_active']) || empty($s['bat_active'])) { return $d; }
+        $isAuto = ($d['op_mode'] === EMS_OP_AUTO) && empty($d['gw_enable']) && empty($d['no_write'])
+            && in_array($d['source'] ?? 'ems', array('ems', 'tagesplan'), true);
+        if (!$isAuto) { return $d; }
+        $count  = (($s['wb_count'] ?? 1) >= 2) ? 2 : 1;
+        $smartW = 0.0;
+        for ($n = 1; $n <= $count; $n++) {
+            if ($this->wallboxMode($n)['mode'] === 'smart') { $smartW += max(0.0, (float)($s['wb' . $n . '_pow_kw'] ?? 0.0) * 1000.0); }
+        }
+        if ($smartW < 500.0) { return $d; }
+        $d['op_mode']    = EMS_OP_PV_SELFUSE;
+        $d['gw_mode']    = GW_MODE_CHARGE_PV;
+        $d['gw_power_w'] = 0;
+        $d['gw_enable']  = true;
+        $d['source']     = 'smartcharging';
+        $d['reason']     = sprintf('Smart Charging: Auto lädt mit %.1f kW, Batterie bleibt geschont (lädt nur aus PV, entlädt nicht), Haus und Auto aus PV bzw. Netz | %s',
+            $smartW / 1000.0, (string)($d['reason'] ?? ''));
+        return $d;
     }
 
     /**
