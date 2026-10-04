@@ -41,7 +41,7 @@ define('EMS_LOG_VERBOSE',     2);
 // Formular-Konvention (siehe EMS/SUITE.md "Einheitliche Formular-Optik"):
 // Was-ist-Neu-Panel ist versionsscharf dismissible, Referenzmuster InverterHub.
 define('EMS_COLOR_AUTO', 0x2E8B3D); // Gruen: Wert wurde automatisch uebernommen (🔗-Zeilen im Formular)
-define('EMS_NEWS_VERSION', '0.71.0');
+define('EMS_NEWS_VERSION', '0.71.1');
 
 // NRG-Stack Partnermodul-GUIDs (fuer automatische Discovery, siehe discoverPartners())
 define('GUID_CHARGERHUB',    '{9256C34E-5CFD-4F37-8BFE-E65390EBB37C}');
@@ -680,7 +680,7 @@ class EMS extends IPSModule
                 'items'    => array(
                     array(
                         'type'    => 'Label',
-                        'caption' => '• GEÄNDERT: Grid Rewards: Während Tibber das Auto lädt, bestellt EMS keinen Netzeinkauf-Sollwert mehr. Der hatte die Batterie zusätzlich mit etwa 10 kW aus dem Netz geladen und den Netzbezug auf bis zu 20 kW getrieben. Jetzt lädt die Batterie nur noch aus PV und entlädt nicht, das Auto kommt aus dem Netz.'
+                        'caption' => '• GEÄNDERT: Grid Rewards: Während Tibber das Auto lädt, bestellt EMS keinen Netzeinkauf-Sollwert mehr. Der hatte die Batterie zusätzlich mit etwa 10 kW aus dem Netz geladen und den Netzbezug auf bis zu 20 kW getrieben. Jetzt lädt die Batterie nur noch aus PV und entlädt nicht, das Auto kommt aus dem Netz. Pausiert Tibber das Laden (Knappheit im Netz), fährt EMS die Wechselrichter-Automatik, damit das Haus aus PV und Batterie läuft und das Netz entlastet.'
                     ),
                     array(
                         'type'    => 'Label',
@@ -5798,20 +5798,31 @@ class EMS extends IPSModule
             // nicht, Auto und Haus kommen aus dem Netz. Das haelt zugleich die Grid-Reward-Praemie (Auto aus dem Netz,
             // nicht aus der Batterie). Pausiert Tibber das Laden (0 W), laedt die Batterie weiter nur aus PV.
             $d['op_mode']    = EMS_OP_GRIDREWARDS;
-            $d['gw_mode']    = GW_MODE_CHARGE_PV;
-            $d['gw_power_w'] = 0;
-            $d['gw_enable']  = true;
             $d['wb1_enable'] = false; // Tibber steuert Wallbox direkt
             $d['wb2_enable'] = false;
             // "false" heisst hier "EMS entscheidet nichts", NICHT "sperren": ohne dieses Flag haette
             // applyDecision() controlWallbox(n, false) aufgerufen und die Freigabe der Wallbox
             // genommen, die Tibbers Smart Charging zum Laden braucht (Dietmar 02.10.2026).
             $d['wb_hands_off'] = true;
-            $d['reason']     = sprintf(
-                'Grid Rewards: Auto lädt mit %.1f kW aus dem Netz, Batterie lädt nur aus PV und entlädt nicht, Wallbox-Freigabe bleibt unangetastet',
-                $wbTotalW / 1000.0
-            );
             $d['source'] = 'tibber';
+            if ($wbTotalW >= 500) {
+                // Tibber laedt das Auto (Ueberschuss im Netz): Auto aus dem Netz, Batterie nur aus PV.
+                $d['gw_mode']    = GW_MODE_CHARGE_PV;
+                $d['gw_power_w'] = 0;
+                $d['gw_enable']  = true;
+                $d['reason']     = sprintf(
+                    'Grid Rewards: Auto lädt mit %.1f kW aus dem Netz, Batterie lädt nur aus PV und entlädt nicht, Wallbox-Freigabe bleibt unangetastet',
+                    $wbTotalW / 1000.0
+                );
+            } else {
+                // Auto laedt nicht (Ladestopp bei Knappheit im Netz, `shortage`): native Automatik (Dietmar 04.10.2026).
+                // Das Haus laeuft aus PV und Batterie und entlastet das Netz, statt wie bei Modus 2 aus dem Netz zu
+                // kommen (Live 03.10.: 1-2,4 kW Hausbezug waehrend des Ladestopps).
+                $d['gw_mode']    = GW_MODE_AUTO;
+                $d['gw_power_w'] = 0;
+                $d['gw_enable']  = false;
+                $d['reason']     = 'Grid Rewards: Auto lädt nicht (Ladestopp), Automatik: Haus aus PV und Batterie, möglichst wenig Netzbezug, Wallbox-Freigabe bleibt unangetastet';
+            }
             return $d;
         }
 

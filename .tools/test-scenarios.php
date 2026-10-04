@@ -303,7 +303,9 @@ check('Grid Rewards: Modus 2 (Laden aus PV), Xmax=0, enable=true -- KEIN Netzein
 check('Grund nennt Auto-Leistung und dass die Batterie nur aus PV laedt', strpos($d['reason'], 'Auto lädt mit 7.4 kW aus dem Netz') !== false && strpos($d['reason'], 'Batterie lädt nur aus PV und entlädt nicht') !== false, $d['reason']);
 check('Wallboxen bleiben unter Tibber-Kontrolle (EMS gibt nicht frei)', $d['wb1_enable'] === false && $d['wb2_enable'] === false, fmt($d));
 $d = call($ems, 'optimize', [state(['grid_rewards' => true, 'wb1_pow_kw' => 0.0])]);
-check('Ladestopp (Wallbox 0 W): bleibt Modus 2/Xmax=0, die Batterie laedt weiter nur aus PV, kein Sonderfall noetig', $d['op_mode'] === EMS_OP_GRIDREWARDS && $d['gw_mode'] === GW_MODE_CHARGE_PV && (int)$d['gw_power_w'] === 0, fmt($d));
+check('Ladestopp (Wallbox 0 W, shortage): native Automatik (Haus aus PV/Batterie, wenig Netzbezug), Op bleibt Grid Rewards', $d['op_mode'] === EMS_OP_GRIDREWARDS && isNativeAuto(array_merge($d, ['op_mode' => EMS_OP_AUTO])) && !empty($d['wb_hands_off']) && ($d['source'] ?? '') === 'tibber', fmt($d));
+$d = call($ems, 'optimize', [state(['grid_rewards' => true, 'wb1_pow_kw' => 0.3])]);
+check('Ruhestrom der Wallbox (300 W) zaehlt nicht als Laden: Automatik', $d['gw_mode'] === GW_MODE_AUTO && $d['gw_enable'] === false, fmt($d));
 $target = $ems->ReadPropertyInteger('BAT_SOC_Target_Night');
 $d = call($ems, 'optimize', [state(['grid_rewards' => true, 'wb1_pow_kw' => 5.0, 'enwg_in_window' => true, 'bat_soc' => max(5, $target - 30)])]);
 check('Grid Rewards schlaegt §14a-Nachtladen', $d['op_mode'] === EMS_OP_GRIDREWARDS, fmt($d));
