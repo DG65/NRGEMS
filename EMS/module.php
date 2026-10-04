@@ -41,7 +41,7 @@ define('EMS_LOG_VERBOSE',     2);
 // Formular-Konvention (siehe EMS/SUITE.md "Einheitliche Formular-Optik"):
 // Was-ist-Neu-Panel ist versionsscharf dismissible, Referenzmuster InverterHub.
 define('EMS_COLOR_AUTO', 0x2E8B3D); // Gruen: Wert wurde automatisch uebernommen (🔗-Zeilen im Formular)
-define('EMS_NEWS_VERSION', '0.71.1');
+define('EMS_NEWS_VERSION', '0.71.2');
 
 // NRG-Stack Partnermodul-GUIDs (fuer automatische Discovery, siehe discoverPartners())
 define('GUID_CHARGERHUB',    '{9256C34E-5CFD-4F37-8BFE-E65390EBB37C}');
@@ -678,6 +678,10 @@ class EMS extends IPSModule
                 'caption'  => '🆕 Neu in Version ' . EMS_NEWS_VERSION,
                 'expanded' => true,
                 'items'    => array(
+                    array(
+                        'type'    => 'Label',
+                        'caption' => '• NEU: Läuft ein Grid Reward bei Überschuss im Netz und der Bezugspreis ist negativ, hat der Tagesplan Vorrang: Die Batterie wird dann aus dem Netz geladen (man wird dafür bezahlt), das Auto läuft obendrauf. Bei Ladestopp wegen Knappheit bleibt es bei der Grid-Rewards-Automatik.'
+                    ),
                     array(
                         'type'    => 'Label',
                         'caption' => '• GEÄNDERT: Grid Rewards: Während Tibber das Auto lädt, bestellt EMS keinen Netzeinkauf-Sollwert mehr. Der hatte die Batterie zusätzlich mit etwa 10 kW aus dem Netz geladen und den Netzbezug auf bis zu 20 kW getrieben. Jetzt lädt die Batterie nur noch aus PV und entlädt nicht, das Auto kommt aus dem Netz. Pausiert Tibber das Laden (Knappheit im Netz), fährt EMS die Wechselrichter-Automatik, damit das Haus aus PV und Batterie läuft und das Netz entlastet.'
@@ -5789,6 +5793,21 @@ class EMS extends IPSModule
 
         if ($s['grid_rewards']) {
             $wbTotalW = (int)round(($s['wb1_pow_kw'] + $s['wb2_pow_kw']) * 1000);
+            // Fall 6 (Dietmar 04.10.2026): Negativer Bezugspreis hat Vorrang vor dem Grid-Rewards-Zweig, solange das
+            // Auto laedt (Ueberschuss im Netz, `excess`): Netzstrom wird bezahlt, die Batterie soll aus dem Netz
+            // voll werden -- Tagesplan "Negativpreis: immer laden" (Modus 11, PV bleibt ungedrosselt, Auto laeuft
+            // obendrauf). Vorher blieb der Plan hier ausgeblendet, weil Grid Rewards davor entscheidet. Bei Ladestopp
+            // (Auto 0 W, Knappheit im Netz) gilt weiter Grid Rewards: dort soll KEIN zusaetzlicher Netzbezug entstehen.
+            // Die Wallboxen bleiben unangetastet (Tibber steuert das Auto).
+            if ($wbTotalW >= 500 && !empty($s['tib_active']) && (float)$s['tib_price_eff'] < 0.0
+                && !empty($s['bat_active']) && (float)$s['bat_soc'] < 99.5) {
+                $negPlan = $this->applyPlanSlot($s);
+                if ($negPlan !== null && $negPlan['op_mode'] === EMS_OP_NET_CHARGE) {
+                    $negPlan['wb_hands_off'] = true;
+                    $negPlan['reason'] .= ' | Grid Rewards läuft, negativer Preis hat Vorrang (Wallbox unangetastet)';
+                    return $negPlan;
+                }
+            }
             // Umbau 04.10.2026 (Live-Befund 03.10.): Bis 0.70.0 bestellte EMS hier per Modus 4 (AC-Import) einen
             // Netzeinkauf-Sollwert in Hoehe der Wallbox-Leistung. Das archivierte 6-s-Bild zeigt, dass Modus 4 den
             // Sollwert NICHT fuers Auto, sondern fuer die BATTERIE bestellt: Batterieladung = Xset + PV (so steht es

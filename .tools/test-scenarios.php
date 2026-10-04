@@ -335,6 +335,26 @@ call($ems, 'applyDecision', [$dNormal, $sGr]);
 check('Gegenprobe: ohne Grid Rewards wird die Wallbox bei wb1_enable=false weiterhin gesperrt',
     (bool)array_filter($GLOBALS['ACTIONS'], fn($a) => $a[1] === 'ctl_enable' && $a[2] === false), json_encode($GLOBALS['ACTIONS']));
 
+echo "\n   Fall 6: negativer Bezugspreis hat Vorrang vor Grid Rewards (04.10.2026)\n";
+$ems = freshEms();
+pricesToday(-0.05);
+dayPlanAll(EMS_OP_NET_CHARGE, GW_MODE_BAT_CHARGE, 8000);
+$sNeg = fn(array $o = []) => state(array_merge(['grid_rewards' => true, 'wb_active' => true, 'wb1_pow_kw' => 7.4, 'wb1_cable' => 1, 'tib_price' => -0.05, 'tib_price_eff' => -0.05, 'bat_soc' => 50.0, 'pv_total_w' => 3000.0, 'house_pow_w' => 400.0], $o));
+$d = call($ems, 'optimize', [$sNeg()]);
+check('Grid Reward (Auto laedt) + negativer Preis: Tagesplan-Netzladen mit Modus 11, nicht der Grid-Rewards-Zweig', $d['op_mode'] === EMS_OP_NET_CHARGE && $d['gw_mode'] === GW_MODE_BAT_CHARGE && ($d['source'] ?? '') === 'tagesplan', fmt($d));
+check('Wallboxen bleiben unangetastet (Tibber steuert das Auto), Grund nennt den Vorrang', !empty($d['wb_hands_off']) && strpos($d['reason'], 'negativer Preis hat Vorrang') !== false, $d['reason']);
+$d = call($ems, 'optimize', [$sNeg(['wb1_pow_kw' => 0.0])]);
+check('Grid Reward mit Ladestopp (Auto 0 W, Knappheit) + negativer Preis: bleibt Grid Rewards/Automatik, kein zusaetzlicher Netzbezug', $d['op_mode'] === EMS_OP_GRIDREWARDS && $d['gw_mode'] === GW_MODE_AUTO && $d['gw_enable'] === false, fmt($d));
+$d = call($ems, 'optimize', [$sNeg(['bat_soc' => 99.8])]);
+check('Batterie voll + negativer Preis: Grid-Rewards-Zweig (Modus 2, Haus und Auto aus dem Netz, wird bezahlt)', $d['op_mode'] === EMS_OP_GRIDREWARDS && $d['gw_mode'] === GW_MODE_CHARGE_PV, fmt($d));
+pricesToday(0.30);
+$d = call($ems, 'optimize', [$sNeg(['tib_price' => 0.30, 'tib_price_eff' => 0.30])]);
+check('positiver Preis: wie bisher Grid-Rewards-Zweig, der Plan bleibt aussen vor', $d['op_mode'] === EMS_OP_GRIDREWARDS && $d['gw_mode'] === GW_MODE_CHARGE_PV, fmt($d));
+pricesToday(-0.05);
+dayPlanAll(EMS_OP_AUTO, GW_MODE_AUTO);
+$d = call($ems, 'optimize', [$sNeg()]);
+check('Plan sieht dort kein Netzladen (z. B. Anschlussgrenze): Rueckfall auf den Grid-Rewards-Zweig, nichts Unsicheres', $d['op_mode'] === EMS_OP_GRIDREWARDS && $d['gw_mode'] === GW_MODE_CHARGE_PV, fmt($d));
+
 // ===========================================================================
 echo "\n4b) Wallbox-Modi (02.10.2026): Smart Charging / EMS steuert / nur beobachten\n";
 $ems = freshEms();

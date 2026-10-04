@@ -2,6 +2,12 @@
 
 Ältere Versionen: [CHANGELOG-Archiv.md](CHANGELOG-Archiv.md)
 
+## 0.71.2 (2026-10-04)
+- **Fall 6: Negativer Bezugspreis hat Vorrang vor Grid Rewards (Dietmar 04.10.2026):** Der Grid-Rewards-Zweig steht in `optimize()` vor dem Tagesplan und blendete dessen Regel „Negativpreis: immer laden“ (Modus 11, Batterie aus dem Netz bis 100 %, PV bleibt ungedrosselt) komplett aus. Läuft jetzt ein Grid Reward, das Auto lädt (≥ 500 W, Überschuss im Netz), der Bezugspreis ist negativ und die Batterie noch nicht voll (< 99,5 %), fragt EMS zuerst den Tagesplan ab und übernimmt dessen Netzladen, mit unangetasteten Wallboxen (Tibber steuert das Auto, `wb_hands_off`). Das Auto läuft obendrauf aus dem Netz (Modus 11: Bezug = Xset − PV + Haus + Auto), die Anschlussgrenze (`EMS_Max_Power_W`) begrenzt Xset wie im Plan.
+  Bewusst nicht: bei Ladestopp (Auto 0 W, Knappheit im Netz) bleibt es bei der Grid-Rewards-Automatik, dort soll kein zusätzlicher Netzbezug entstehen. Batterie voll oder Plan ohne Netzladen im Slot: Rückfall auf den bisherigen Zweig (Modus 2, Haus und Auto aus dem Netz). Smart Charging ohne Grid Reward war schon korrekt, weil dessen Regel nur auf reinen Automatik-Entscheidungen greift und das Plan-Netzladen nicht überstimmt.
+  Nicht Modus 4, sondern Modus 11: Modus 4 lädt mit Xset + PV und hat am 20.09.2026 fast vier Stunden lang nichts aufgenommen (SUITE.md); Modus 11 ist live geprüft.
+  Sechs neue Prüfungen (Block 4), Mutationstest bestätigt (ohne den Zweig schlagen zwei an).
+
 ## 0.71.1 (2026-10-04)
 - **Grid Rewards bei Ladestopp: native Automatik statt „Laden aus PV“ (Dietmar 04.10.2026):** Tibber meldete am 03.10. zwei der drei Einsätze als `shortage` (Knappheit im Netz) mit Ladestopp, das Auto zog 0 W. Dort sollte das Netz entlastet werden; mit 0.71.0 (Modus 2, Xmax=0) hätte das Haus dabei weiter aus dem Netz gelaufen (Live 03.10.: 1–2,4 kW Hausbezug während des Ladestopps). Neu: Liegt die gemessene Wallbox-Leistung unter 500 W, fährt EMS bei Grid Rewards die Wechselrichter-Automatik (Modus 1, enable=false): Haus aus PV und Batterie, möglichst wenig Netzbezug. Ab 500 W (Tibber lädt bei Überschuss) bleibt es bei Modus 2 mit Xmax=0, Auto aus dem Netz. Die Unterscheidung hängt an der gemessenen Leistung, nicht am Freitext des Tibber-Grundes. Op bleibt `EMS_OP_GRIDREWARDS`, Quelle `tibber`, Wallbox-Freigabe unangetastet. Zwei Prüfungen angepasst bzw. ergänzt, Mutationstest bestätigt.
   Modus 4 (AC-Import) schreibt EMS damit nirgends mehr; Netzladen im Tagesplan läuft über Modus 11.
