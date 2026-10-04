@@ -299,8 +299,8 @@ $ems = freshEms();
 pricesToday(0.30); // keine Arbitrage-Chance -- Grid Rewards muss trotzdem greifen
 $d = call($ems, 'optimize', [state(['grid_rewards' => true, 'wb1_pow_kw' => 7.4])]);
 check('op=GRIDREWARDS, Quelle tibber', $d['op_mode'] === EMS_OP_GRIDREWARDS && ($d['source'] ?? '') === 'tibber', fmt($d));
-check('Grid Rewards: Modus 2 (Laden aus PV), Xmax=0, enable=true -- KEIN Netzeinkauf-Sollwert (Modus 4 haette die Batterie mit Xset+PV geladen, Live 03.10.)', $d['gw_mode'] === GW_MODE_CHARGE_PV && (int)$d['gw_power_w'] === 0 && $d['gw_enable'] === true, fmt($d));
-check('Grund nennt Auto-Leistung und dass die Batterie nur aus PV laedt', strpos($d['reason'], 'Auto lädt mit 7.4 kW aus dem Netz') !== false && strpos($d['reason'], 'Batterie lädt nur aus PV und entlädt nicht') !== false, $d['reason']);
+check('Grid Rewards (Auto 7,4 kW): Modus 9, Netzbezug auf Auto-Leistung minus 200 W (7200 W) geregelt, enable=true -- NICHT Modus 4 (haette die Batterie mit Xset+PV geladen, Live 03.10.)', $d['gw_mode'] === GW_MODE_BUY && (int)$d['gw_power_w'] === 7200 && $d['gw_enable'] === true, fmt($d));
+check('Grund nennt Auto-Leistung, geregelten Netzbezug und Haus aus PV/Batterie', strpos($d['reason'], 'Auto lädt mit 7.4 kW, Netzbezug auf 7.2 kW geregelt') !== false && strpos($d['reason'], 'Haus aus PV und Batterie') !== false, $d['reason']);
 check('Wallboxen bleiben unter Tibber-Kontrolle (EMS gibt nicht frei)', $d['wb1_enable'] === false && $d['wb2_enable'] === false, fmt($d));
 $d = call($ems, 'optimize', [state(['grid_rewards' => true, 'wb1_pow_kw' => 0.0])]);
 check('Ladestopp (Wallbox 0 W, shortage): native Automatik (Haus aus PV/Batterie, wenig Netzbezug), Op bleibt Grid Rewards', $d['op_mode'] === EMS_OP_GRIDREWARDS && isNativeAuto(array_merge($d, ['op_mode' => EMS_OP_AUTO])) && !empty($d['wb_hands_off']) && ($d['source'] ?? '') === 'tibber', fmt($d));
@@ -349,11 +349,11 @@ $d = call($ems, 'optimize', [$sNeg(['bat_soc' => 99.8])]);
 check('Batterie voll + negativer Preis: Grid-Rewards-Zweig (Modus 2, Haus und Auto aus dem Netz, wird bezahlt)', $d['op_mode'] === EMS_OP_GRIDREWARDS && $d['gw_mode'] === GW_MODE_CHARGE_PV, fmt($d));
 pricesToday(0.30);
 $d = call($ems, 'optimize', [$sNeg(['tib_price' => 0.30, 'tib_price_eff' => 0.30])]);
-check('positiver Preis: wie bisher Grid-Rewards-Zweig, der Plan bleibt aussen vor', $d['op_mode'] === EMS_OP_GRIDREWARDS && $d['gw_mode'] === GW_MODE_CHARGE_PV, fmt($d));
+check('positiver Preis: wie bisher Grid-Rewards-Zweig (Modus 9), der Plan bleibt aussen vor', $d['op_mode'] === EMS_OP_GRIDREWARDS && $d['gw_mode'] === GW_MODE_BUY, fmt($d));
 pricesToday(-0.05);
 dayPlanAll(EMS_OP_AUTO, GW_MODE_AUTO);
 $d = call($ems, 'optimize', [$sNeg()]);
-check('Plan sieht dort kein Netzladen (z. B. Anschlussgrenze): Rueckfall auf den Grid-Rewards-Zweig, nichts Unsicheres', $d['op_mode'] === EMS_OP_GRIDREWARDS && $d['gw_mode'] === GW_MODE_CHARGE_PV, fmt($d));
+check('Plan sieht dort kein Netzladen (z. B. Anschlussgrenze): Rueckfall auf den Grid-Rewards-Zweig, nichts Unsicheres', $d['op_mode'] === EMS_OP_GRIDREWARDS && $d['gw_mode'] === GW_MODE_BUY, fmt($d));
 
 // ===========================================================================
 echo "\n4b) Wallbox-Modi (02.10.2026): Smart Charging / EMS steuert / nur beobachten\n";
@@ -534,8 +534,9 @@ $sSc = fn(array $o = []) => state(array_merge(['wb_active' => true, 'wb_count' =
 $sc = fn(array $d, array $s) => call($ems, 'applySmartChargingGridBuy', [$d, $s]);
 
 $r = $sc($autoSc, $sSc());
-check('Smart-Charging-Wallbox laedt (11 kW), reine Automatik: Modus 2 (Laden aus PV), Leistung 0 (Xmax=0), enable=true',
-    $r['op_mode'] === EMS_OP_PV_SELFUSE && $r['gw_mode'] === GW_MODE_CHARGE_PV && (int)$r['gw_power_w'] === 0 && $r['gw_enable'] === true, fmt($r));
+check('Smart-Charging-Wallbox laedt (11 kW), reine Automatik: Modus 9, Netzbezug auf 10,8 kW (Auto minus 200 W) geregelt, enable=true',
+    $r['op_mode'] === EMS_OP_PV_SELFUSE && $r['gw_mode'] === GW_MODE_BUY && (int)$r['gw_power_w'] === 10800 && $r['gw_enable'] === true, fmt($r));
+check('Xset liegt immer unter der Auto-Leistung (kein erzwungenes Mitladen der Batterie, keine PV-Drosselung)', (int)$r['gw_power_w'] < 11000);
 check('Quelle smartcharging, Grund nennt Leistung und urspruenglichen Grund', $r['source'] === 'smartcharging' && strpos($r['reason'], 'Auto lädt mit 11.0 kW') !== false && strpos($r['reason'], '| Automatik') !== false, $r['reason']);
 check('Entscheidung ohne Smart-Charging-Last bleibt unveraendert (Wallbox 0 W)', $sc($autoSc, $sSc(['wb1_pow_kw' => 0.0])) === $autoSc);
 check('unter 500 W (Ruhestrom): unveraendert', $sc($autoSc, $sSc(['wb1_pow_kw' => 0.3])) === $autoSc);
@@ -565,7 +566,7 @@ $sGuard = $sSc(['pv_total_w' => 0.0, 'bat_pow_w' => 0.0, 'grid_total_w' => -1200
 $dSc = $sc($autoSc, $sGuard);
 attr('PlausiSince', time() - 3600);
 $g = call($ems, 'applyPlausibilityGuard', [$dSc, $sGuard]);
-check('Waechter greift bei Quelle smartcharging NICHT ein (Batterie ~0 W bei Netzbezug ist gewollt)', $g['op_mode'] === EMS_OP_PV_SELFUSE && $g['gw_mode'] === GW_MODE_CHARGE_PV && $g['source'] === 'smartcharging', fmt($g));
+check('Waechter greift bei Quelle smartcharging NICHT ein (Batterie ~0 W bei Netzbezug ist gewollt)', $g['op_mode'] === EMS_OP_PV_SELFUSE && $g['gw_mode'] === GW_MODE_BUY && $g['source'] === 'smartcharging', fmt($g));
 attr('PlausiSince', time() - 3600); attr('PlausiHoldUntil', 0);
 $gCtl = call($ems, 'applyPlausibilityGuard', [array_merge($dSc, ['source' => 'ems']), $sGuard]);
 check('Gegenprobe: dieselbe Entscheidung mit Quelle ems loest den Waechter aus (Rueckfall Automatik)', $gCtl['gw_mode'] === GW_MODE_AUTO && $gCtl['gw_enable'] === false, fmt($gCtl));
@@ -573,8 +574,31 @@ attr('PlausiSince', 0); attr('PlausiHoldUntil', 0);
 $GLOBALS['ACTIONS'] = []; attr('LastDecision', 0);
 call($ems, 'applyDecision', [$dSc, $sGuard]);
 $wrt = array_values(array_filter($GLOBALS['ACTIONS'], fn($a) => $a[0] === IHUB_IID && in_array($a[1], ['ctl_ems_mode', 'ctl_ems_power', 'ctl_ems_enable'], true)));
-check('Schreibpfad: ctl_ems_mode=2, ctl_ems_power=0, ctl_ems_enable=true am Wechselrichter', in_array([IHUB_IID, 'ctl_ems_mode', 2], $wrt, true) && in_array([IHUB_IID, 'ctl_ems_enable', true], $wrt, true) && !array_filter($wrt, fn($a) => $a[1] === 'ctl_ems_power' && $a[2] > 0), json_encode($wrt));
+check('Schreibpfad (sichere Reihenfolge Leistung 0 -> Modus 9 -> Xset 10800 -> enable zuletzt)', array_column($wrt, 1) === ['ctl_ems_power', 'ctl_ems_mode', 'ctl_ems_power', 'ctl_ems_enable'] && $wrt[1][2] === GW_MODE_BUY && $wrt[0][2] === 0 && $wrt[2][2] === 10800 && $wrt[3][2] === true, json_encode($wrt));
 check('Quelle smartcharging wird als letzte Entscheidungsquelle gemerkt', $ems->ReadAttributeString('LastDecisionSource') === 'smartcharging');
+echo "   Rueckfall auf Modus 2 (Haus aus dem Netz), wenn Modus 9 die PV drosseln wuerde\n";
+prop('WB1_Mode', 1); prop('WB2_Mode', 0);
+$r = $sc($autoSc, $sSc(['bat_soc' => 97.0, 'pv_total_w' => 5000.0, 'house_pow_w' => 400.0]));
+check('Batterie fast voll (97 %) bei PV-Ueberschuss: Modus 2 statt 9 (Netzbezugsregelung wuerde PV drosseln), Grund genannt', $r['gw_mode'] === GW_MODE_CHARGE_PV && (int)$r['gw_power_w'] === 0 && strpos($r['reason'], 'PV-Überschuss würde bei Netzbezugsregelung gedrosselt') !== false, fmt($r) . ' | ' . $r['reason']);
+$r = $sc($autoSc, $sSc(['bat_soc' => 97.0, 'pv_total_w' => 500.0, 'house_pow_w' => 400.0]));
+check('Batterie voll, aber kaum PV-Ueberschuss (100 W): Modus 9 bleibt (nichts zu drosseln, Batterie deckt das Haus)', $r['gw_mode'] === GW_MODE_BUY, fmt($r));
+$r = $sc($autoSc, $sSc(['bat_soc' => 70.0, 'pv_total_w' => 5000.0, 'house_pow_w' => 400.0]));
+check('Batterie 70 % bei PV-Ueberschuss: Modus 9 (PV-Ueberschuss laedt die Batterie)', $r['gw_mode'] === GW_MODE_BUY, fmt($r));
+attr('LastGoodweMode', GW_MODE_BUY);
+$r = $sc($autoSc, $sSc(['bat_soc' => 96.0, 'pv_total_w' => 5000.0, 'house_pow_w' => 400.0]));
+check('Hysterese: laeuft Modus 9 schon, bleibt er bis 97 % (96 % mit PV-Ueberschuss: weiter Modus 9)', $r['gw_mode'] === GW_MODE_BUY, fmt($r));
+attr('LastGoodweMode', GW_MODE_AUTO);
+$r = $sc($autoSc, $sSc(['bat_soc' => 96.0, 'pv_total_w' => 5000.0, 'house_pow_w' => 400.0]));
+check('Hysterese: sonst schon ab 95 % Modus 2 (96 % mit PV-Ueberschuss)', $r['gw_mode'] === GW_MODE_CHARGE_PV, fmt($r));
+$resv = $ems->ReadPropertyInteger('BAT_SOC_Min') + $ems->ReadPropertyInteger('BAT_SOC_Reserve_Backup');
+$r = $sc($autoSc, $sSc(['bat_soc' => (float)$resv + 1.0]));
+check('Batterie an der Reserve: Modus 2 (die Batterie kann das Haus nicht tragen), Grund genannt', $r['gw_mode'] === GW_MODE_CHARGE_PV && strpos($r['reason'], 'Batterie an der Reserve') !== false, fmt($r) . ' | ' . $r['reason']);
+prop('WB_Smart_HouseFromBattery', false);
+$r = $sc($autoSc, $sSc());
+check('Schalter "Haus aus der Batterie" aus: Modus 2 wie in 0.70.0', $r['gw_mode'] === GW_MODE_CHARGE_PV && (int)$r['gw_power_w'] === 0 && strpos($r['reason'], 'Schalter') !== false, fmt($r));
+prop('WB_Smart_HouseFromBattery', true);
+$r = $sc($autoSc, $sSc(['wb1_pow_kw' => 0.55]));
+check('knapp ueber der Mindestleistung (550 W): Xset 350 W, Modus 9', $r['gw_mode'] === GW_MODE_BUY && (int)$r['gw_power_w'] === 350, fmt($r));
 unset($GLOBALS['INSTMOD'][IHUB_IID]);
 
 // ===========================================================================
@@ -1207,7 +1231,7 @@ check('Discovery: WB1 7400 W -> 7,4 kW', call($ems, 'readChargerPowerKw', [1]) =
 check('Discovery: WB2 11000 W -> 11 kW (auch fremdgesteuerte Wallbox wird gemessen)', call($ems, 'readChargerPowerKw', [2]) === 11.0);
 check('Discovery: WB1 angesteckt = 1, WB2 ohne plugStateID = 0', call($ems, 'readChargerCable', [1]) === 1 && call($ems, 'readChargerCable', [2]) === 0);
 $st = call($ems, 'optimize', [state(['grid_rewards' => true, 'wb1_pow_kw' => call($ems, 'readChargerPowerKw', [1])])]);
-check('Grid Rewards nutzt die per Discovery gemessene Wallbox-Leistung (7,4 kW im Grund, kein Sollwert mehr, Xmax=0)', strpos($st['reason'], 'Auto lädt mit 7.4 kW') !== false && (int)$st['gw_power_w'] === 0 && $st['gw_mode'] === GW_MODE_CHARGE_PV, fmt($st));
+check('Grid Rewards nutzt die per Discovery gemessene Wallbox-Leistung (7,4 kW im Grund, Xset 7200 W, Modus 9)', strpos($st['reason'], 'Auto lädt mit 7.4 kW') !== false && (int)$st['gw_power_w'] === 7200 && $st['gw_mode'] === GW_MODE_BUY, fmt($st));
 $man = vari('manuell kW', 0, '', 3.7);
 prop('VAR_WB1_Power', $man);
 check('manuell verknuepfte Variable hat Vorrang (kW wie bisher): 3,7 kW', call($ems, 'readChargerPowerKw', [1]) === 3.7);

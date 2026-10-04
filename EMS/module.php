@@ -41,7 +41,7 @@ define('EMS_LOG_VERBOSE',     2);
 // Formular-Konvention (siehe EMS/SUITE.md "Einheitliche Formular-Optik"):
 // Was-ist-Neu-Panel ist versionsscharf dismissible, Referenzmuster InverterHub.
 define('EMS_COLOR_AUTO', 0x2E8B3D); // Gruen: Wert wurde automatisch uebernommen (🔗-Zeilen im Formular)
-define('EMS_NEWS_VERSION', '0.71.2');
+define('EMS_NEWS_VERSION', '0.72.0');
 
 // NRG-Stack Partnermodul-GUIDs (fuer automatische Discovery, siehe discoverPartners())
 define('GUID_CHARGERHUB',    '{9256C34E-5CFD-4F37-8BFE-E65390EBB37C}');
@@ -318,6 +318,7 @@ class EMS extends IPSModule
         $this->RegisterPropertyInteger('WB_Quelle',            0);   // 0 automatisch, 1 ChargerHub, 2 OCPPHub, 3 beide (verschiedene Geraete)
         $this->RegisterPropertyInteger('WB1_Mode',            0);   // Wallbox-Modus: 0 automatisch, 1 Smart Charging (Tibber hat die Hoheit), 2 EMS steuert, 3 nur beobachten
         $this->RegisterPropertyInteger('WB2_Mode',            0);
+        $this->RegisterPropertyBoolean('WB_Smart_HouseFromBattery', true); // Smart Charging/Grid Reward excess: Netzbezug auf die Auto-Leistung regeln (Modus 9), Haus aus PV und Batterie; aus = Modus 2 (Haus aus dem Netz)
         $this->RegisterPropertyBoolean('WB_Smart_GridBuy',    true); // Smart-Charging-Auto aus dem Netz laden, Batterie bleibt geschont (Modus 2, Xmax=0)
         $this->RegisterPropertyString('WB1_TibberVehicle',    ''); // Tibber-deviceId des Fahrzeugs an dieser Wallbox (vom Nutzer bestaetigt, nie per Namensabgleich geraten)
         $this->RegisterPropertyString('WB2_TibberVehicle',    '');
@@ -678,6 +679,10 @@ class EMS extends IPSModule
                 'caption'  => '🆕 Neu in Version ' . EMS_NEWS_VERSION,
                 'expanded' => true,
                 'items'    => array(
+                    array(
+                        'type'    => 'Label',
+                        'caption' => '• NEU: Bei Smart Charging und Grid Reward (Überschuss) kommt nur noch das Auto aus dem Netz, der Hausverbrauch aus PV und Batterie: EMS regelt dazu den Netzbezug auf die gemessene Auto-Leistung minus 200 W (Wechselrichter-Modus Stromeinkauf). Ist die Batterie fast voll und PV im Überschuss, oder steht sie an der Reserve, bleibt es beim bisherigen Verhalten (Haus aus dem Netz, Batterie nur aus PV). Abschaltbar im Panel „Wallboxen“. Noch nicht an einem echten Ladevorgang beobachtet.'
+                    ),
                     array(
                         'type'    => 'Label',
                         'caption' => '• NEU: Läuft ein Grid Reward bei Überschuss im Netz und der Bezugspreis ist negativ, hat der Tagesplan Vorrang: Die Batterie wird dann aus dem Netz geladen (man wird dafür bezahlt), das Auto läuft obendrauf. Bei Ladestopp wegen Knappheit bleibt es bei der Grid-Rewards-Automatik.'
@@ -5825,14 +5830,13 @@ class EMS extends IPSModule
             $d['wb_hands_off'] = true;
             $d['source'] = 'tibber';
             if ($wbTotalW >= 500) {
-                // Tibber laedt das Auto (Ueberschuss im Netz): Auto aus dem Netz, Batterie nur aus PV.
-                $d['gw_mode']    = GW_MODE_CHARGE_PV;
-                $d['gw_power_w'] = 0;
-                $d['gw_enable']  = true;
-                $d['reason']     = sprintf(
-                    'Grid Rewards: Auto lädt mit %.1f kW aus dem Netz, Batterie lädt nur aus PV und entlädt nicht, Wallbox-Freigabe bleibt unangetastet',
-                    $wbTotalW / 1000.0
-                );
+                // Tibber laedt das Auto (Ueberschuss im Netz): Auto aus dem Netz, Haus aus PV und Batterie (Modus 9),
+                // sonst Rueckfall Modus 2 -- siehe carFromGridSetting().
+                $set = $this->carFromGridSetting((float)$wbTotalW, $s);
+                $d['gw_mode']    = $set['gw_mode'];
+                $d['gw_power_w'] = $set['gw_power_w'];
+                $d['gw_enable']  = $set['gw_enable'];
+                $d['reason']     = 'Grid Rewards: ' . $set['text'] . ', Wallbox-Freigabe bleibt unangetastet';
             } else {
                 // Auto laedt nicht (Ladestopp bei Knappheit im Netz, `shortage`): native Automatik (Dietmar 04.10.2026).
                 // Das Haus laeuft aus PV und Batterie und entlastet das Netz, statt wie bei Modus 2 aus dem Netz zu
@@ -7179,6 +7183,44 @@ class EMS extends IPSModule
     }
 
     /**
+     * Stellglied "Auto aus dem Netz, Hausbatterie schonen" fuer Smart Charging und Grid Reward bei Ueberschuss
+     * (Dietmar 04.10.2026: den Hausverbrauch bekommt man nicht vergünstigt, der soll aus PV und Batterie kommen).
+     * Bevorzugt Modus 9 (Stromeinkauf, "Netzbezug wird auf Xset geregelt", live bestaetigt 13.09.2026): Xset =
+     * gemessene Auto-Leistung minus 200 W -- der WR bezieht genau das Auto aus dem Netz, das Haus laeuft aus PV und
+     * Batterie, PV-Ueberschuss laedt die Batterie. Der Abstand haelt Xset unter dem Verbrauch, sonst muesste die
+     * Batterie zusaetzlich aus dem Netz laden oder die PV gedrosselt werden (19.09.2026: Modus 9 mit riesigem Xset
+     * drosselte die PV auf < 1 kW). Rueckfall auf Modus 2 mit Xmax=0 (Batterie nur aus PV, Haus aus dem Netz), wenn
+     * Modus 9 die PV drosseln wuerde (PV-Ueberschuss ueber dem Haus bei fast voller Batterie), die Batterie an der
+     * Reserve steht (kann das Haus nicht tragen), Xset zu klein ist oder der Schalter aus ist.
+     * @return array 'gw_mode', 'gw_power_w', 'gw_enable', 'text'
+     */
+    private function carFromGridSetting(float $carW, array $s): array
+    {
+        $xset = (int)round($carW - 200.0);
+        $soc  = (float)$s['bat_soc'];
+        $reserve = (float)$this->ReadPropertyInteger('BAT_SOC_Min') + (float)$this->ReadPropertyInteger('BAT_SOC_Reserve_Backup');
+        $pvSurplus = (float)$s['pv_total_w'] - (float)$s['house_pow_w'];
+        // Hysterese gegen Pendeln an der Schwelle: laeuft Modus 9 schon, erst bei 97 % aufgeben
+        $full = ($this->ReadAttributeInteger('LastGoodweMode') === GW_MODE_BUY) ? 97.0 : 95.0;
+        $why = '';
+        if (!$this->ReadPropertyBoolean('WB_Smart_HouseFromBattery')) {
+            $why = 'Schalter „Haus aus der Batterie“ aus';
+        } elseif ($xset < 300) {
+            $why = 'Auto-Leistung zu klein';
+        } elseif ($soc <= $reserve + 2.0) {
+            $why = 'Batterie an der Reserve, kann das Haus nicht tragen';
+        } elseif ($pvSurplus > 300.0 && $soc >= $full) {
+            $why = 'Batterie fast voll, PV-Überschuss würde bei Netzbezugsregelung gedrosselt';
+        }
+        if ($why === '') {
+            return array('gw_mode' => GW_MODE_BUY, 'gw_power_w' => $xset, 'gw_enable' => true,
+                'text' => sprintf('Auto lädt mit %.1f kW, Netzbezug auf %.1f kW geregelt (Auto aus dem Netz), Haus aus PV und Batterie', $carW / 1000.0, $xset / 1000.0));
+        }
+        return array('gw_mode' => GW_MODE_CHARGE_PV, 'gw_power_w' => 0, 'gw_enable' => true,
+            'text' => sprintf('Auto lädt mit %.1f kW, Batterie bleibt geschont (lädt nur aus PV, entlädt nicht), Haus und Auto aus PV bzw. Netz (%s)', $carW / 1000.0, $why));
+    }
+
+    /**
      * Smart Charging: Auto aus dem Netz laden, Hausbatterie schonen (Dietmar 03.10.2026, Anlass 27.09.: ein per
      * Smart Charging ladendes Auto zog 7,4 kW aus der Batterie). Solange eine Wallbox im Modus "Smart Charging"
      * (Tibber hat die Hoheit) tatsaechlich laedt und EMS sonst nur die WR-Automatik faehrt, geht der WR in
@@ -7202,13 +7244,13 @@ class EMS extends IPSModule
             if ($this->wallboxMode($n)['mode'] === 'smart') { $smartW += max(0.0, (float)($s['wb' . $n . '_pow_kw'] ?? 0.0) * 1000.0); }
         }
         if ($smartW < 500.0) { return $d; }
+        $set = $this->carFromGridSetting($smartW, $s);
         $d['op_mode']    = EMS_OP_PV_SELFUSE;
-        $d['gw_mode']    = GW_MODE_CHARGE_PV;
-        $d['gw_power_w'] = 0;
-        $d['gw_enable']  = true;
+        $d['gw_mode']    = $set['gw_mode'];
+        $d['gw_power_w'] = $set['gw_power_w'];
+        $d['gw_enable']  = $set['gw_enable'];
         $d['source']     = 'smartcharging';
-        $d['reason']     = sprintf('Smart Charging: Auto lädt mit %.1f kW, Batterie bleibt geschont (lädt nur aus PV, entlädt nicht), Haus und Auto aus PV bzw. Netz | %s',
-            $smartW / 1000.0, (string)($d['reason'] ?? ''));
+        $d['reason']     = 'Smart Charging: ' . $set['text'] . ' | ' . (string)($d['reason'] ?? '');
         return $d;
     }
 

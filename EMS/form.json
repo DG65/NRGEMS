@@ -998,6 +998,11 @@
                 },
                 {
                     "type": "CheckBox",
+                    "name": "WB_Smart_HouseFromBattery",
+                    "caption": "Dabei den Hausverbrauch aus PV und Batterie decken, nur das Auto aus dem Netz (Netzbezug auf die Auto-Leistung geregelt, empfohlen)"
+                },
+                {
+                    "type": "CheckBox",
                     "name": "WB_Smart_GridBuy",
                     "caption": "Smart-Charging-Auto aus dem Netz laden, Batterie schonen (empfohlen)"
                 },
