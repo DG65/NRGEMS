@@ -299,10 +299,11 @@ $ems = freshEms();
 pricesToday(0.30); // keine Arbitrage-Chance -- Grid Rewards muss trotzdem greifen
 $d = call($ems, 'optimize', [state(['grid_rewards' => true, 'wb1_pow_kw' => 7.4])]);
 check('op=GRIDREWARDS, Quelle tibber', $d['op_mode'] === EMS_OP_GRIDREWARDS && ($d['source'] ?? '') === 'tibber', fmt($d));
-check('Stromeinkauf-Sollwert = aktuelle Wallbox-Leistung (7400 W), Modus AC-Import, enable=true', $d['gw_mode'] === GW_MODE_AC_IMPORT && (int)$d['gw_power_w'] === 7400 && $d['gw_enable'] === true, fmt($d));
+check('Grid Rewards: Modus 2 (Laden aus PV), Xmax=0, enable=true -- KEIN Netzeinkauf-Sollwert (Modus 4 haette die Batterie mit Xset+PV geladen, Live 03.10.)', $d['gw_mode'] === GW_MODE_CHARGE_PV && (int)$d['gw_power_w'] === 0 && $d['gw_enable'] === true, fmt($d));
+check('Grund nennt Auto-Leistung und dass die Batterie nur aus PV laedt', strpos($d['reason'], 'Auto lädt mit 7.4 kW aus dem Netz') !== false && strpos($d['reason'], 'Batterie lädt nur aus PV und entlädt nicht') !== false, $d['reason']);
 check('Wallboxen bleiben unter Tibber-Kontrolle (EMS gibt nicht frei)', $d['wb1_enable'] === false && $d['wb2_enable'] === false, fmt($d));
 $d = call($ems, 'optimize', [state(['grid_rewards' => true, 'wb1_pow_kw' => 0.0])]);
-check('Ladestopp (Wallbox 0 W): Sollwert automatisch 0 W, kein Sonderfall noetig', $d['op_mode'] === EMS_OP_GRIDREWARDS && (int)$d['gw_power_w'] === 0, fmt($d));
+check('Ladestopp (Wallbox 0 W): bleibt Modus 2/Xmax=0, die Batterie laedt weiter nur aus PV, kein Sonderfall noetig', $d['op_mode'] === EMS_OP_GRIDREWARDS && $d['gw_mode'] === GW_MODE_CHARGE_PV && (int)$d['gw_power_w'] === 0, fmt($d));
 $target = $ems->ReadPropertyInteger('BAT_SOC_Target_Night');
 $d = call($ems, 'optimize', [state(['grid_rewards' => true, 'wb1_pow_kw' => 5.0, 'enwg_in_window' => true, 'bat_soc' => max(5, $target - 30)])]);
 check('Grid Rewards schlaegt §14a-Nachtladen', $d['op_mode'] === EMS_OP_GRIDREWARDS, fmt($d));
@@ -1184,7 +1185,7 @@ check('Discovery: WB1 7400 W -> 7,4 kW', call($ems, 'readChargerPowerKw', [1]) =
 check('Discovery: WB2 11000 W -> 11 kW (auch fremdgesteuerte Wallbox wird gemessen)', call($ems, 'readChargerPowerKw', [2]) === 11.0);
 check('Discovery: WB1 angesteckt = 1, WB2 ohne plugStateID = 0', call($ems, 'readChargerCable', [1]) === 1 && call($ems, 'readChargerCable', [2]) === 0);
 $st = call($ems, 'optimize', [state(['grid_rewards' => true, 'wb1_pow_kw' => call($ems, 'readChargerPowerKw', [1])])]);
-check('Grid Rewards bestellt jetzt die echte Wallbox-Leistung (7400 W statt 0 W)', (int)$st['gw_power_w'] === 7400, fmt($st));
+check('Grid Rewards nutzt die per Discovery gemessene Wallbox-Leistung (7,4 kW im Grund, kein Sollwert mehr, Xmax=0)', strpos($st['reason'], 'Auto lädt mit 7.4 kW') !== false && (int)$st['gw_power_w'] === 0 && $st['gw_mode'] === GW_MODE_CHARGE_PV, fmt($st));
 $man = vari('manuell kW', 0, '', 3.7);
 prop('VAR_WB1_Power', $man);
 check('manuell verknuepfte Variable hat Vorrang (kW wie bisher): 3,7 kW', call($ems, 'readChargerPowerKw', [1]) === 3.7);

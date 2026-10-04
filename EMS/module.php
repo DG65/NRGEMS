@@ -41,7 +41,7 @@ define('EMS_LOG_VERBOSE',     2);
 // Formular-Konvention (siehe EMS/SUITE.md "Einheitliche Formular-Optik"):
 // Was-ist-Neu-Panel ist versionsscharf dismissible, Referenzmuster InverterHub.
 define('EMS_COLOR_AUTO', 0x2E8B3D); // Gruen: Wert wurde automatisch uebernommen (🔗-Zeilen im Formular)
-define('EMS_NEWS_VERSION', '0.70.0');
+define('EMS_NEWS_VERSION', '0.71.0');
 
 // NRG-Stack Partnermodul-GUIDs (fuer automatische Discovery, siehe discoverPartners())
 define('GUID_CHARGERHUB',    '{9256C34E-5CFD-4F37-8BFE-E65390EBB37C}');
@@ -678,6 +678,10 @@ class EMS extends IPSModule
                 'caption'  => '🆕 Neu in Version ' . EMS_NEWS_VERSION,
                 'expanded' => true,
                 'items'    => array(
+                    array(
+                        'type'    => 'Label',
+                        'caption' => '• GEÄNDERT: Grid Rewards: Während Tibber das Auto lädt, bestellt EMS keinen Netzeinkauf-Sollwert mehr. Der hatte die Batterie zusätzlich mit etwa 10 kW aus dem Netz geladen und den Netzbezug auf bis zu 20 kW getrieben. Jetzt lädt die Batterie nur noch aus PV und entlädt nicht, das Auto kommt aus dem Netz.'
+                    ),
                     array(
                         'type'    => 'Label',
                         'caption' => '• NEU: Lädt ein Auto an einer Wallbox im Modus Smart Charging, schont EMS jetzt die Hausbatterie: Sie lädt dann nur noch aus PV und entlädt nicht, Haus und Auto kommen aus PV bzw. Netz. Abschaltbar im Panel „Wallboxen“. Gilt nur, wenn EMS sonst die Wechselrichter-Automatik fährt; Grid Rewards, Netzbetreiber, Boost und Plan-Sollwerte haben Vorrang.'
@@ -5785,9 +5789,17 @@ class EMS extends IPSModule
 
         if ($s['grid_rewards']) {
             $wbTotalW = (int)round(($s['wb1_pow_kw'] + $s['wb2_pow_kw']) * 1000);
+            // Umbau 04.10.2026 (Live-Befund 03.10.): Bis 0.70.0 bestellte EMS hier per Modus 4 (AC-Import) einen
+            // Netzeinkauf-Sollwert in Hoehe der Wallbox-Leistung. Das archivierte 6-s-Bild zeigt, dass Modus 4 den
+            // Sollwert NICHT fuers Auto, sondern fuer die BATTERIE bestellt: Batterieladung = Xset + PV (so steht es
+            // auch in der Register-Tabelle). Das Auto wurde zusaetzlich aus dem Netz bedient: bei 7,2 kW Sollwert
+            // 14-20 kW Netzbezug und rund 10 kW Batterieladung (13:50-14:02 und 15:52-16:17). Jetzt dasselbe Stellglied
+            // wie bei Smart Charging: "Laden aus PV" mit Xmax=0 (Modus 2) -- die Batterie laedt nur aus PV und entlaedt
+            // nicht, Auto und Haus kommen aus dem Netz. Das haelt zugleich die Grid-Reward-Praemie (Auto aus dem Netz,
+            // nicht aus der Batterie). Pausiert Tibber das Laden (0 W), laedt die Batterie weiter nur aus PV.
             $d['op_mode']    = EMS_OP_GRIDREWARDS;
-            $d['gw_mode']    = GW_MODE_AC_IMPORT;
-            $d['gw_power_w'] = max(0, $wbTotalW);
+            $d['gw_mode']    = GW_MODE_CHARGE_PV;
+            $d['gw_power_w'] = 0;
             $d['gw_enable']  = true;
             $d['wb1_enable'] = false; // Tibber steuert Wallbox direkt
             $d['wb2_enable'] = false;
@@ -5796,8 +5808,8 @@ class EMS extends IPSModule
             // genommen, die Tibbers Smart Charging zum Laden braucht (Dietmar 02.10.2026).
             $d['wb_hands_off'] = true;
             $d['reason']     = sprintf(
-                'Grid Rewards: Stromeinkauf=%.0fW (= aktuelle Wallbox-Leistung), Haus+Batterie laeuft ueber WR-Automatik, Wallbox-Freigabe bleibt unangetastet',
-                $wbTotalW
+                'Grid Rewards: Auto lädt mit %.1f kW aus dem Netz, Batterie lädt nur aus PV und entlädt nicht, Wallbox-Freigabe bleibt unangetastet',
+                $wbTotalW / 1000.0
             );
             $d['source'] = 'tibber';
             return $d;
