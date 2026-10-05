@@ -41,7 +41,7 @@ define('EMS_LOG_VERBOSE',     2);
 // Formular-Konvention (siehe EMS/SUITE.md "Einheitliche Formular-Optik"):
 // Was-ist-Neu-Panel ist versionsscharf dismissible, Referenzmuster InverterHub.
 define('EMS_COLOR_AUTO', 0x2E8B3D); // Gruen: Wert wurde automatisch uebernommen (🔗-Zeilen im Formular)
-define('EMS_NEWS_VERSION', '0.72.0');
+define('EMS_NEWS_VERSION', '0.73.0');
 
 // NRG-Stack Partnermodul-GUIDs (fuer automatische Discovery, siehe discoverPartners())
 define('GUID_CHARGERHUB',    '{9256C34E-5CFD-4F37-8BFE-E65390EBB37C}');
@@ -210,6 +210,9 @@ class EMS extends IPSModule
         // Akku in den guenstigsten Viertelstunden laden. Standard aus: Netzladung ist
         // anlagen-/rechtsabhaengig (Mischspeicher), gehoert nicht in jede Installation.
         $this->RegisterPropertyBoolean('PLAN_NightGrid_Active',    false);
+        $this->RegisterPropertyInteger('PLAN_Abend_MinSoc',        0);     // 0 = aus; Mindest-SOC zum Abend (Absicherung gegen zu optimistische PV-Prognose)
+        $this->RegisterPropertyInteger('PLAN_Abend_Hour',          17);
+        $this->RegisterPropertyString('PLAN_Manual',               '[]');  // manuelle Plan-Eintraege (Liste)
         $this->RegisterPropertyBoolean('PLAN_PreDischarge_Active', false);
         $this->RegisterPropertyInteger('PLAN_NightGrid_ExtendHours', 2);
         $this->RegisterPropertyFloat(  'PLAN_NightGrid_ExtendTol_ct', 3.0);
@@ -679,6 +682,14 @@ class EMS extends IPSModule
                 'caption'  => '🆕 Neu in Version ' . EMS_NEWS_VERSION,
                 'expanded' => true,
                 'items'    => array(
+                    array(
+                        'type'    => 'Label',
+                        'caption' => '• NEU: Abend-Absicherung im Panel „Tagesplan“: Mindest-SOC zum Abend einstellen (0 = aus). Läge der Akku mit der vorsichtigen PV-Prognose (p10) darunter, kauft der Plan in den günstigsten Viertelstunden davor Strom ein, sofern sich das gegenüber dem teuren Abendpreis lohnt. Ist der Mindest-SOC real schon erreicht, wird nicht gekauft.'
+                    ),
+                    array(
+                        'type'    => 'Label',
+                        'caption' => '• NEU: Manuelle Einträge im Tagesplan (Liste im Panel „Tagesplan“): Netz laden, Akku halten oder Automatik für ein Zeitfenster, einmalig mit Datum oder täglich. Sie haben Vorrang vor der automatischen Planung, nicht vor §14a-Vorgaben des Netzbetreibers und nicht vor Grid Rewards.'
+                    ),
                     array(
                         'type'    => 'Label',
                         'caption' => '• NEU: Bei Smart Charging und Grid Reward (Überschuss) kommt nur noch das Auto aus dem Netz, der Hausverbrauch aus PV und Batterie: EMS regelt dazu den Netzbezug auf die gemessene Auto-Leistung minus 200 W (Wechselrichter-Modus Stromeinkauf). Ist die Batterie fast voll und PV im Überschuss, oder steht sie an der Reserve, bleibt es beim bisherigen Verhalten (Haus aus dem Netz, Batterie nur aus PV). Abschaltbar im Panel „Wallboxen“. Noch nicht an einem echten Ladevorgang beobachtet.'
@@ -2526,8 +2537,122 @@ class EMS extends IPSModule
             . '|veh=' . round($vehicleReserveKwh, 1) . '|slot=' . $nowSlot
             . '|nw=' . ($this->ReadPropertyBoolean('PLAN_NightGrid_Active') ? $this->ReadPropertyInteger('PLAN_NightGrid_EndHour') : 0)
             . '|pd=' . ($this->ReadPropertyBoolean('PLAN_PreDischarge_Active') ? 1 : 0)
+            . '|ab=' . $this->ReadPropertyInteger('PLAN_Abend_MinSoc') . '/' . $this->ReadPropertyInteger('PLAN_Abend_Hour')
+            . '|man=' . md5($this->ReadPropertyString('PLAN_Manual'))
             . '|ext=' . $this->ReadPropertyInteger('PLAN_NightGrid_ExtendHours') . '/' . $this->ReadPropertyFloat('PLAN_NightGrid_ExtendTol_ct'));
     }
+
+    /**
+     * Manuelle Plan-Eintraege (Property PLAN_Manual): je Tagesversatz (0 heute, 1 morgen) Slot => Eintrag.
+     * Spalten: Date (JJJJ-MM-TT, leer = jeden Tag), From/To (HH:MM, To exklusiv, To <= From = bis Mitternacht),
+     * Action (EMS_OP_AUTO / EMS_OP_NET_CHARGE / EMS_OP_HOLD), Power (W, 0 = maximal moeglich).
+     */
+    private function manualPlanEntries(): array
+    {
+        $out = array(0 => array(), 1 => array());
+        $raw = json_decode($this->ReadPropertyString('PLAN_Manual'), true);
+        if (!is_array($raw)) { return $out; }
+        $dates = array(0 => date('Y-m-d'), 1 => date('Y-m-d', strtotime('tomorrow')));
+        foreach ($raw as $r) {
+            $act = (int)($r['Action'] ?? -1);
+            if (!in_array($act, array(EMS_OP_AUTO, EMS_OP_NET_CHARGE, EMS_OP_HOLD), true)) { continue; }
+            if (!preg_match('/^(\d{1,2}):(\d{2})$/', trim((string)($r['From'] ?? '')), $a)) { continue; }
+            $from = min(95, (int)$a[1] * 4 + (int)floor((int)$a[2] / 15));
+            $to = 96;
+            if (preg_match('/^(\d{1,2}):(\d{2})$/', trim((string)($r['To'] ?? '')), $b)) {
+                $t = (int)$b[1] * 4 + (int)ceil((int)$b[2] / 15);
+                if ($t > $from) { $to = min(96, $t); }
+            }
+            $date = trim((string)($r['Date'] ?? ''));
+            foreach ($dates as $off => $d) {
+                if ($date !== '' && $date !== $d) { continue; }
+                for ($i = $from; $i < $to; $i++) { $out[$off][$i] = array('op' => $act, 'power' => max(0, (int)($r['Power'] ?? 0))); }
+            }
+        }
+        return $out;
+    }
+
+    /** Planeintrag fuer einen manuell vorgegebenen Slot; null = kein manueller Eintrag. Fuehrt den Plan-SOC mit. */
+    private function manualPlanSlot(int $slot, $price, float $pvW, float $soc, array $entry, array $ctx): array
+    {
+        if ($entry['op'] === EMS_OP_NET_CHARGE) {
+            $missingKwh = max(0.0, (100.0 - $soc) / 100.0 * $ctx['capKwh']);
+            $power = $entry['power'] > 0 ? min((int)$entry['power'], $this->gridChargeXsetW($ctx, $missingKwh, $soc)) : $this->gridChargeXsetW($ctx, $missingKwh, $soc);
+            $gainKwh = min($missingKwh, $power / 1000.0 * 0.25);
+            $socNew = min(100.0, $soc + $gainKwh / max(0.001, $ctx['capKwh']) * 100.0);
+            return array('plan' => array('op' => EMS_OP_NET_CHARGE, 'gw' => GW_MODE_BAT_CHARGE, 'power' => $power, 'man' => 1,
+                'reason' => 'Manueller Eintrag: Netz laden', 'price' => $price, 'soc' => round($socNew, 1)), 'soc' => $socNew);
+        }
+        if ($entry['op'] === EMS_OP_HOLD) {
+            return array('plan' => array('op' => EMS_OP_HOLD, 'gw' => GW_MODE_AC_EXPORT, 'power' => 0, 'man' => 1,
+                'reason' => 'Manueller Eintrag: Akku halten (Haus aus dem Netz)', 'price' => $price, 'soc' => round($soc, 1)), 'soc' => $soc);
+        }
+        $auto = $this->simulateAutomatikSlot($slot, $pvW, $price, $soc, $ctx);
+        $auto['plan']['man'] = 1;
+        $auto['plan']['reason'] = 'Manueller Eintrag: Automatik -- ' . $auto['plan']['reason'];
+        return $auto;
+    }
+
+    /**
+     * Abend-Absicherung (Dietmar 05.10.2026): Faellt der SOC zum Abend mit der VORSICHTIGEN PV-Prognose (p10) unter den
+     * Mindest-SOC, werden die guenstigsten Viertelstunden davor zum Netzladen vorgemerkt -- aber nur, wo der Einkauf
+     * gegenueber dem erwarteten Ersatzpreis (teuerstes Viertel der naechsten 24 h) nach Wandlungsverlusten, Zykluskosten und
+     * Mindestspanne noch lohnt. Liefert Slot => true (Indizes dieses Tages, 0-95).
+     *
+     * @param array $pvLow   PV p10 (W) je Slot dieses Tages (0-95)
+     * @param array $load    Last (W) je Slot dieses Tages, Luecken = ctx['avgHouseW']
+     */
+    private function eveningInsuranceSlots(array $prices, array $pvLow, array $load, int $fromSlot, float $soc, array $ctx): array
+    {
+        $minSoc = (float)$this->ReadPropertyInteger('PLAN_Abend_MinSoc');
+        $anchor = max(1, min(23, $this->ReadPropertyInteger('PLAN_Abend_Hour'))) * 4;
+        if ($minSoc <= 0.0 || $fromSlot >= $anchor) { return array(); }
+        $rp = $this->replacementPriceEur(array_values($prices), $fromSlot);
+        if ($rp === null) { return array(); }
+        $limit = $rp * $this->convEff() * $this->convEff() - (float)($ctx['cycleCost'] ?? 0.0) - (float)($ctx['spread'] ?? 0.0);
+        $sim = $soc; $extra = array();
+        for ($i = $fromSlot; $i < $anchor; $i++) {
+            $surplusW = (float)($pvLow[$i] ?? 0.0) - (float)($load[$i] ?? $ctx['avgHouseW']);
+            if ($surplusW > 0 && $sim < 99.5) {
+                $gain = min($surplusW, $this->ctxChargeKw($ctx, $sim) * 1000.0) / 1000.0 * 0.25;
+                $sim = min(100.0, $sim + $gain / max(0.001, $ctx['capKwh']) * 100.0);
+            } elseif ($surplusW < 0 && $sim > $ctx['socMin'] + $ctx['socReserve']) {
+                $loss = min(-$surplusW, $ctx['dischargeKw'] * 1000.0) / 1000.0 * 0.25;
+                $sim = max($ctx['socMin'] + $ctx['socReserve'], $sim - $loss / max(0.001, $ctx['capKwh']) * 100.0);
+            }
+            $p = $prices[$i] ?? null;
+            if ($p !== null && $p < $limit) {
+                // Netto-Mehr der Netzladung gegenueber dem, was die PV in diesem Slot ohnehin laedt
+                $pvShare = max(0.0, $surplusW) / 1000.0 * 0.25;
+                $net = max(0.0, min($this->ctxChargeKw($ctx, $sim), $ctx['maxW'] / 1000.0) * 0.25 - $pvShare);
+                if ($net > 0.05) { $extra[$i] = array($p, $net); }
+            }
+        }
+        $deficitKwh = ($minSoc - $sim) / 100.0 * $ctx['capKwh'];
+        if ($deficitKwh <= 0.05 || empty($extra)) { return array(); }
+        uasort($extra, function ($a, $b) { return $a[0] <=> $b[0]; });
+        $chosen = array(); $sum = 0.0;
+        foreach ($extra as $i => $e) {
+            $chosen[$i] = true; $sum += $e[1];
+            if ($sum >= $deficitKwh) { break; }
+        }
+        return $chosen;
+    }
+
+    /** Planeintrag der Abend-Absicherung fuer einen vorgemerkten Slot. */
+    private function eveningInsurancePlanSlot(int $slot, $price, float $soc, array $ctx): array
+    {
+        $minSoc = (float)$this->ReadPropertyInteger('PLAN_Abend_MinSoc');
+        $missingKwh = max(0.0, ($minSoc - $soc) / 100.0 * $ctx['capKwh']);
+        $socStart = $soc;
+        $gainKwh = $this->chargeGainKwh($ctx, $soc, $missingKwh);
+        $socNew = min(100.0, $soc + $gainKwh / max(0.001, $ctx['capKwh']) * 100.0);
+        return array('plan' => array('op' => EMS_OP_NET_CHARGE, 'gw' => GW_MODE_BAT_CHARGE, 'power' => $this->gridChargeXsetW($ctx, $missingKwh, $socStart), 'ab' => 1,
+            'reason' => sprintf('Abend-Absicherung: mit vorsichtiger PV-Prognose läge der Akku um %02d Uhr unter %.0f %% -- günstige Viertelstunde (%.2f ct) wird zum Netzladen genutzt',
+                $this->ReadPropertyInteger('PLAN_Abend_Hour'), $minSoc, $price * 100),
+            'price' => $price, 'soc' => round($socNew, 1)), 'soc' => $socNew);
+    }
+
 
     private function getTibberGridRewardInstance()
     {
@@ -4380,6 +4505,12 @@ class EMS extends IPSModule
             }
         }
 
+        // Manuelle Eintraege + Abend-Absicherung (Vorrang vor der Automatik-Simulation, siehe manualPlanEntries()/eveningInsuranceSlots())
+        $manual     = $this->manualPlanEntries();
+        $pvLowAll   = $this->getPvfSlotsWatt('p10');
+        $abMinSoc   = (float)$this->ReadPropertyInteger('PLAN_Abend_MinSoc');
+        $abToday    = $this->eveningInsuranceSlots($prices, array_slice($pvLowAll, 0, 96), (array)$houseLoadSlotsToday, $nowSlot, $soc, $ctx);
+
         $plan = array();
         $nwToday = false; // beim ersten kuenftigen Slot mit dem dann gueltigen SOC berechnet
         for ($slot = 0; $slot < 96; $slot++) {
@@ -4410,6 +4541,16 @@ class EMS extends IPSModule
             }
             if ($nwToday === false) { $nwToday = $this->nightWindowPlan($prices, $slot, $soc, $ctx); }
             if (!empty($ctx['restwert'])) { $ctx['rwCharge'] = array_merge(array_keys((array)($nwToday['charge'] ?? array())), $rwTmrCharge); }
+            if (isset($manual[0][$slot])) {
+                $r = $this->manualPlanSlot($slot, $price, $pvW, $soc, $manual[0][$slot], $ctx);
+                $plan[$slot] = $r['plan']; $soc = $r['soc'];
+                continue;
+            }
+            if (isset($abToday[$slot]) && $price !== null && $soc < $abMinSoc - 0.5) {
+                $r = $this->eveningInsurancePlanSlot($slot, $price, $soc, $ctx);
+                $plan[$slot] = $r['plan']; $soc = $r['soc'];
+                continue;
+            }
             $result = $this->nightWindowSlot($slot, $price, $soc, $nwToday, $ctx);
             if ($result === null) {
                 $result = $hasArbitrageToday
@@ -4457,6 +4598,7 @@ class EMS extends IPSModule
         $hasArbitrageTomorrow = $this->hasArbitrageInPrices($tomorrowPrices);
 
         $tomorrowPlan = array();
+        $abTomorrow = $this->eveningInsuranceSlots($tomorrowPrices, array_slice($pvLowAll, 96, 96), (array)$houseLoadSlotsTomorrow, 0, $soc, $ctxTomorrow);
         $nwTomorrow = $this->nightWindowPlan($tomorrowPrices, 0, $soc, $ctxTomorrow);
         if (!empty($ctxTomorrow['restwert'])) {
             $rwc = array_map(function ($k) { return 96 + (int)$k; }, array_keys((array)($nwTomorrow['charge'] ?? array())));
@@ -4469,6 +4611,16 @@ class EMS extends IPSModule
                 $r = $this->preDischargePlanSlot(96 + $slot, $pd, $soc, $price, $pvW, (float)($houseLoadSlotsTomorrow[$slot] ?? $avgHouseWTomorrow), $ctxTomorrow);
                 $tomorrowPlan[$slot] = $r['plan'];
                 $soc = $r['soc'];
+                continue;
+            }
+            if (isset($manual[1][$slot])) {
+                $r = $this->manualPlanSlot($slot, $price, $pvW, $soc, $manual[1][$slot], $ctxTomorrow);
+                $tomorrowPlan[$slot] = $r['plan']; $soc = $r['soc'];
+                continue;
+            }
+            if (isset($abTomorrow[$slot]) && $price !== null && $soc < $abMinSoc - 0.5) {
+                $r = $this->eveningInsurancePlanSlot($slot, $price, $soc, $ctxTomorrow);
+                $tomorrowPlan[$slot] = $r['plan']; $soc = $r['soc'];
                 continue;
             }
             $result = $this->nightWindowSlot($slot, $price, $soc, $nwTomorrow, $ctxTomorrow);
@@ -4857,6 +5009,10 @@ class EMS extends IPSModule
         }
         if ($op === EMS_OP_NET_CHARGE && $s['bat_soc'] >= 99.5) {
             return null; // schon voll -- Plan-Annahme ueberholt
+        }
+        // Abend-Absicherung: ist der Mindest-SOC real schon erreicht (PV war besser als die vorsichtige Prognose), wird nicht gekauft
+        if (!empty($slot['ab']) && $s['bat_soc'] >= (float)$this->ReadPropertyInteger('PLAN_Abend_MinSoc')) {
+            return null;
         }
 
         $thWB  = $this->priceThresholds()['wb'];
@@ -5910,10 +6066,12 @@ class EMS extends IPSModule
         // Nachtfenster gilt "immer" (Dietmar 19.09.2026), auch an Tagen ohne Arbitrage-Chance,
         // an denen der Tagesplan sonst nicht befragt wird. Nur Slots, die der Plan selbst als
         // Nachtfenster markiert hat ('nw'); alles andere bleibt Sache der Automatik.
-        if ($this->nightWindowEndHour() > 0) {
-            $nwPlan = $this->loadDayPlan();
-            $nwSlot = (int)(((int)date('H') * 60 + (int)date('i')) / 15);
-            if (!empty($nwPlan[$nwSlot]['nw'])) {
+        // Manuelle Eintraege und Abend-Absicherung ('man'/'ab') gelten ebenfalls immer.
+        $nwPlan = $this->loadDayPlan();
+        $nwSlot = (int)(((int)date('H') * 60 + (int)date('i')) / 15);
+        $nwFlag = ($this->nightWindowEndHour() > 0 && !empty($nwPlan[$nwSlot]['nw'])) || !empty($nwPlan[$nwSlot]['man']) || !empty($nwPlan[$nwSlot]['ab']);
+        {
+            if ($nwFlag) {
                 $planned = $this->applyPlanSlot($s);
                 if ($planned !== null) { return $planned; }
             }
