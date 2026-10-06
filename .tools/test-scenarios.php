@@ -2208,27 +2208,51 @@ $applied = call($ems, 'applyPlanSlot', [$sFB]);
 check('Live-Sicherheitsnetz laesst Xmax=0 auch ohne realen PV-Ueberschuss (10940W Last > 4979W PV) zu, wenn guenstig genug', $applied !== null && $applied['gw_mode'] === GW_MODE_CHARGE_PV && $applied['gw_enable'] === true, json_encode($applied));
 
 // ===========================================================================
-echo "\n20z) Abend-Absicherung und manuelle Plan-Eintraege (0.73.0, Dietmar 05.10.2026)\n";
+echo "\n20z) Bedarfsabsicherung und manuelle Plan-Eintraege (0.73.0/0.74.0, Dietmar 05.10.2026)\n";
 $ems = freshEms();
 $ctxA = ['avgHouseW' => 300.0, 'socMin' => 0.0, 'socReserve' => 10.0, 'capKwh' => 40.0, 'chargeKw' => 20.0, 'chargeCurve' => [],
     'dischargeKw' => 20.0, 'maxW' => 34500.0, 'cycleCost' => 0.031, 'spread' => 0.03, 'feedTariff' => 0.1836];
-$pA = array_fill(0, 96, 0.40); foreach ([68,69,70,71,72,73,74,75] as $i) { $pA[$i] = 0.50; } foreach ([50,51,52,53] as $i) { $pA[$i] = 0.19; }
-$zero = array_fill(0, 96, 0.0); $load = array_fill(0, 96, 300.0);
-prop('PLAN_Abend_MinSoc', 60); prop('PLAN_Abend_Hour', 17);
-$ab = call($ems, 'eveningInsuranceSlots', [$pA, $zero, $load, 40, 30.0, $ctxA]);
-check('Absicherung: SOC 30 % ohne PV, Ziel 60 % -> guenstige Slots vorgemerkt', count($ab) >= 2 && count($ab) <= 4, json_encode(array_keys($ab)));
-check('Absicherung: nur Slots unterhalb der Lohnschwelle (nicht die 40-ct-Slots)', empty(array_filter(array_keys($ab), fn($i) => !in_array($i, [50,51,52,53]))), json_encode(array_keys($ab)));
-check('Absicherung: Slots liegen vor dem Abendzeitpunkt', empty(array_filter(array_keys($ab), fn($i) => $i >= 68)));
-check('Absicherung: SOC 70 % >= Ziel -> nichts vorgemerkt', call($ems, 'eveningInsuranceSlots', [$pA, $zero, $load, 40, 70.0, $ctxA]) === []);
-$pvBig = array_fill(0, 96, 0.0); for ($i = 40; $i < 68; $i++) { $pvBig[$i] = 8000.0; }
-check('Absicherung: vorsichtige PV (p10) fuellt den Akku ohnehin -> nichts vorgemerkt', call($ems, 'eveningInsuranceSlots', [$pA, $pvBig, $load, 40, 30.0, $ctxA]) === []);
-check('Absicherung: nach dem Abendzeitpunkt nichts mehr', call($ems, 'eveningInsuranceSlots', [$pA, $zero, $load, 70, 30.0, $ctxA]) === []);
-check('Absicherung: ohne Preisvorteil (Abendpreis nicht deutlich ueber Einkauf) nichts', call($ems, 'eveningInsuranceSlots', [array_fill(0, 96, 0.30), $zero, $load, 40, 30.0, $ctxA]) === []);
+prop('BAT_SOC_Safety_Margin_Pct', 10); prop('PLAN_Abend_MinSoc', 0); prop('PLAN_Bedarf_Aktiv', true);
+// Kurve ueber 192 Slots: Tag (Slot 28-72 = 07-18 Uhr) PV 4000 W, sonst 0; Last flach; heute + morgen
+$mk = function (float $pvW, float $loadW) {
+    $pv = array_fill(0, 192, 0.0); $ld = array_fill(0, 192, $loadW);
+    foreach ([[28, 72], [124, 168]] as [$a, $b]) { for ($i = $a; $i < $b; $i++) { $pv[$i] = $pvW; } }
+    return [$pv, $ld];
+};
+$p192 = array_fill(0, 192, 0.40); foreach (range(68, 76) as $i) { $p192[$i] = 0.55; } foreach ([4,5,6,7] as $i) { $p192[$i] = 0.20; } foreach (range(80, 87) as $i) { $p192[$i] = 0.20; }
+// 1) Leichte Last (300 W): kein Engpass -> kein Einkauf
+[$pv, $ld] = $mk(4000.0, 300.0);
+check('Bedarf: leichte Last, PV fuellt -> kein Einkauf', call($ems, 'bedarfInsuranceSlots', [$p192, $pv, $ld, 40, 60.0, $ctxA]) === []);
+// 2) Heizlast (3500 W, Waermepumpe) und Batterie 40 %: Engpass in der Nacht -> Einkauf VOR dem Engpass, nur Slots unter der Lohnschwelle
+[$pv, $ld] = $mk(6000.0, 3500.0);
+$ab = call($ems, 'bedarfInsuranceSlots', [$p192, $pv, $ld, 60, 40.0, $ctxA]);
+check('Bedarf: hohe Heizlast, Akku 40 % -> Slots vorgemerkt', count($ab) >= 1, json_encode($ab) . ' rp=' . var_export(call($ems, 'replacementPriceEur', [$p192, 60]), true) . ' conv=' . call($ems, 'convEff') . ' cc=' . var_export($ctxA['cycleCost'], true));
+check('Bedarf: nur Slots unterhalb der Lohnschwelle (20-ct-Slots)', empty(array_filter(array_keys($ab), fn($i) => $p192[$i] >= 0.30)), json_encode(array_keys($ab)));
+$firstBuy = min(array_keys($ab));
+check('Bedarf: Einkauf liegt vor dem Engpass (Slot >= jetzt)', $firstBuy >= 60);
+// 3) Gegenprobe: gleiche Last, Akku schon 100 % und morgen frueh genug PV -> deutlich weniger/kein Einkauf
+$abFull = call($ems, 'bedarfInsuranceSlots', [$p192, $pv, $ld, 60, 100.0, $ctxA]);
+check('Bedarf: voller Akku braucht weniger Einkauf als ein halber', count($abFull) <= count($ab), count($abFull) . ' vs ' . count($ab));
+// 4) Ohne Preisvorteil (Abendpreis = Einkauf) nichts
+check('Bedarf: ohne Preisvorteil kein Einkauf', call($ems, 'bedarfInsuranceSlots', [array_fill(0, 192, 0.30), $pv, $ld, 60, 40.0, $ctxA]) === []);
+// 5) Schalter aus
+prop('PLAN_Bedarf_Aktiv', false);
+check('Bedarf: Schalter aus -> nichts', call($ems, 'bedarfInsuranceSlots', [$p192, $pv, $ld, 60, 40.0, $ctxA]) === []);
+prop('PLAN_Bedarf_Aktiv', true);
+// 6) Marge wirkt: groessere Marge -> mindestens so viel Einkauf
+prop('BAT_SOC_Safety_Margin_Pct', 40);
+$abM = call($ems, 'bedarfInsuranceSlots', [$p192, $pv, $ld, 60, 40.0, $ctxA]);
+check('Bedarf: groessere Sicherheitsmarge kauft mindestens so viel', count($abM) >= count($ab), count($abM) . ' vs ' . count($ab));
+prop('BAT_SOC_Safety_Margin_Pct', 10);
+// 7) Untere Grenze zur Abendstunde
+[$pv2, $ld2] = $mk(1000.0, 300.0);
+$p192b = $p192; foreach (range(50, 53) as $i) { $p192b[$i] = 0.20; }
+prop('PLAN_Abend_MinSoc', 80); prop('PLAN_Abend_Hour', 17);
+$abMin = call($ems, 'bedarfInsuranceSlots', [$p192b, $pv2, $ld2, 40, 30.0, $ctxA]);
+check('Bedarf: optionale untere Grenze zum Abend erzeugt Einkauf vor dem Abend', !empty($abMin) && max(array_keys($abMin)) < 68, json_encode(array_keys($abMin)));
 prop('PLAN_Abend_MinSoc', 0);
-check('Absicherung aus (Mindest-SOC 0) -> nichts', call($ems, 'eveningInsuranceSlots', [$pA, $zero, $load, 40, 30.0, $ctxA]) === []);
-prop('PLAN_Abend_MinSoc', 60);
-$r = call($ems, 'eveningInsurancePlanSlot', [52, 0.19, 30.0, $ctxA]);
-check('Absicherungs-Slot: Netzladen (Modus 11), Marker ab, SOC steigt', $r['plan']['op'] === EMS_OP_NET_CHARGE && $r['plan']['gw'] === GW_MODE_BAT_CHARGE && !empty($r['plan']['ab']) && $r['soc'] > 30.0, json_encode($r['plan']));
+$r = call($ems, 'bedarfInsurancePlanSlot', [5, 0.20, 40.0, 70.0, $ctxA]);
+check('Absicherungs-Slot: Netzladen (Modus 11), Marker ab + Zielwert, SOC steigt', $r['plan']['op'] === EMS_OP_NET_CHARGE && $r['plan']['gw'] === GW_MODE_BAT_CHARGE && !empty($r['plan']['ab']) && $r['plan']['abT'] === 70.0 && $r['soc'] > 40.0, json_encode($r['plan']));
 
 $today = date('Y-m-d'); $tomorrow = date('Y-m-d', strtotime('tomorrow'));
 prop('PLAN_Manual', json_encode([
@@ -2257,11 +2281,11 @@ $GLOBALS['ATTR'][EMS_IID]['DayPlan'] = json_encode(array_fill(0, 96, ['op' => EM
 $d = call($ems, 'optimize', [state(['bat_soc' => 50.0, 'pv_total_w' => 0.0, 'house_pow_w' => 300.0])]);
 check('Gegenprobe: derselbe Slot OHNE man-Marker wird an einem Nicht-Arbitrage-Tag nicht ausgefuehrt', isNativeAuto($d), fmt($d));
 // Absicherungsslot: Mindest-SOC real erreicht -> kein Kauf
-$GLOBALS['ATTR'][EMS_IID]['DayPlan'] = json_encode(array_fill(0, 96, ['op' => EMS_OP_NET_CHARGE, 'gw' => GW_MODE_BAT_CHARGE, 'power' => 5000, 'ab' => 1, 'reason' => 'Abend-Absicherung', 'price' => 0.19, 'soc' => 60]));
+$GLOBALS['ATTR'][EMS_IID]['DayPlan'] = json_encode(array_fill(0, 96, ['op' => EMS_OP_NET_CHARGE, 'gw' => GW_MODE_BAT_CHARGE, 'power' => 5000, 'ab' => 1, 'abT' => 60.0, 'reason' => 'Bedarfsabsicherung', 'price' => 0.19, 'soc' => 60]));
 $d = call($ems, 'optimize', [state(['bat_soc' => 50.0, 'pv_total_w' => 0.0, 'house_pow_w' => 300.0])]);
-check('Laufzeit: Absicherungsslot kauft, solange der reale SOC unter dem Mindest-SOC liegt', $d['op_mode'] === EMS_OP_NET_CHARGE && $d['gw_enable'] === true, fmt($d));
+check('Laufzeit: Absicherungsslot kauft, solange der reale SOC unter dem geplanten Zielwert liegt', $d['op_mode'] === EMS_OP_NET_CHARGE && $d['gw_enable'] === true, fmt($d));
 $d = call($ems, 'optimize', [state(['bat_soc' => 65.0, 'pv_total_w' => 0.0, 'house_pow_w' => 300.0])]);
-check('Laufzeit: Absicherungsslot kauft NICHT mehr, wenn der Mindest-SOC real erreicht ist', isNativeAuto($d), fmt($d));
+check('Laufzeit: Absicherungsslot kauft NICHT mehr, wenn der reale SOC ueber dem Zielwert liegt', isNativeAuto($d), fmt($d));
 
 // ===========================================================================
 echo "\n" . ($fails === 0 ? "ALLE SZENARIEN BESTANDEN" : "$fails SZENARIO(S) VERLETZT") . "\n\n";

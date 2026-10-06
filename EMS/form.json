@@ -1483,9 +1483,14 @@
                     "caption": "Restwert der Batterieenergie (Beta): Der Akku wird geschont und das Haus läuft aus dem Netz, wenn die gespeicherte Energie später (bis zum nächsten Auffüllen durch PV oder Netzladen) mehr einbringt als der Netzbezug jetzt, mindestens um die Mindestspanne für Preis-Arbitrage. Im Tagesplan als Akku halten mit Begründung sichtbar. Zum Vergleich zuerst im Trockenlauf probieren."
                 },
                 {
+                    "type": "CheckBox",
+                    "name": "PLAN_Bedarf_Aktiv",
+                    "caption": "Bedarfsabsicherung: rechnet den SOC mit der vorsichtigen PV-Prognose (p10) und der Lastprognose (enthält die Wärmepumpe über Heizgrad und Außentemperatur) bis zur Übernahme durch die PV am nächsten Tag durch. Würde die Energie nicht reichen (Reserve plus Sicherheitsmarge aus dem Batterie-Panel), kauft der Plan in den günstigsten Viertelstunden vor dem Engpass genau so viel ein, wie fehlt, sofern sich das gegenüber dem teuren Preis nach Wandlungsverlusten, Zykluskosten und Mindestspanne lohnt. Zur Laufzeit wird nicht gekauft, wenn der reale SOC schon über dem geplanten Wert liegt."
+                },
+                {
                     "type": "NumberSpinner",
                     "name": "PLAN_Abend_MinSoc",
-                    "caption": "Abend-Absicherung: Mindest-SOC zum Abend (0 = aus). Würde der Akku mit der vorsichtigen PV-Prognose (p10) darunter liegen, kauft der Plan in den günstigsten Viertelstunden davor Strom ein, sofern sich das gegenüber dem teuren Abendpreis nach Wandlungsverlusten, Zykluskosten und Mindestspanne lohnt",
+                    "caption": "Optionale untere Grenze zur Abendstunde (0 = aus): zusätzlich soll der SOC zur Abendstunde mindestens so hoch sein, auch wenn der Bedarf rechnerisch weniger braucht",
                     "minimum": 0,
                     "maximum": 100,
                     "suffix": " %"
@@ -1493,7 +1498,7 @@
                 {
                     "type": "NumberSpinner",
                     "name": "PLAN_Abend_Hour",
-                    "caption": "Abend-Absicherung: Zeitpunkt, zu dem der Mindest-SOC erreicht sein soll",
+                    "caption": "Abendstunde für die untere Grenze",
                     "minimum": 1,
                     "maximum": 23,
                     "suffix": " Uhr"
