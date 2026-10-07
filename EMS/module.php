@@ -41,7 +41,7 @@ define('EMS_LOG_VERBOSE',     2);
 // Formular-Konvention (siehe EMS/SUITE.md "Einheitliche Formular-Optik"):
 // Was-ist-Neu-Panel ist versionsscharf dismissible, Referenzmuster InverterHub.
 define('EMS_COLOR_AUTO', 0x2E8B3D); // Gruen: Wert wurde automatisch uebernommen (🔗-Zeilen im Formular)
-define('EMS_NEWS_VERSION', '0.74.0');
+define('EMS_NEWS_VERSION', '0.74.1');
 
 // NRG-Stack Partnermodul-GUIDs (fuer automatische Discovery, siehe discoverPartners())
 define('GUID_CHARGERHUB',    '{9256C34E-5CFD-4F37-8BFE-E65390EBB37C}');
@@ -1503,6 +1503,11 @@ class EMS extends IPSModule
                 $status  = IPS_InstanceExists($id) ? IPS_GetInstance($id)['InstanceStatus'] : 0;
                 $healthy = ($status === 102);
                 $sleeping = false;
+                // Status 104 (IS_INACTIVE): der Nutzer hat die Instanz bewusst ausgeschaltet (z. B. eine
+                // Demo-Instanz). Das ist kein Fehler, zaehlt nicht als auffaellig und nicht in die Gesamtzahl,
+                // wird aber getrennt als "deaktiviert" gemeldet (EMS Tagesauswertung 07.10.2026).
+                $inactive = ($status === 104);
+                if ($inactive) { $healthy = true; }
                 // Tessie Status 203 (STATUS_TELEMETRY_STALE) bedeutet nur "seit 900s keine
                 // Telemetrie empfangen" -- unabhaengig vom Grund, siehe TESSIE_GetVehicleState
                 // contractVersion 1.6 Feld 'vehicleStatus' (roh aus Tessies /status-Endpunkt:
@@ -1525,6 +1530,7 @@ class EMS extends IPSModule
                     'status'     => $status,
                     'healthy'    => $healthy,
                     'sleeping'   => $sleeping,
+                    'inactive'   => $inactive,
                 );
             }
         }
@@ -1558,6 +1564,8 @@ class EMS extends IPSModule
 
         $unhealthy = array_values(array_filter($entries, function ($e) { return !$e['healthy']; }));
         $sleeping  = array_values(array_filter($entries, function ($e) { return $e['healthy'] && !empty($e['sleeping']); }));
+        $inactive  = array_values(array_filter($entries, function ($e) { return !empty($e['inactive']); }));
+        $activeCount = count($entries) - count($inactive);
 
         // Installiert, aber nicht (mehr) antwortend -- siehe Discover()/UnresponsiveInstances.
         // Getrennt von $unhealthy, weil diese Instanzen gar nicht erst in GetPartners()
@@ -1578,7 +1586,7 @@ class EMS extends IPSModule
 
         $summary = sprintf(
             '%d/%d Partnerinstanzen gesund',
-            count($entries) - count($unhealthy), count($entries)
+            $activeCount - count($unhealthy), $activeCount
         );
         if (!empty($unhealthy)) {
             $labels = array_map(function ($e) {
@@ -1589,6 +1597,10 @@ class EMS extends IPSModule
         if (!empty($sleeping)) {
             $labels = array_map(function ($e) { return $e['label']; }, $sleeping);
             $summary .= ' -- schlaeft: ' . implode(', ', $labels);
+        }
+        if (!empty($inactive)) {
+            $labels = array_map(function ($e) { return $e['label']; }, $inactive);
+            $summary .= ' -- deaktiviert: ' . implode(', ', $labels);
         }
         if (!empty($missing)) {
             $labels = array_map(function ($m) {
@@ -1601,8 +1613,9 @@ class EMS extends IPSModule
 
         return array(
             'summary'      => $summary,
-            'total'        => count($entries),
-            'healthyCount' => count($entries) - count($unhealthy),
+            'total'        => $activeCount,
+            'healthyCount' => $activeCount - count($unhealthy),
+            'inactiveCount' => count($inactive),
             'unhealthy'    => $unhealthy,
             'missingCount' => count($missing),
             'missing'      => $missing,

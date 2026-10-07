@@ -2288,5 +2288,19 @@ $d = call($ems, 'optimize', [state(['bat_soc' => 65.0, 'pv_total_w' => 0.0, 'hou
 check('Laufzeit: Absicherungsslot kauft NICHT mehr, wenn der reale SOC ueber dem Zielwert liegt', isNativeAuto($d), fmt($d));
 
 // ===========================================================================
+echo "\n21z) Verbund-Gesundheit: bewusst deaktivierte Instanz (Status 104) ist kein Fehler (0.74.1)\n";
+$ems = freshEms();
+$GLOBALS['INSTMOD'][7101] = 'x'; $GLOBALS['INSTMOD'][7102] = 'x'; $GLOBALS['INSTMOD'][7103] = 'x';
+$GLOBALS['OBJ'][7101] = ['ObjectName' => 'Tibber Hauptinstanz']; $GLOBALS['OBJ'][7102] = ['ObjectName' => 'Tibber Demo']; $GLOBALS['OBJ'][7103] = ['ObjectName' => 'Kaputt'];
+$GLOBALS['INSTSTATUS'][7101] = 102; $GLOBALS['INSTSTATUS'][7102] = 104; $GLOBALS['INSTSTATUS'][7103] = 201;
+attr('PartnerCache', json_encode(['tibber' => [['instanceID' => 7101], ['instanceID' => 7102]], 'charger' => [['instanceID' => 7103]]]));
+$h = call($ems, 'GetFederationHealth');
+check('Status 104 zaehlt nicht als auffaellig', count($h['unhealthy']) === 1 && $h['unhealthy'][0]['instanceID'] === 7103, json_encode($h['unhealthy']));
+check('Gesamtzahl ohne die deaktivierte Instanz (1 von 2 gesund)', $h['total'] === 2 && $h['healthyCount'] === 1, $h['summary']);
+check('Deaktivierte Instanz wird getrennt gemeldet', strpos($h['summary'], 'deaktiviert: ') !== false && $h['inactiveCount'] === 1, $h['summary']);
+check('Echter Fehler (Status 201) bleibt auffaellig', strpos($h['summary'], '(Status 201)') !== false);
+unset($GLOBALS['INSTSTATUS'][7102], $GLOBALS['INSTSTATUS'][7103]);
+
+// ===========================================================================
 echo "\n" . ($fails === 0 ? "ALLE SZENARIEN BESTANDEN" : "$fails SZENARIO(S) VERLETZT") . "\n\n";
 exit($fails === 0 ? 0 : 1);
