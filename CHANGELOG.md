@@ -2,6 +2,9 @@
 
 Ältere Versionen: [CHANGELOG-Archiv.md](CHANGELOG-Archiv.md)
 
+## 0.74.2 (2026-10-12)
+- **Logging über `$this->LogMessage()` statt `IPS_LogMessage()`** (Store-Review-Fund des Batteriewächters vom 12.10.2026, verbundweit): `emsLog()` schreibt Basis-Meldungen jetzt als `KL_MESSAGE` mit der Instanz als Absender. Der Prüfstand lässt `IPS_LogMessage(` in `module.php` nicht mehr zu (Block 27z). Keine Verhaltensänderung an der Steuerung.
+
 ## 0.74.1 (2026-10-07)
 - **Verbund-Gesundheit: bewusst deaktivierte Instanzen sind kein Fehler (Hinweis der EMS-Tagesauswertung 07.10.):** Eine Partnerinstanz mit Status 104 (vom Nutzer ausgeschaltet, z. B. die Tibber-Demo-Instanz) stand als „auffällig“ in `EMS_FederationHealth`. Jetzt zählt sie weder als auffällig noch in die Gesamtzahl, sondern erscheint getrennt als „deaktiviert: …“ (`GetFederationHealth()`: neues Feld `inactiveCount`, Eintrag mit `inactive`, `healthy` bleibt wahr). Echte Fehler (z. B. Status 201) bleiben auffällig. Vier Prüfungen (Block 21z), Mutationstest bestätigt.
 - **Modus 9 live bestätigt (erstes Mal, 06.10.2026 19:15–19:20, Tibber-Auto an WB2, 7,0 kW):** Der Sollwert folgte der gemessenen Auto-Leistung minus 200 W (2340 → 6880 W), der Netzbezug blieb bei etwa 6,8 kW, das Haus lief aus der Batterie (etwa 0,45–0,58 kW Entladung). Nach Ladeende (Status 4 um 19:20:09) verließ EMS den Modus um 19:20:30; in diesen rund 20 s lud die Batterie kurz mit bis zu 1,6 kW, weil der geregelte Netzbezug ohne Auto in die Batterie floss. Nicht geprüft: Verhalten mit PV-Überschuss (Drosselschutz).

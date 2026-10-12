@@ -41,7 +41,7 @@ define('EMS_LOG_VERBOSE',     2);
 // Formular-Konvention (siehe EMS/SUITE.md "Einheitliche Formular-Optik"):
 // Was-ist-Neu-Panel ist versionsscharf dismissible, Referenzmuster InverterHub.
 define('EMS_COLOR_AUTO', 0x2E8B3D); // Gruen: Wert wurde automatisch uebernommen (🔗-Zeilen im Formular)
-define('EMS_NEWS_VERSION', '0.74.1');
+define('EMS_NEWS_VERSION', '0.74.2');
 
 // NRG-Stack Partnermodul-GUIDs (fuer automatische Discovery, siehe discoverPartners())
 define('GUID_CHARGERHUB',    '{9256C34E-5CFD-4F37-8BFE-E65390EBB37C}');
@@ -8320,7 +8320,7 @@ class EMS extends IPSModule
 
     /**
      * Logging: SendDebug ins Instanz-Debug-Fenster +
-     * IPS_LogMessage ins Systemlog (nur Basis-Level).
+     * $this->LogMessage ins Systemlog (nur Basis-Level).
      */
     private function emsLog($level, $message)
     {
@@ -8329,7 +8329,7 @@ class EMS extends IPSModule
         $prefix = ($level === EMS_LOG_VERBOSE) ? 'VERBOSE' : 'INFO';
         $this->SendDebug($prefix, $message, 0);
         if ($level <= EMS_LOG_BASIC) {
-            IPS_LogMessage('EMS', $message);
+            $this->LogMessage($message, KL_MESSAGE);
         }
     }
 }

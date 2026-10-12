@@ -31,6 +31,7 @@ $GLOBALS['PROP'] = [];    // iid => name => wert (ueberschreibt Create()-Default
 $GLOBALS['ATTR'] = [];    // iid => name => wert
 $GLOBALS['INSTMOD'] = []; // iid => Modul-GUID
 $GLOBALS['NEXTID'] = 9000;
+define('KL_MESSAGE', 10201); define('KL_NOTIFY', 10202); define('KL_WARNING', 10203); define('KL_ERROR', 10204); define('KL_DEBUG', 10205); define('KL_CUSTOM', 10206);
 $GLOBALS['LOG'] = [];     // IPS_LogMessage-Protokoll
 $GLOBALS['ACTIONS'] = []; // IPS_RequestAction-Protokoll [iid, ident, wert]
 $GLOBALS['SBH_STATE'] = null;
@@ -162,6 +163,7 @@ class IPSModule
     protected function SetTimerInterval($n, $i) {}
     protected function SetStatus($s) {}
     protected function SendDebug($sender, $msg, $format) {}
+    protected function LogMessage($msg, $type) { $GLOBALS['LOG'][] = 'LogMessage(' . $type . '): ' . $msg; }
     public function UpdateFormField($f, $p, $v) { $GLOBALS['FORMFIELD'][$f][$p] = $v; }
     protected function RegisterMessage($a, $b) {}
     public function Translate($s) { return $s; }
@@ -2300,6 +2302,12 @@ check('Gesamtzahl ohne die deaktivierte Instanz (1 von 2 gesund)', $h['total'] =
 check('Deaktivierte Instanz wird getrennt gemeldet', strpos($h['summary'], 'deaktiviert: ') !== false && $h['inactiveCount'] === 1, $h['summary']);
 check('Echter Fehler (Status 201) bleibt auffaellig', strpos($h['summary'], '(Status 201)') !== false);
 unset($GLOBALS['INSTSTATUS'][7102], $GLOBALS['INSTSTATUS'][7103]);
+
+// ===========================================================================
+echo "\n27z) Store-Review-Checkliste Punkt 15: kein IPS_LogMessage in module.php\n";
+$src = file_get_contents(__DIR__ . '/../EMS/module.php');
+check('module.php enthaelt kein IPS_LogMessage( (nur $this->LogMessage)', strpos($src, 'IPS_LogMessage(') === false);
+check('emsLog() nutzt $this->LogMessage', strpos($src, '$this->LogMessage($message, KL_MESSAGE)') !== false);
 
 // ===========================================================================
 echo "\n" . ($fails === 0 ? "ALLE SZENARIEN BESTANDEN" : "$fails SZENARIO(S) VERLETZT") . "\n\n";
