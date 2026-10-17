@@ -41,7 +41,7 @@ define('EMS_LOG_VERBOSE',     2);
 // Formular-Konvention (siehe EMS/SUITE.md "Einheitliche Formular-Optik"):
 // Was-ist-Neu-Panel ist versionsscharf dismissible, Referenzmuster InverterHub.
 define('EMS_COLOR_AUTO', 0x2E8B3D); // Gruen: Wert wurde automatisch uebernommen (🔗-Zeilen im Formular)
-define('EMS_NEWS_VERSION', '0.74.2');
+define('EMS_NEWS_VERSION', '0.74.3');
 
 // NRG-Stack Partnermodul-GUIDs (fuer automatische Discovery, siehe discoverPartners())
 define('GUID_CHARGERHUB',    '{9256C34E-5CFD-4F37-8BFE-E65390EBB37C}');
@@ -473,6 +473,7 @@ class EMS extends IPSModule
         $this->RegisterAttributeString('DeadmanTriggerLog', '[]');
         $this->RegisterAttributeBoolean('DeadmanBrakeTripped', false);
         $this->RegisterAttributeInteger('LastGoodweMode',    GW_MODE_AUTO);
+        $this->RegisterAttributeInteger('SmartFullHoldUntil', 0);   // Haltezeit Modus 2 bei vollem Akku (Drosselschutz Modus 9)
         $this->RegisterAttributeBoolean('LastGoodweEnable',  true);
         $this->RegisterAttributeInteger('LastGoodwePowerW',  0);
         $this->RegisterAttributeInteger('NoControlLoggedAt', 0);
@@ -683,6 +684,10 @@ class EMS extends IPSModule
                 'caption'  => '🆕 Neu in Version ' . EMS_NEWS_VERSION,
                 'expanded' => true,
                 'items'    => array(
+                    array(
+                        'type'    => 'Label',
+                        'caption' => '• GEÄNDERT: Lädt ein Auto bei fast vollem Akku (ab 95 %) im Smart Charging oder Grid Reward, hält EMS jetzt auch dann die Wechselrichter-Einstellung „Laden aus PV“ (Modus 2), wenn die gemessene PV gerade gedrosselt oder von einer Wolke verdeckt ist. Dafür zählt zusätzlich die PV-Prognose der laufenden Viertelstunde, und nach erkanntem Überschuss gilt eine Haltezeit von zehn Minuten. Vorher konnte der Netzbezugsmodus (Modus 9) die PV auf unter 1 kW drosseln und sich selbst festhalten (Beobachtung vom 10.10.).'
+                    ),
                     array(
                         'type'    => 'Label',
                         'caption' => '• GEÄNDERT: Die Absicherung rechnet jetzt den Bedarf statt eines festen Prozentwerts: SOC-Verlauf mit vorsichtiger PV-Prognose und Lastprognose (mit Wärmepumpe über die Außentemperatur) bis zur PV-Übernahme am nächsten Tag. Fehlt Energie, kauft der Plan nur so viel in den günstigsten Viertelstunden vor dem Engpass, wie wirklich fehlt. Der frühere Mindest-SOC ist nur noch eine optionale untere Grenze zur Abendstunde (Standard aus).'
@@ -7423,9 +7428,19 @@ class EMS extends IPSModule
         $xset = (int)round($carW - 200.0);
         $soc  = (float)$s['bat_soc'];
         $reserve = (float)$this->ReadPropertyInteger('BAT_SOC_Min') + (float)$this->ReadPropertyInteger('BAT_SOC_Reserve_Backup');
-        $pvSurplus = (float)$s['pv_total_w'] - (float)$s['house_pow_w'];
         // Hysterese gegen Pendeln an der Schwelle: laeuft Modus 9 schon, erst bei 97 % aufgeben
         $full = ($this->ReadAttributeInteger('LastGoodweMode') === GW_MODE_BUY) ? 97.0 : 95.0;
+        // PV-POTENZIAL statt nur gemessener PV (Live-Befund 10.10.2026): In Modus 9 drosselt der WR die PV bei
+        // vollem Akku auf < 1 kW. Die gemessene PV ist dann schon gedrosselt und der Ueberschuss scheint 0 -- der
+        // Schutz sah den Ueberschuss nie wieder und blieb in Modus 9 haengen (20 Wechsel 2<->9 in 55 min). Deshalb
+        // zaehlt hier auch 70 % der Prognose (p50) der laufenden Viertelstunde. Nur nahe voll abgefragt.
+        $pvPot = (float)$s['pv_total_w'];
+        if ($soc >= $full - 5.0) {
+            $fc = $this->getPvfSlotsWatt();
+            $nowSlot = (int)(((int)date('H') * 60 + (int)date('i')) / 15);
+            $pvPot = max($pvPot, 0.7 * (float)($fc[$nowSlot] ?? 0.0));
+        }
+        $pvSurplus = $pvPot - (float)$s['house_pow_w'];
         $why = '';
         if (!$this->ReadPropertyBoolean('WB_Smart_HouseFromBattery')) {
             $why = 'Schalter „Haus aus der Batterie“ aus';
@@ -7435,6 +7450,10 @@ class EMS extends IPSModule
             $why = 'Batterie an der Reserve, kann das Haus nicht tragen';
         } elseif ($pvSurplus > 300.0 && $soc >= $full) {
             $why = 'Batterie fast voll, PV-Überschuss würde bei Netzbezugsregelung gedrosselt';
+            // Haltezeit: eine kurze Wolke darf den Schutz nicht sofort wieder nach Modus 9 zurueckwerfen
+            $this->WriteAttributeInteger('SmartFullHoldUntil', time() + 600);
+        } elseif ($soc >= $full && time() < $this->ReadAttributeInteger('SmartFullHoldUntil')) {
+            $why = 'Batterie fast voll, Haltezeit nach erkanntem PV-Überschuss (Drosselung vermeiden)';
         }
         if ($why === '') {
             return array('gw_mode' => GW_MODE_BUY, 'gw_power_w' => $xset, 'gw_enable' => true,

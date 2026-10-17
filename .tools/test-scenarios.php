@@ -582,6 +582,7 @@ echo "   Rueckfall auf Modus 2 (Haus aus dem Netz), wenn Modus 9 die PV drosseln
 prop('WB1_Mode', 1); prop('WB2_Mode', 0);
 $r = $sc($autoSc, $sSc(['bat_soc' => 97.0, 'pv_total_w' => 5000.0, 'house_pow_w' => 400.0]));
 check('Batterie fast voll (97 %) bei PV-Ueberschuss: Modus 2 statt 9 (Netzbezugsregelung wuerde PV drosseln), Grund genannt', $r['gw_mode'] === GW_MODE_CHARGE_PV && (int)$r['gw_power_w'] === 0 && strpos($r['reason'], 'PV-Überschuss würde bei Netzbezugsregelung gedrosselt') !== false, fmt($r) . ' | ' . $r['reason']);
+attr('SmartFullHoldUntil', 0); // Haltezeit aus dem Test davor zuruecksetzen
 $r = $sc($autoSc, $sSc(['bat_soc' => 97.0, 'pv_total_w' => 500.0, 'house_pow_w' => 400.0]));
 check('Batterie voll, aber kaum PV-Ueberschuss (100 W): Modus 9 bleibt (nichts zu drosseln, Batterie deckt das Haus)', $r['gw_mode'] === GW_MODE_BUY, fmt($r));
 $r = $sc($autoSc, $sSc(['bat_soc' => 70.0, 'pv_total_w' => 5000.0, 'house_pow_w' => 400.0]));
@@ -592,6 +593,27 @@ check('Hysterese: laeuft Modus 9 schon, bleibt er bis 97 % (96 % mit PV-Uebersch
 attr('LastGoodweMode', GW_MODE_AUTO);
 $r = $sc($autoSc, $sSc(['bat_soc' => 96.0, 'pv_total_w' => 5000.0, 'house_pow_w' => 400.0]));
 check('Hysterese: sonst schon ab 95 % Modus 2 (96 % mit PV-Ueberschuss)', $r['gw_mode'] === GW_MODE_CHARGE_PV, fmt($r));
+echo "   PV-Potenzial aus der Prognose und Haltezeit (Live-Befund 10.10.2026: in Modus 9 gedrosselte PV, Dauerpendeln 2<->9)\n";
+$GLOBALS['PVF_FC'] = [];
+if (!function_exists('PVF_GetForecast')) { function PVF_GetForecast($iid, $offset = 0) { return $GLOBALS['PVF_FC'][$offset] ?? []; } }
+$GLOBALS['INSTMOD'][7100] = GUID_PVFORECAST; obj(7100, 1, 'PV', 0);
+attr('LastGoodweMode', GW_MODE_BUY); attr('SmartFullHoldUntil', 0);
+$GLOBALS['PVF_FC'] = [0 => ['p50' => array_fill(0, 96, 5000.0)], 1 => ['p50' => array_fill(0, 96, 5000.0)]];
+$r = $sc($autoSc, $sSc(['bat_soc' => 100.0, 'pv_total_w' => 600.0, 'house_pow_w' => 400.0]));
+check('Gedrosselte PV (gemessen 600 W) bei Prognose 5 kW und SOC 100 %: Modus 2, Drosselung nicht verfestigen (vorher: Modus 9 haengt fest)', $r['gw_mode'] === GW_MODE_CHARGE_PV && strpos($r['reason'], 'gedrosselt') !== false, fmt($r));
+$GLOBALS['PVF_FC'] = [];
+$r = $sc($autoSc, $sSc(['bat_soc' => 100.0, 'pv_total_w' => 600.0, 'house_pow_w' => 400.0]));
+check('Haltezeit: eine Wolke (Prognose leer, PV 600 W) wirft den Schutz binnen 10 min nicht zurueck nach Modus 9', $r['gw_mode'] === GW_MODE_CHARGE_PV && strpos($r['reason'], 'Haltezeit') !== false, fmt($r));
+attr('SmartFullHoldUntil', time() - 1);
+$r = $sc($autoSc, $sSc(['bat_soc' => 100.0, 'pv_total_w' => 600.0, 'house_pow_w' => 400.0]));
+check('Nach Ablauf der Haltezeit und ohne Potenzial: wieder Modus 9 (Nacht-/Wolkenfall)', $r['gw_mode'] === GW_MODE_BUY, fmt($r));
+$GLOBALS['PVF_FC'] = [0 => ['p50' => array_fill(0, 96, 0.0)], 1 => ['p50' => array_fill(0, 96, 0.0)]];
+$r = $sc($autoSc, $sSc(['bat_soc' => 100.0, 'pv_total_w' => 0.0, 'house_pow_w' => 400.0]));
+check('Nacht (Prognose 0 W, PV 0 W), SOC 100 %: Modus 9', $r['gw_mode'] === GW_MODE_BUY, fmt($r));
+$GLOBALS['PVF_FC'] = [0 => ['p50' => array_fill(0, 96, 5000.0)], 1 => ['p50' => array_fill(0, 96, 5000.0)]];
+$r = $sc($autoSc, $sSc(['bat_soc' => 80.0, 'pv_total_w' => 600.0, 'house_pow_w' => 400.0]));
+check('SOC 80 %: das Potenzial spielt keine Rolle, Modus 9 (PV-Ueberschuss laedt die Batterie)', $r['gw_mode'] === GW_MODE_BUY, fmt($r));
+unset($GLOBALS['INSTMOD'][7100]); $GLOBALS['PVF_FC'] = []; attr('LastGoodweMode', GW_MODE_AUTO); attr('SmartFullHoldUntil', 0);
 $resv = $ems->ReadPropertyInteger('BAT_SOC_Min') + $ems->ReadPropertyInteger('BAT_SOC_Reserve_Backup');
 $r = $sc($autoSc, $sSc(['bat_soc' => (float)$resv + 1.0]));
 check('Batterie an der Reserve: Modus 2 (die Batterie kann das Haus nicht tragen), Grund genannt', $r['gw_mode'] === GW_MODE_CHARGE_PV && strpos($r['reason'], 'Batterie an der Reserve') !== false, fmt($r) . ' | ' . $r['reason']);

@@ -2,6 +2,9 @@
 
 Ältere Versionen: [CHANGELOG-Archiv.md](CHANGELOG-Archiv.md)
 
+## 0.74.3 (2026-10-17)
+- **Modus 9 drosselt die PV bei vollem Akku nicht mehr (Live-Befund 10.10.2026):** Der Drosselschutz in `carFromGridSetting()` (Smart Charging und Grid Reward mit Auto) maß den PV-Überschuss mit der gemessenen PV. In Modus 9 ist die aber schon vom Wechselrichter gedrosselt (5 kW → unter 1 kW), der Überschuss schien 0, der Schutz blieb in Modus 9 hängen oder sprang bei einer Wolke dorthin (20 Wechsel 2↔9 in 55 min, geschätzt 1,5–2 kWh PV verschenkt). Jetzt zählt ab SOC 90 % zusätzlich 70 % der PV-Prognose (p50) der laufenden Viertelstunde als Potenzial, und nach erkanntem Überschuss gilt eine Haltezeit von 10 min (Attribut `SmartFullHoldUntil`). Nachts (Prognose 0) und bei SOC unter dem Schwellwert bleibt Modus 9. Fünf neue Prüfungen, zwei Mutationstests bestätigt. **Live noch nicht gemessen** (braucht Sonne und vollen Akku).
+
 ## 0.74.2 (2026-10-12)
 - **Logging über `$this->LogMessage()` statt `IPS_LogMessage()`** (Store-Review-Fund des Batteriewächters vom 12.10.2026, verbundweit): `emsLog()` schreibt Basis-Meldungen jetzt als `KL_MESSAGE` mit der Instanz als Absender. Der Prüfstand lässt `IPS_LogMessage(` in `module.php` nicht mehr zu (Block 27z). Keine Verhaltensänderung an der Steuerung.
 
