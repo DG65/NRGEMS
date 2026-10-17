@@ -41,7 +41,7 @@ define('EMS_LOG_VERBOSE',     2);
 // Formular-Konvention (siehe EMS/SUITE.md "Einheitliche Formular-Optik"):
 // Was-ist-Neu-Panel ist versionsscharf dismissible, Referenzmuster InverterHub.
 define('EMS_COLOR_AUTO', 0x2E8B3D); // Gruen: Wert wurde automatisch uebernommen (🔗-Zeilen im Formular)
-define('EMS_NEWS_VERSION', '0.74.3');
+define('EMS_NEWS_VERSION', '0.74.4');
 
 // NRG-Stack Partnermodul-GUIDs (fuer automatische Discovery, siehe discoverPartners())
 define('GUID_CHARGERHUB',    '{9256C34E-5CFD-4F37-8BFE-E65390EBB37C}');
@@ -473,7 +473,9 @@ class EMS extends IPSModule
         $this->RegisterAttributeString('DeadmanTriggerLog', '[]');
         $this->RegisterAttributeBoolean('DeadmanBrakeTripped', false);
         $this->RegisterAttributeInteger('LastGoodweMode',    GW_MODE_AUTO);
-        $this->RegisterAttributeInteger('SmartFullHoldUntil', 0);   // Haltezeit Modus 2 bei vollem Akku (Drosselschutz Modus 9)
+        $this->RegisterAttributeInteger('SmartFullHoldUntil', 0);
+        $this->RegisterAttributeInteger('SmartNoTrackSince', 0);     // Modus 9 erreicht den Netz-Sollwert nicht: seit wann
+        $this->RegisterAttributeInteger('SmartNoTrackHoldUntil', 0);  // ... und Haltezeit in Modus 2   // Haltezeit Modus 2 bei vollem Akku (Drosselschutz Modus 9)
         $this->RegisterAttributeBoolean('LastGoodweEnable',  true);
         $this->RegisterAttributeInteger('LastGoodwePowerW',  0);
         $this->RegisterAttributeInteger('NoControlLoggedAt', 0);
@@ -684,6 +686,10 @@ class EMS extends IPSModule
                 'caption'  => '🆕 Neu in Version ' . EMS_NEWS_VERSION,
                 'expanded' => true,
                 'items'    => array(
+                    array(
+                        'type'    => 'Label',
+                        'caption' => '• NEU: Erreicht der Netzbezugsmodus (Modus 9) beim Laden eines Autos seinen Sollwert nicht und speist die Hausbatterie dabei spürbar ins Auto (beobachtet bei einphasig ladendem Auto mit etwa 3,6 kW), wechselt EMS nach 90 Sekunden für 15 Minuten auf „Laden aus PV“ (Modus 2). Danach wird Modus 9 neu versucht. Das Haus läuft in dieser Zeit aus dem Netz, die Batterie wird nicht entladen.'
+                    ),
                     array(
                         'type'    => 'Label',
                         'caption' => '• GEÄNDERT: Lädt ein Auto bei fast vollem Akku (ab 95 %) im Smart Charging oder Grid Reward, hält EMS jetzt auch dann die Wechselrichter-Einstellung „Laden aus PV“ (Modus 2), wenn die gemessene PV gerade gedrosselt oder von einer Wolke verdeckt ist. Dafür zählt zusätzlich die PV-Prognose der laufenden Viertelstunde, und nach erkanntem Überschuss gilt eine Haltezeit von zehn Minuten. Vorher konnte der Netzbezugsmodus (Modus 9) die PV auf unter 1 kW drosseln und sich selbst festhalten (Beobachtung vom 10.10.).'
@@ -7454,6 +7460,28 @@ class EMS extends IPSModule
             $this->WriteAttributeInteger('SmartFullHoldUntil', time() + 600);
         } elseif ($soc >= $full && time() < $this->ReadAttributeInteger('SmartFullHoldUntil')) {
             $why = 'Batterie fast voll, Haltezeit nach erkanntem PV-Überschuss (Drosselung vermeiden)';
+        } elseif (time() < $this->ReadAttributeInteger('SmartNoTrackHoldUntil')) {
+            $why = 'Netzbezugsregelung erreichte den Sollwert nicht, Haltezeit (Batterie würde das Auto mitversorgen)';
+        } elseif ($this->ReadAttributeInteger('LastGoodweMode') === GW_MODE_BUY) {
+            // Messbasierte Absicherung (Live-Befund 16.10.2026): Bei einphasig ladendem Auto (~3,6 kW) erreichte Modus 9
+            // den Netz-Sollwert nicht (Netz 2,0-2,4 kW statt 3,4 kW), die Batterie speiste dauerhaft 1,9-2,3 kW und damit
+            // ~1,2 kW ins Auto. Ob das an der Phasenzahl liegt, ist ungeprueft; deshalb nicht an einer Schwelle, sondern
+            // an der Messung: liegt der Netzbezug 90 s lang ueber 600 W unter Xset UND entlaedt die Batterie deutlich
+            // mehr als das Haus braucht, geht EMS fuer 15 min auf Modus 2 (Batterie schonen, Haus kurz aus dem Netz).
+            $gridImport = max(0.0, -(float)($s['grid_total_w'] ?? 0.0));
+            $batDis = (float)($s['bat_pow_w'] ?? 0.0);
+            $deviates = ($xset - $gridImport) > 600.0 && $batDis > (float)$s['house_pow_w'] + 400.0;
+            $since = $this->ReadAttributeInteger('SmartNoTrackSince');
+            if (!$deviates) {
+                if ($since > 0) { $this->WriteAttributeInteger('SmartNoTrackSince', 0); }
+            } elseif ($since <= 0) {
+                $this->WriteAttributeInteger('SmartNoTrackSince', time());
+            } elseif (time() - $since >= 90) {
+                $this->WriteAttributeInteger('SmartNoTrackSince', 0);
+                $this->WriteAttributeInteger('SmartNoTrackHoldUntil', time() + 900);
+                $this->emsLog(EMS_LOG_BASIC, sprintf('Modus 9 erreicht den Netz-Sollwert nicht: Netzbezug %.0f W statt %.0f W, Batterie entlaedt %.0f W (Haus %.0f W) -- Modus 2 fuer 15 min', $gridImport, $xset, $batDis, (float)$s['house_pow_w']));
+                $why = sprintf('Netzbezugsregelung erreichte den Sollwert nicht (Netz %.1f kW statt %.1f kW, Batterie speist %.1f kW)', $gridImport / 1000.0, $xset / 1000.0, $batDis / 1000.0);
+            }
         }
         if ($why === '') {
             return array('gw_mode' => GW_MODE_BUY, 'gw_power_w' => $xset, 'gw_enable' => true,

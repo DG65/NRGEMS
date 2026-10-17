@@ -593,6 +593,29 @@ check('Hysterese: laeuft Modus 9 schon, bleibt er bis 97 % (96 % mit PV-Uebersch
 attr('LastGoodweMode', GW_MODE_AUTO);
 $r = $sc($autoSc, $sSc(['bat_soc' => 96.0, 'pv_total_w' => 5000.0, 'house_pow_w' => 400.0]));
 check('Hysterese: sonst schon ab 95 % Modus 2 (96 % mit PV-Ueberschuss)', $r['gw_mode'] === GW_MODE_CHARGE_PV, fmt($r));
+echo "   Messbasierter Rueckfall: Modus 9 erreicht den Netz-Sollwert nicht (Live-Befund 16.10.2026, einphasig ~3,6 kW)\n";
+foreach (['SmartNoTrackSince', 'SmartNoTrackHoldUntil', 'SmartFullHoldUntil'] as $a) { attr($a, 0); }
+attr('LastGoodweMode', GW_MODE_BUY);
+$dev = ['bat_soc' => 80.0, 'wb1_pow_kw' => 3.6, 'pv_total_w' => 0.0, 'house_pow_w' => 300.0, 'grid_total_w' => -2200.0, 'bat_pow_w' => 2000.0];
+$r = $sc($autoSc, $sSc($dev));
+check('Erste Abweichung (Netz 2,2 kW statt 3,4 kW, Batterie speist 2,0 kW): noch Modus 9, nur die Messung beginnt', $r['gw_mode'] === GW_MODE_BUY && (int)$r['gw_power_w'] === 3400 && $ems->ReadAttributeInteger('SmartNoTrackSince') > 0, fmt($r));
+attr('SmartNoTrackSince', time() - 100);
+$r = $sc($autoSc, $sSc($dev));
+check('Abweichung > 90 s: Rueckfall auf Modus 2 (Batterie speist nicht mehr ins Auto), Grund mit Messwerten genannt', $r['gw_mode'] === GW_MODE_CHARGE_PV && strpos($r['reason'], 'Sollwert nicht') !== false && strpos($r['reason'], '2.2 kW') !== false, fmt($r) . ' | ' . $r['reason']);
+$r = $sc($autoSc, $sSc(['bat_soc' => 80.0, 'wb1_pow_kw' => 3.6, 'house_pow_w' => 300.0, 'grid_total_w' => -3400.0, 'bat_pow_w' => 300.0]));
+check('Haltezeit 15 min: auch mit unauffaelligen Messwerten bleibt es in Modus 2', $r['gw_mode'] === GW_MODE_CHARGE_PV && strpos($r['reason'], 'Haltezeit') !== false, fmt($r));
+attr('SmartNoTrackHoldUntil', time() - 1);
+$r = $sc($autoSc, $sSc(['bat_soc' => 80.0, 'wb1_pow_kw' => 3.6, 'house_pow_w' => 300.0, 'grid_total_w' => -3400.0, 'bat_pow_w' => 300.0]));
+check('Nach der Haltezeit: Modus 9 wird neu versucht', $r['gw_mode'] === GW_MODE_BUY, fmt($r));
+$r = $sc($autoSc, $sSc(['bat_soc' => 80.0, 'wb1_pow_kw' => 11.0, 'house_pow_w' => 300.0, 'grid_total_w' => -10800.0, 'bat_pow_w' => 350.0]));
+check('Normalfall (Netz = Sollwert, Batterie deckt nur das Haus): Modus 9, keine Messung', $r['gw_mode'] === GW_MODE_BUY && $ems->ReadAttributeInteger('SmartNoTrackSince') === 0, fmt($r));
+$r = $sc($autoSc, $sSc(['bat_soc' => 80.0, 'wb1_pow_kw' => 3.6, 'pv_total_w' => 2000.0, 'house_pow_w' => 300.0, 'grid_total_w' => -2200.0, 'bat_pow_w' => -1400.0]));
+check('Netz unter Xset, aber Batterie LAEDT (PV-Ueberschuss): keine Abweichung, Modus 9 bleibt', $r['gw_mode'] === GW_MODE_BUY && $ems->ReadAttributeInteger('SmartNoTrackSince') === 0, fmt($r));
+attr('LastGoodweMode', GW_MODE_AUTO);
+$r = $sc($autoSc, $sSc($dev));
+check('Modus 9 laeuft noch nicht (Anlaufphase): Abweichung wird nicht gezaehlt', $r['gw_mode'] === GW_MODE_BUY && $ems->ReadAttributeInteger('SmartNoTrackSince') === 0, fmt($r));
+foreach (['SmartNoTrackSince', 'SmartNoTrackHoldUntil'] as $a) { attr($a, 0); }
+attr('LastGoodweMode', GW_MODE_AUTO);
 echo "   PV-Potenzial aus der Prognose und Haltezeit (Live-Befund 10.10.2026: in Modus 9 gedrosselte PV, Dauerpendeln 2<->9)\n";
 $GLOBALS['PVF_FC'] = [];
 if (!function_exists('PVF_GetForecast')) { function PVF_GetForecast($iid, $offset = 0) { return $GLOBALS['PVF_FC'][$offset] ?? []; } }
