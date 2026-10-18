@@ -2,6 +2,9 @@
 
 Ältere Versionen: [CHANGELOG-Archiv.md](CHANGELOG-Archiv.md)
 
+## 0.75.3 (2026-10-18)
+- **Messpunkt-Zeile im Verbund-Status:** Das Panel „Verbund-Status“ zeigt jetzt in einer Zeile, welche Messpunkte des gefundenen Wechselrichters EMS nutzt (PV, Netz, Batterie, SOC, AC-Leistung, je ✓/✗), ob EMS steuern darf oder nur beobachtet, und ob EMS im Formular deaktiviert ist (Status 104). Aktualisiert sich nach „Jetzt neu suchen“. Anlass: Bei einem Solis-Wechselrichter wirkte EMS, als fände es die Messpunkte nicht; tatsächlich war EMS deaktiviert (und die Instanz lief auf einem sehr alten Stand). Keine Verhaltensänderung.
+
 ## 0.75.2 (2026-10-18)
 - **Herstellerneutrale Texte (Dietmar 18.10.2026):** EMS soll im Endeffekt alle Wechselrichter steuern, deshalb stehen Log-Meldungen („Wechselrichter → Modus …“, „Fallback aktiv – Wechselrichter Modus …“, „Wechselrichtersteuerung: WR #… hat keine EMS-Stellglieder“), Formulartexte (Export-Sollwert-Modus, Heartbeat-Hinweis) und die README (Geräteliste, Voraussetzungen, Betriebsmodi, Lastmanagement, Sicherheitshinweise) nicht mehr auf GoodWe. Wo etwas wirklich nur GoodWe betrifft, steht es sachlich dabei („derzeit GoodWe“). Keine Änderung an Verhalten, internen Namen oder Attributen. Die Steuerung selbst bleibt vorerst GoodWe-Registersprache; andere Hersteller werden gelesen, EMS beobachtet dort nur. Eine Prüfung sichert die neutralen Texte.
 

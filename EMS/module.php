@@ -41,7 +41,7 @@ define('EMS_LOG_VERBOSE',     2);
 // Formular-Konvention (siehe EMS/SUITE.md "Einheitliche Formular-Optik"):
 // Was-ist-Neu-Panel ist versionsscharf dismissible, Referenzmuster InverterHub.
 define('EMS_COLOR_AUTO', 0x2E8B3D); // Gruen: Wert wurde automatisch uebernommen (🔗-Zeilen im Formular)
-define('EMS_NEWS_VERSION', '0.75.2');
+define('EMS_NEWS_VERSION', '0.75.3');
 
 // NRG-Stack Partnermodul-GUIDs (fuer automatische Discovery, siehe discoverPartners())
 define('GUID_CHARGERHUB',    '{9256C34E-5CFD-4F37-8BFE-E65390EBB37C}');
@@ -691,6 +691,10 @@ class EMS extends IPSModule
                 'caption'  => '🆕 Neu in Version ' . EMS_NEWS_VERSION,
                 'expanded' => true,
                 'items'    => array(
+                    array(
+                        'type'    => 'Label',
+                        'caption' => '• NEU: Im Verbund-Status steht jetzt in einer Zeile, welche Messpunkte des Wechselrichters EMS gefunden hat (PV, Netz, Batterie, SOC, AC-Leistung), ob EMS steuern darf oder nur beobachtet und ob EMS deaktiviert ist.'
+                    ),
                     array(
                         'type'    => 'Label',
                         'caption' => '• GEÄNDERT: Läuft ein Grid Reward und das Auto lädt, hat jetzt auch das GEPLANTE Netzladen der Batterie Vorrang (nicht nur bei negativem Preis). Vorher blendete Grid Rewards den Tagesplan aus, die Batterie blieb dann leer, obwohl der Plan sie in der günstigen Nacht nachladen wollte. Das Auto wird weiter von Tibber gesteuert und läuft obendrauf, bei Ladestopp (Knappheit im Netz) entsteht kein zusätzlicher Netzbezug.'
