@@ -41,7 +41,7 @@ define('EMS_LOG_VERBOSE',     2);
 // Formular-Konvention (siehe EMS/SUITE.md "Einheitliche Formular-Optik"):
 // Was-ist-Neu-Panel ist versionsscharf dismissible, Referenzmuster InverterHub.
 define('EMS_COLOR_AUTO', 0x2E8B3D); // Gruen: Wert wurde automatisch uebernommen (🔗-Zeilen im Formular)
-define('EMS_NEWS_VERSION', '0.74.4');
+define('EMS_NEWS_VERSION', '0.74.5');
 
 // NRG-Stack Partnermodul-GUIDs (fuer automatische Discovery, siehe discoverPartners())
 define('GUID_CHARGERHUB',    '{9256C34E-5CFD-4F37-8BFE-E65390EBB37C}');
@@ -2373,10 +2373,47 @@ class EMS extends IPSModule
             );
         }
 
+        // Preis-Sperre der Heizungs-Automatik (HeishaMon, Register-Eintrag 18.10.2026): HeishaMon liefert die Sperrfenster
+        // selbst (HEISHA_GetHeatingAutomation()['price']['blockWindows'] = [{from, to}], to=0 = laeuft noch); EMS nimmt
+        // sie als Quelle 'heisha-price-block' (affects=load) in die Aggregation, damit lernende Module die gesperrte Last
+        // nicht als Normalfall lernen. Nur lesend, ohne HeishaMon-Version mit dem Aufruf passiert nichts.
+        foreach ($this->heishaPriceBlockEvents($fromTs, $toTs) as $e) { $events[] = $e; }
+
         return array(
             'contractVersion' => '1.1',
             'events'          => $events,
         );
+    }
+
+    /** Sperrfenster der Heizungs-Automatik als Sondereffekte (siehe GetSpecialEvents()). */
+    private function heishaPriceBlockEvents(int $fromTs, int $toTs): array
+    {
+        $out = array();
+        if (!function_exists('HEISHA_GetHeatingAutomation')) { return $out; }
+        $partners = $this->GetPartners();
+        foreach ((array)($partners['heishamon'] ?? array()) as $entry) {
+            $id = isset($entry['instanceID']) ? (int)$entry['instanceID'] : 0;
+            if ($id <= 0 || !IPS_InstanceExists($id)) { continue; }
+            try { $ha = @HEISHA_GetHeatingAutomation($id); } catch (Throwable $e) { continue; }
+            $wins = (is_array($ha) && isset($ha['price']['blockWindows']) && is_array($ha['price']['blockWindows'])) ? $ha['price']['blockWindows'] : array();
+            foreach ($wins as $w) {
+                $from = (int)($w['from'] ?? 0);
+                $to   = (int)($w['to'] ?? 0);
+                if ($from <= 0) { continue; }
+                $evTo = ($to > 0) ? $to : time();
+                if ($fromTs > 0 && $evTo < $fromTs) { continue; }
+                if ($toTs > 0 && $from > $toTs) { continue; }
+                $out[] = array(
+                    'from'     => $from,
+                    'to'       => ($to > 0) ? $to : null,
+                    'type'     => 'heisha-price-block',
+                    'reason'   => 'Preis-Sperre der Heizungs-Automatik',
+                    'affects'  => array('load'),
+                    'deviceId' => $id,
+                );
+            }
+        }
+        return $out;
     }
 
     /**

@@ -2,6 +2,9 @@
 
 Ältere Versionen: [CHANGELOG-Archiv.md](CHANGELOG-Archiv.md)
 
+## 0.74.5 (2026-10-18)
+- **Sondereffekt-Quelle `heisha-price-block` (Preis-Sperre der Heizungs-Automatik):** `EMS_GetSpecialEvents` nimmt zusätzlich die Sperrfenster auf, die HeishaMon über `HEISHA_GetHeatingAutomation()['price']['blockWindows']` bereitstellt (Liste `{from, to}`, `to=0` = läuft noch), als Ereignis `heisha-price-block` mit `affects=['load']`, Grund „Preis-Sperre der Heizungs-Automatik“, `deviceId` = Instanz der Wärmepumpe. Damit lernen die Lastprognose und andere lernende Module die gesperrte Last nicht als Normalfall. Nur lesend; ohne HeishaMon-Version mit dieser Funktion (ab 1.36.0) passiert nichts, eine Ausnahme der Gegenseite wird ignoriert. Fünf neue Prüfungen, drei Mutationstests bestätigt.
+
 ## 0.74.4 (2026-10-17)
 - **Modus 9: messbasierter Rückfall, wenn der Netz-Sollwert nicht erreicht wird (Live-Befund 16.10.2026):** Bei einphasig ladendem Auto (WB2, 15 A, ~3,6 kW, nur L1) lief Modus 9 mit Xset 3,4 kW, der Netzbezug lag aber nur bei 2,0–2,4 kW und die Batterie entlud dauerhaft 1,9–2,3 kW, also etwa 1,2 kW mehr als das Haus brauchte: Die Batterie versorgte das Auto mit (0,5 kWh in zwei Sitzungen). Bei 5,7, 7,9 und 11,2 kW (dreiphasig) in derselben Nacht war es sauber. Die Ursache (Verdacht: einphasige Last gegen die dreiphasige Regelung des Wechselrichters) ist nicht belegt. Deshalb keine Leistungsschwelle, sondern die Messung: liegt der Netzbezug 90 s lang über 600 W unter Xset UND entlädt die Batterie mehr als Haus plus 400 W, wechselt `carFromGridSetting()` für 15 min auf Modus 2 (Attribute `SmartNoTrackSince`/`SmartNoTrackHoldUntil`), danach wird Modus 9 neu versucht. Greift nur, wenn Modus 9 bereits läuft (Anlaufphase und Ladeende zählen nicht) und nicht bei Batterieladung durch PV. Neun neue Prüfungen, drei Mutationstests bestätigt. **Live noch nicht gemessen** (braucht ein einphasig ladendes Auto).
 

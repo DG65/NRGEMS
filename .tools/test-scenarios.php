@@ -2190,6 +2190,26 @@ $open2 = array_column(array_filter(call($ems, 'GetSpecialEvents', [0, 0])['event
 check('Aufruf ohne Zustand (EMS aus) beendet keine offenen Grid-Rewards-Ereignisse und schreibt die anderen Typen weiter', in_array('lastbegrenzung_14a', $open2, true));
 $GLOBALS['SBH_STATE'] = null; unset($GLOBALS['INSTMOD'][300]);
 
+echo "   Preis-Sperre der Heizungs-Automatik (HeishaMon, Quelle 'heisha-price-block', 18.10.2026)\n";
+$ems = freshEms();
+$GLOBALS['INSTMOD'][7201] = GUID_HEISHAMON; obj(7201, 1, 'HeishaMon', 0);
+attr('PartnerCache', json_encode(['heishamon' => [['instanceID' => 7201]]]));
+$typesNo = array_column(call($ems, 'GetSpecialEvents', [0, 0])['events'], 'type');
+check('Ohne HEISHA_GetHeatingAutomation (aeltere HeishaMon-Version): keine Sperr-Ereignisse, nichts bricht', !in_array('heisha-price-block', $typesNo, true));
+$GLOBALS['HEISHA_HA'] = null;
+if (!function_exists('HEISHA_GetHeatingAutomation')) { function HEISHA_GetHeatingAutomation($iid) { if ($GLOBALS['HEISHA_HA'] === 'throw') { throw new Exception('boom'); } return $GLOBALS['HEISHA_HA']; } }
+$now = time();
+$GLOBALS['HEISHA_HA'] = ['price' => ['blockWindows' => [['from' => $now - 7200, 'to' => $now - 5400], ['from' => $now - 600, 'to' => 0]]]];
+$evs = array_values(array_filter(call($ems, 'GetSpecialEvents', [0, 0])['events'], fn($e) => $e['type'] === 'heisha-price-block'));
+check('Zwei Sperrfenster werden als Sondereffekt (affects=load) uebernommen, das laufende hat to=null', count($evs) === 2 && $evs[0]['affects'] === ['load'] && $evs[0]['to'] === $now - 5400 && $evs[1]['to'] === null && strpos($evs[0]['reason'], 'Preis-Sperre') !== false, json_encode($evs));
+$evs2 = array_values(array_filter(call($ems, 'GetSpecialEvents', [$now - 3600, 0])['events'], fn($e) => $e['type'] === 'heisha-price-block'));
+check('Zeitfilter: ab $now-3600 faellt das beendete Fenster weg, das laufende bleibt', count($evs2) === 1 && $evs2[0]['to'] === null, json_encode($evs2));
+$GLOBALS['HEISHA_HA'] = ['price' => ['blockWindows' => [['from' => 0, 'to' => 0]]]];
+check('Fenster ohne Beginn (from=0) wird ignoriert', count(array_filter(call($ems, 'GetSpecialEvents', [0, 0])['events'], fn($e) => $e['type'] === 'heisha-price-block')) === 0);
+$GLOBALS['HEISHA_HA'] = 'throw';
+check('Wirft die Gegenseite eine Ausnahme: ignoriert, die uebrigen Ereignisse bleiben', is_array(call($ems, 'GetSpecialEvents', [0, 0])['events']));
+$GLOBALS['HEISHA_HA'] = null; unset($GLOBALS['INSTMOD'][7201]); attr('PartnerCache', '{}');
+
 echo "\n8ab) Wert kommt automatisch: Eingabefeld wird ausgeblendet, Zeile zeigt 🔗 (eigene Angabe bleibt sichtbar)\n";
 $findItem = function ($node, $name) use (&$findItem) {
     if (is_array($node)) { if (($node['name'] ?? null) === $name && isset($node['type'])) { return $node; } foreach ($node as $v) { $r = $findItem($v, $name); if ($r !== null) { return $r; } } }
