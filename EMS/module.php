@@ -41,7 +41,7 @@ define('EMS_LOG_VERBOSE',     2);
 // Formular-Konvention (siehe EMS/SUITE.md "Einheitliche Formular-Optik"):
 // Was-ist-Neu-Panel ist versionsscharf dismissible, Referenzmuster InverterHub.
 define('EMS_COLOR_AUTO', 0x2E8B3D); // Gruen: Wert wurde automatisch uebernommen (🔗-Zeilen im Formular)
-define('EMS_NEWS_VERSION', '0.75.0');
+define('EMS_NEWS_VERSION', '0.75.1');
 
 // NRG-Stack Partnermodul-GUIDs (fuer automatische Discovery, siehe discoverPartners())
 define('GUID_CHARGERHUB',    '{9256C34E-5CFD-4F37-8BFE-E65390EBB37C}');
@@ -686,6 +686,10 @@ class EMS extends IPSModule
                 'caption'  => '🆕 Neu in Version ' . EMS_NEWS_VERSION,
                 'expanded' => true,
                 'items'    => array(
+                    array(
+                        'type'    => 'Label',
+                        'caption' => '• GEÄNDERT: Läuft ein Grid Reward und das Auto lädt, hat jetzt auch das GEPLANTE Netzladen der Batterie Vorrang (nicht nur bei negativem Preis). Vorher blendete Grid Rewards den Tagesplan aus, die Batterie blieb dann leer, obwohl der Plan sie in der günstigen Nacht nachladen wollte. Das Auto wird weiter von Tibber gesteuert und läuft obendrauf, bei Ladestopp (Knappheit im Netz) entsteht kein zusätzlicher Netzbezug.'
+                    ),
                     array(
                         'type'    => 'Label',
                         'caption' => '• NEU: Netzbezug-Ausblick für andere Module (EMS_GetGridImportOutlook): EMS rechnet für ein Zeitfenster aus PV-Prognose, Lastprognose, Batterie und geplantem Netzladen, ob Netzbezug entsteht und zu welchem Preis, und was eine Laständerung (z. B. eine gesperrte Wärmepumpe) davon vermeiden würde. Reiner Ratgeber, EMS schaltet dadurch nichts. Erster Nutzer ist die Preis-Sperre der HeishaMon-Heizungs-Automatik.'
@@ -6205,18 +6209,20 @@ class EMS extends IPSModule
 
         if ($s['grid_rewards']) {
             $wbTotalW = (int)round(($s['wb1_pow_kw'] + $s['wb2_pow_kw']) * 1000);
-            // Fall 6 (Dietmar 04.10.2026): Negativer Bezugspreis hat Vorrang vor dem Grid-Rewards-Zweig, solange das
-            // Auto laedt (Ueberschuss im Netz, `excess`): Netzstrom wird bezahlt, die Batterie soll aus dem Netz
-            // voll werden -- Tagesplan "Negativpreis: immer laden" (Modus 11, PV bleibt ungedrosselt, Auto laeuft
-            // obendrauf). Vorher blieb der Plan hier ausgeblendet, weil Grid Rewards davor entscheidet. Bei Ladestopp
-            // (Auto 0 W, Knappheit im Netz) gilt weiter Grid Rewards: dort soll KEIN zusaetzlicher Netzbezug entstehen.
-            // Die Wallboxen bleiben unangetastet (Tibber steuert das Auto).
-            if ($wbTotalW >= 500 && !empty($s['tib_active']) && (float)$s['tib_price_eff'] < 0.0
-                && !empty($s['bat_active']) && (float)$s['bat_soc'] < 99.5) {
+            // Fall 6 (Dietmar 04.10.2026), erweitert zu Punkt 3 (Dietmar 18.10.2026): GEPLANTES Netzladen der Batterie hat
+            // Vorrang vor dem Grid-Rewards-Zweig, solange das Auto laedt (Ueberschuss im Netz, `excess`). Der Grid-Rewards-
+            // Zweig steht vor dem Tagesplan und blendete ihn bisher aus: Am 10.10. 01:00 wollte der Plan die Batterie
+            // (SOC 38 %) bei 12 ct mit 24 kW nachladen, ein Grid Reward verdraengte das, die Batterie blieb leer und die
+            // geplanten Slots rutschten Richtung Fensterende. Bei negativem Preis gilt dasselbe schon ueber die Planregel
+            // "Negativpreis: immer laden". Der Plan plant Netzladen nur, wo es sich lohnt, und rechnet den Sollwert
+            // zur Laufzeit gegen Anschlussgrenze, Haus und Wallbox (Modus 11, PV ungedrosselt, Auto obendrauf).
+            // Bei Ladestopp (Auto 0 W, Knappheit im Netz) gilt weiter Grid Rewards: dort soll KEIN zusaetzlicher Netzbezug
+            // entstehen. Die Wallboxen bleiben unangetastet (Tibber steuert das Auto).
+            if ($wbTotalW >= 500 && !empty($s['bat_active']) && (float)$s['bat_soc'] < 99.5) {
                 $negPlan = $this->applyPlanSlot($s);
                 if ($negPlan !== null && $negPlan['op_mode'] === EMS_OP_NET_CHARGE) {
                     $negPlan['wb_hands_off'] = true;
-                    $negPlan['reason'] .= ' | Grid Rewards läuft, negativer Preis hat Vorrang (Wallbox unangetastet)';
+                    $negPlan['reason'] .= ' | Grid Rewards läuft, geplantes Netzladen der Batterie hat Vorrang (Wallbox unangetastet)';
                     return $negPlan;
                 }
             }
