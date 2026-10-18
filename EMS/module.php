@@ -655,6 +655,11 @@ class EMS extends IPSModule
                 ),
                 array(
                     'type'    => 'Label',
+                    'name'    => 'InverterMeasurementLabel',
+                    'caption' => $this->getInverterMeasurementLine(),
+                ),
+                array(
+                    'type'    => 'Label',
                     'name'    => 'FederationHealthLabel',
                     'caption' => 'Verbund-Gesundheit: ' . $this->GetValue('EMS_FederationHealth')
                 ),
@@ -1420,6 +1425,7 @@ class EMS extends IPSModule
         // die Suche laengst gelaufen war und Partnermodule/Verbund-Gesundheit
         // korrekt aktualisiert wurden. No-op, wenn kein Formular offen ist.
         $this->UpdateFormField('DiscoverySummaryLabel', 'caption', $this->getDiscoverySummaryLine());
+        $this->UpdateFormField('InverterMeasurementLabel', 'caption', $this->getInverterMeasurementLine());
         $this->UpdateFormField('FederationHealthLabel', 'caption', 'Verbund-Gesundheit: ' . $this->GetValue('EMS_FederationHealth'));
         $this->UpdateFormField('PartnerDetailLabel', 'caption', 'NRG-Stack Partnermodule: ' . $summary);
 
@@ -3942,6 +3948,32 @@ class EMS extends IPSModule
         }
         $icon = $count > 0 ? '✅' : '⚠️';
         return sprintf('%s %d Partnermodul-Instanz(en) gefunden (zuletzt %s Uhr).', $icon, $count, date('H:i:s', $ts));
+    }
+
+    /**
+     * Zeigt, welche Messpunkte des gefundenen Wechselrichters EMS nutzt
+     * (PV, Netz, Batterie, SOC, Wechselrichter-Leistung), ob EMS steuern darf
+     * und ob EMS aktiv ist. Macht Diagnose ohne Objektbaum-Blick moeglich.
+     */
+    private function getInverterMeasurementLine()
+    {
+        $inv = $this->getInverterEntry();
+        if ($inv === null) {
+            return 'ℹ️ Kein Wechselrichter (InverterHub) gefunden.';
+        }
+        $mark = function ($id) { return ((int)$id > 0) ? '✓' : '✗'; };
+        $line = sprintf(
+            'Wechselrichter #%d: PV %s, Netz %s, Batterie %s, SOC %s, AC %s',
+            (int)$inv['instanceID'],
+            $mark($inv['pvPowerID'] ?? 0), $mark($inv['gridPowerID'] ?? 0), $mark($inv['batPowerID'] ?? 0),
+            $mark($inv['socID'] ?? 0), $mark($inv['acPowerID'] ?? 0)
+        );
+        $line .= (!empty($inv['controllable']) && ($inv['controlAuthority'] ?? 'none') === 'ems')
+            ? ' — EMS darf steuern.' : ' — EMS beobachtet nur.';
+        if (!$this->ReadPropertyBoolean('EMS_Active')) {
+            $line .= ' EMS ist deaktiviert (Formularfeld „EMS aktiv“), daher werden keine Entscheidungen angezeigt.';
+        }
+        return $line;
     }
 
     private function getBatterySocStatusLine()
