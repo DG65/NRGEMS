@@ -28,9 +28,9 @@ Das Modul ist modular aufgebaut: Jeder Geräteblock (Wechselrichter, Batterie, W
 ### Unterstützte Geräte
 | Gerät | Pflicht | Steuerung |
 |---|---|---|
-| Goodwe Wechselrichter (Modbus-TCP) | Ja | Ja — EMS-Register |
-| Goodwe Batteriespeicher (BMS) | Nein | Indirekt über WR |
-| Goodwe SmartMeter (NAP) | Empfohlen | Nein — Messung |
+| Wechselrichter mit Batterie (über den InverterHub, 15 Treiber lesend) | Ja | Derzeit nur GoodWe steuerbar (EMS-Register); bei anderen Herstellern liest EMS und beobachtet nur |
+| Batteriespeicher (BMS) | Nein | Indirekt über den Wechselrichter |
+| Zähler am Netzanschlusspunkt (z. B. SmartMeter des Wechselrichters) | Empfohlen | Nein — Messung |
 | Siemens PAC2200 | Nein | Nein — Redundanzmessung |
 | go-e Charger V3 (1–n, via NRG-Stack ChargerHub) | Nein | Ja — ChargerHub |
 | Heishamon / Panasonic Aquarea | Nein | Nein — Monitoring |
@@ -42,7 +42,7 @@ Das Modul ist modular aufgebaut: Jeder Geräteblock (Wechselrichter, Batterie, W
 ## Voraussetzungen
 
 - IP-Symcon ab Version 9.0
-- Goodwe Wechselrichter bereits via Modbus-TCP in IPS eingebunden
+- Wechselrichter bereits über den NRG-Stack InverterHub (oder per Modbus-TCP) in IPS eingebunden
 - Für Wallboxsteuerung: [NRG-Stack ChargerHub](https://github.com/DG65/NRGChargerHub) installiert (Migration vom Community-Modul IPSCoyote/GO-eCharger über den [MigrationsHub](https://github.com/DG65/NRGMigrationsHub))
 - Für Preisoptimierung: TibberV2-Modul (da8ter) installiert
 - Für Erzeugungsprognose: pvForecast-Modul installiert
@@ -74,11 +74,11 @@ Die Konfiguration ist in folgende Sektionen gegliedert:
 - Fallback-Modus bei Kommunikationsfehler
 
 ### 2. Netzmesspunkte
-- **Primär**: Goodwe SmartMeter — phasenaufgelöste Leistung L1/L2/L3 am NAP
+- **Primär**: Zähler am Netzanschlusspunkt (z. B. der SmartMeter des Wechselrichters) — phasenaufgelöste Leistung L1/L2/L3
 - **Sekundär** (optional): Siemens PAC2200 — Redundanzmessung und Plausibilitätsprüfung
 
 ### 3. Wechselrichter & PV
-- Goodwe EMS-Steuerregister (Leistungsmodus, Leistungseinstellung)
+- Steuerregister des Wechselrichters (derzeit GoodWe-EMS-Register: Leistungsmodus, Leistungseinstellung)
 - PV-Gesamtleistung (P Total)
 - MPPT-Leistungen (optional, 1–3 MPPTs)
 - Wechselrichtertemperaturen (Schutzmonitoring)
@@ -103,7 +103,7 @@ Die Konfiguration ist in folgende Sektionen gegliedert:
 ### 6. Wärmepumpe (optional, Monitoring)
 - Aktivierung (nur Monitoring, keine Steuerung)
 - Stromverbrauch Wärmepumpe (für Lastberechnung)
-- Außentemperatur (alternativ zu Goodwe/Forecast)
+- Außentemperatur (alternativ zum Wechselrichter oder der Prognose)
 
 ### 7. Tibber & Tarif
 - Aktivierung Tibber-Preisoptimierung
@@ -140,7 +140,7 @@ Die Konfiguration ist in folgende Sektionen gegliedert:
 
 ## Betriebsmodi
 
-| Modus | Beschreibung | Goodwe EMS-Register |
+| Modus | Beschreibung | Wechselrichter-Register (derzeit GoodWe) |
 |---|---|---|
 | **Automatik** | EMS entscheidet nach Preis + SOC + Forecast | Modus 1 (Automatik) |
 | **PV-Eigenverbrauch** | PV-Überschuss → Batterie → Autos | Modus 2 (Laden-Solar) |
@@ -154,9 +154,9 @@ Die Konfiguration ist in folgende Sektionen gegliedert:
 
 ## Lastmanagement
 
-Das EMS überwacht kontinuierlich die Netzleistung am NAP über den Goodwe SmartMeter und optional den Siemens PAC2200.
+Das EMS überwacht kontinuierlich die Netzleistung am NAP über den Zähler am Netzanschlusspunkt und optional den Siemens PAC2200.
 
-Die konfigurierte **SLS-Grenze** (Standard: 34.500 W bei 50A SLS) wird nie überschritten. Der Goodwe Wechselrichter übernimmt die physikalische Regelung über seinen eigenen SmartMeter — das EMS setzt lediglich den Sollwert (EMS Leistungseinstellung, Register ID 20610).
+Die konfigurierte **SLS-Grenze** (Standard: 34.500 W bei 50A SLS) wird nie überschritten. Der Wechselrichter übernimmt die physikalische Regelung (bei GoodWe über seinen eigenen SmartMeter) — das EMS setzt lediglich den Sollwert (bei GoodWe: EMS Leistungseinstellung, Register ID 20610).
 
 Ladepriorisierung bei mehreren gleichzeitigen Lasten:
 1. Hausgrundlast (immer garantiert)
@@ -169,7 +169,7 @@ Ladepriorisierung bei mehreren gleichzeitigen Lasten:
 
 ## Grid Rewards / Tibber Wallboxsteuerung
 
-Wenn Tibber über Grid Rewards die Wallbox direkt steuert, muss verhindert werden dass der Goodwe die Fahrzeugladung aus der Batterie speist (was den Grid-Rewards-Effekt zunichte machen würde).
+Wenn Tibber über Grid Rewards die Wallbox direkt steuert, muss verhindert werden dass der Wechselrichter die Fahrzeugladung aus der Batterie speist (was den Grid-Rewards-Effekt zunichte machen würde).
 
 **Lösung**: Manueller Schalter "Grid Rewards Modus" in der EMS-Oberfläche.
 
@@ -204,7 +204,7 @@ Das Modul legt folgende Statusvariablen automatisch an:
 
 ## Sicherheitshinweise
 
-- Das EMS schreibt Steuerbefehle direkt in den Goodwe Wechselrichter via Modbus-TCP. Eine fehlerhafte Konfiguration kann zu unerwünschtem Verhalten führen.
+- Das EMS schreibt Steuerbefehle direkt in den Wechselrichter (derzeit GoodWe, via Modbus-TCP über den InverterHub). Eine fehlerhafte Konfiguration kann zu unerwünschtem Verhalten führen.
 - Der SLS-Schutz ist eine Softwaregrenze — die physikalische Absicherung durch den SLS-Schalter bleibt unberührt und ist die primäre Schutzebene.
 - Heishamon/Panasonic Aquarea: Das EMS steuert die Wärmepumpe **nicht aktiv**. Häufige Schreibzugriffe auf Heishamon können den EEPROM der Wärmepumpe schädigen und werden vermieden.
 - Bei Kommunikationsausfall zu einem Gerät wechselt das EMS in den konfigurierten Fallback-Modus.

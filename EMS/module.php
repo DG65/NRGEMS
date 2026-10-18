@@ -41,7 +41,7 @@ define('EMS_LOG_VERBOSE',     2);
 // Formular-Konvention (siehe EMS/SUITE.md "Einheitliche Formular-Optik"):
 // Was-ist-Neu-Panel ist versionsscharf dismissible, Referenzmuster InverterHub.
 define('EMS_COLOR_AUTO', 0x2E8B3D); // Gruen: Wert wurde automatisch uebernommen (🔗-Zeilen im Formular)
-define('EMS_NEWS_VERSION', '0.75.1');
+define('EMS_NEWS_VERSION', '0.75.2');
 
 // NRG-Stack Partnermodul-GUIDs (fuer automatische Discovery, siehe discoverPartners())
 define('GUID_CHARGERHUB',    '{9256C34E-5CFD-4F37-8BFE-E65390EBB37C}');
@@ -7938,7 +7938,7 @@ class EMS extends IPSModule
                 $this->WriteAttributeBoolean('LastGoodweEnable', false);
                 $this->WriteAttributeInteger('LastGoodwePowerW', 0);
                 $this->WriteAttributeInteger('LastDecision',     $now);
-                $this->emsLog(EMS_LOG_BASIC, 'Goodwe -> Automatik (Freigabe, ' . ($d['reason'] ?? '') . ')');
+                $this->emsLog(EMS_LOG_BASIC, 'Wechselrichter -> Automatik (Freigabe, ' . ($d['reason'] ?? '') . ')');
             }
             $this->SetValue('EMS_Mode',       $d['op_mode']);
             $this->SetValue('EMS_LastAction', $d['reason']);
@@ -7964,9 +7964,9 @@ class EMS extends IPSModule
             $this->WriteAttributeInteger('LastGoodweMode',   $d['gw_mode']);
             $this->WriteAttributeBoolean('LastGoodweEnable', $gwEnable);
             $this->WriteAttributeInteger('LastDecision',     $now);
-            $this->emsLog(EMS_LOG_BASIC, 'Goodwe -> Modus ' . $d['gw_mode'] . ' (enable=' . ($gwEnable ? '1' : '0') . ') | ' . $d['reason']);
+            $this->emsLog(EMS_LOG_BASIC, 'Wechselrichter -> Modus ' . $d['gw_mode'] . ' (enable=' . ($gwEnable ? '1' : '0') . ') | ' . $d['reason']);
         } else {
-            $this->emsLog(EMS_LOG_VERBOSE, 'Goodwe -> Modus ' . $d['gw_mode'] . ' (reassert) | ' . $d['reason']);
+            $this->emsLog(EMS_LOG_VERBOSE, 'Wechselrichter -> Modus ' . $d['gw_mode'] . ' (reassert) | ' . $d['reason']);
         }
 
         // Leistungseinstellung immer aktualisieren wenn gesetzt
@@ -8114,7 +8114,7 @@ class EMS extends IPSModule
                     $this->WriteAttributeString('NoControlReason', 'Wechselrichter ohne EMS-Stellglieder');
                     if (time() - $this->ReadAttributeInteger('NoControlLoggedAt') > 3600) {
                         $this->WriteAttributeInteger('NoControlLoggedAt', time());
-                        $this->emsLog(EMS_LOG_BASIC, sprintf('setGoodweMode: WR #%d hat keine EMS-Stellglieder (ctl_ems_mode/-power/-enable) -- EMS beobachtet nur', $iid));
+                        $this->emsLog(EMS_LOG_BASIC, sprintf('Wechselrichtersteuerung: WR #%d hat keine EMS-Stellglieder (ctl_ems_mode/-power/-enable) -- EMS beobachtet nur', $iid));
                     }
                     return;
                 }
@@ -8137,7 +8137,7 @@ class EMS extends IPSModule
             if (time() - $this->ReadAttributeInteger('NoControlLoggedAt') > 3600) {
                 $this->WriteAttributeInteger('NoControlLoggedAt', time());
                 $this->emsLog(EMS_LOG_BASIC, sprintf(
-                    'setGoodweMode: WR #%d hat Steuerhoheit "%s" (nicht "ems") oder ist nicht steuerbar — EMS greift nicht ein (Situation B)',
+                    'Wechselrichtersteuerung: WR #%d hat Steuerhoheit "%s" (nicht "ems") oder ist nicht steuerbar — EMS greift nicht ein (Situation B)',
                     $inv['instanceID'], $authority
                 ));
             }
@@ -8486,7 +8486,7 @@ class EMS extends IPSModule
     private function applyFallback()
     {
         $fallbackMode = $this->ReadPropertyInteger('EMS_Fallback_Mode');
-        $this->emsLog(EMS_LOG_BASIC, 'Fallback aktiv - Goodwe Modus ' . $fallbackMode);
+        $this->emsLog(EMS_LOG_BASIC, 'Fallback aktiv - Wechselrichter Modus ' . $fallbackMode);
         // enable=false: bei wiederholten Kommunikationsfehlern kann EMS ohnehin
         // keinen verlaesslichen Sollwert mehr liefern -- der WR soll dann autonom
         // laufen (siehe Fund 30.07.2026), nicht scharfgeschaltet auf einen

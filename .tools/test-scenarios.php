@@ -2381,6 +2381,7 @@ echo "\n27z) Store-Review-Checkliste Punkt 15: kein IPS_LogMessage in module.php
 $src = file_get_contents(__DIR__ . '/../EMS/module.php');
 check('module.php enthaelt kein IPS_LogMessage( (nur $this->LogMessage)', strpos($src, 'IPS_LogMessage(') === false);
 check('emsLog() nutzt $this->LogMessage', strpos($src, '$this->LogMessage($message, KL_MESSAGE)') !== false);
+check('Log-/Formulartexte sind herstellerneutral (kein "Goodwe ->" und kein "GoodWe-Exportmodus" mehr)', strpos($src, "'Goodwe -> ") === false && strpos($src, "- Goodwe Modus") === false && strpos(file_get_contents(__DIR__ . '/../EMS/form.json'), 'GoodWe-Exportmodus') === false);
 
 // ===========================================================================
 echo "\n28z) EMS_GetGridImportOutlook (Berater fuer die Preis-Sperre der Heizungs-Automatik, 18.10.2026)\n";

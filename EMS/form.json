@@ -30,7 +30,7 @@
                 },
                 {
                     "type": "Label",
-                    "caption": "Bleibt der Wechselrichter-Heartbeat aus (z.B. Verbindungsproblem), fällt der WR nach ~70-120s selbständig in einen Sicherheits-Stopp. Wie soll EMS darauf reagieren?"
+                    "caption": "Bei Wechselrichtern, die einen Heartbeat verlangen (derzeit GoodWe), fällt der WR nach etwa 70 bis 120 s selbständig in einen Sicherheits-Stopp, wenn der Heartbeat ausbleibt (z.B. Verbindungsproblem). Wie soll EMS darauf reagieren?"
                 },
                 {
                     "type": "Select",
@@ -228,7 +228,7 @@
                                 "items": [
                                     {
                                         "type": "Label",
-                                        "caption": "Ist der Akku voll und trotzdem PV-Überschuss vorhanden, fordert EMS aktiv Export an. Als Zielwert nutzt EMS automatisch die aktuelle PV-Prognose (Modul \"Prognose\"/PVF, falls installiert) für den laufenden Viertelstunden-Slot — wetterabhängig, keine manuelle Eingabe nötig. Der GoodWe-Exportmodus zielt aktiv auf diesen Wert und zapft notfalls die Batterie an, um ihn zu erreichen; ein Sicherheitsausstieg bricht sofort ab, falls der Akku-Ladestand dabei sichtbar unter das Tagesziel fällt. Ohne installiertes Prognose-Modul bleibt diese Funktion deaktiviert."
+                                        "caption": "Ist der Akku voll und trotzdem PV-Überschuss vorhanden, fordert EMS aktiv Export an. Als Zielwert nutzt EMS automatisch die aktuelle PV-Prognose (Modul \"Prognose\"/PVF, falls installiert) für den laufenden Viertelstunden-Slot — wetterabhängig, keine manuelle Eingabe nötig. Der Export-Sollwert-Modus des Wechselrichters zielt aktiv auf diesen Wert und zapft notfalls die Batterie an, um ihn zu erreichen; ein Sicherheitsausstieg bricht sofort ab, falls der Akku-Ladestand dabei sichtbar unter das Tagesziel fällt. Ohne installiertes Prognose-Modul bleibt diese Funktion deaktiviert."
                                     }
                                 ]
                             }

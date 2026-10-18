@@ -2,6 +2,9 @@
 
 Ältere Versionen: [CHANGELOG-Archiv.md](CHANGELOG-Archiv.md)
 
+## 0.75.2 (2026-10-18)
+- **Herstellerneutrale Texte (Dietmar 18.10.2026):** EMS soll im Endeffekt alle Wechselrichter steuern, deshalb stehen Log-Meldungen („Wechselrichter → Modus …“, „Fallback aktiv – Wechselrichter Modus …“, „Wechselrichtersteuerung: WR #… hat keine EMS-Stellglieder“), Formulartexte (Export-Sollwert-Modus, Heartbeat-Hinweis) und die README (Geräteliste, Voraussetzungen, Betriebsmodi, Lastmanagement, Sicherheitshinweise) nicht mehr auf GoodWe. Wo etwas wirklich nur GoodWe betrifft, steht es sachlich dabei („derzeit GoodWe“). Keine Änderung an Verhalten, internen Namen oder Attributen. Die Steuerung selbst bleibt vorerst GoodWe-Registersprache; andere Hersteller werden gelesen, EMS beobachtet dort nur. Eine Prüfung sichert die neutralen Texte.
+
 ## 0.75.1 (2026-10-18)
 - **Geplantes Netzladen hat Vorrang vor Grid Rewards (Punkt 3, Dietmar 18.10.2026):** Der Grid-Rewards-Zweig in `optimize()` steht vor dem Tagesplan und blendete ihn aus. Am 10.10. um 01:00 Uhr wollte der Plan die Batterie (SOC 38 %) bei 12 ct mit 24 kW nachladen, ein Grid Reward verdrängte das, die Batterie blieb leer, und die Slots rutschten Richtung Fensterende (06:00 Uhr). Fall 6 (0.71.2) galt nur bei negativem Preis. Jetzt gilt bei laufendem Grid Reward mit ladendem Auto (≥ 500 W) und SOC unter 99,5 %: Sieht der Plan für die laufende Viertelstunde Netzladen vor (der Plan plant es nur, wo es sich lohnt), übernimmt er (Modus 11, PV ungedrosselt, Auto läuft obendrauf, Sollwert zur Laufzeit gegen Anschlussgrenze, Haus und Wallbox begrenzt), die Wallboxen bleiben unangetastet. Bei Ladestopp (Auto 0 W, Knappheit im Netz) entsteht weiter kein zusätzlicher Netzbezug. Drei Prüfungen neu bzw. angepasst, zwei Mutationstests bestätigt. **Live noch nicht gemessen** (braucht Grid Reward + Auto + geplantes Netzladen gleichzeitig).
 
