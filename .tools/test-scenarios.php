@@ -2378,5 +2378,46 @@ check('module.php enthaelt kein IPS_LogMessage( (nur $this->LogMessage)', strpos
 check('emsLog() nutzt $this->LogMessage', strpos($src, '$this->LogMessage($message, KL_MESSAGE)') !== false);
 
 // ===========================================================================
+echo "\n28z) EMS_GetGridImportOutlook (Berater fuer die Preis-Sperre der Heizungs-Automatik, 18.10.2026)\n";
+$ems = freshEms();
+$ctxO = ['capKwh' => 40.0, 'chargeKw' => 20.0, 'dischargeKw' => 20.0, 'chargeCurve' => [], 'maxW' => 34500.0, 'socMin' => 0.0, 'socReserve' => 10.0, 'margin' => 10.0];
+$flat = fn(float $v) => array_fill(0, 192, $v);
+$core = fn(float $soc, float $pvW, float $loadW, float $price, float $delta, array $ops = [], ?array $pricesArr = null) =>
+    call($ems, 'gridImportOutlookCore', [$pricesArr ?? $flat($price), $flat($pvW), $flat($loadW), $ops, 38, 40, 48, $soc, $delta, $ctxO]);
+$o = $core(80.0, 0.0, 1000.0, 0.30, 0.0);
+check('Volle Batterie (80 %), 1 kW Last ueber 2 h: kein Netzbezug, Batterie deckt, Reserve gewahrt', $o['expectedGridImportKwh'] == 0.0 && $o['batteryCoversLoad'] === true && $o['reserveRespected'] === true && $o['avgPriceCt'] === null, json_encode($o));
+$o = $core(12.0, 0.0, 1000.0, 0.45, 0.0);
+check('Fast leere Batterie (12 %, Reserve 10 %; die zwei Slots VOR dem Fenster leeren sie schon): Netzbezug im Fenster ca. 1,7 kWh zu 45 ct, Batterie deckt nicht, Reserve nicht gewahrt', $o['expectedGridImportKwh'] > 1.5 && $o['expectedGridImportKwh'] < 2.01 && $o['batteryCoversLoad'] === false && $o['reserveRespected'] === false && $o['avgPriceCt'] === 45.0 && $o['maxPriceCt'] === 45.0, json_encode($o));
+$o = $core(12.0, 0.0, 1000.0, 0.45, -1000.0);
+check('Mit -1000 W (Last entfaellt, z. B. WP gesperrt): kein Netzbezug im Szenario, vermiedener Bezug = Baseline', $o['expectedGridImportKwh'] == 0.0 && $o['avoidedImportKwh'] > 1.0 && abs($o['avoidedImportKwh'] - $o['baselineGridImportKwh']) < 0.001 && $o['baseline']['batteryCoversLoad'] === false, json_encode($o));
+$o = $core(80.0, 0.0, 1000.0, 0.45, -1000.0);
+check('Volle Batterie: Sperre vermeidet nichts (avoidedImportKwh 0), baseline.batteryCoversLoad=true -> HeishaMon sperrt nicht', $o['avoidedImportKwh'] == 0.0 && $o['baseline']['batteryCoversLoad'] === true && $o['baseline']['reserveRespected'] === true, json_encode($o));
+$o = $core(30.0, 0.0, 1000.0, 0.45, 3000.0);
+check('Zusatzlast (+3 kW) gilt nur IM Fenster: vorher laeuft die Batterie nur mit der Normallast (Netzbezug ca. 0,9 kWh, nicht ca. 2,4)', $o['expectedGridImportKwh'] > 0.5 && $o['expectedGridImportKwh'] < 1.4 && $o['avoidedImportKwh'] == 0.0, json_encode([$o['expectedGridImportKwh'], $o['baselineGridImportKwh']]));
+$o = $core(12.0, 2000.0, 1000.0, 0.45, 0.0);
+check('PV (2 kW) deckt die Last (1 kW): kein Netzbezug, SOC steigt', $o['expectedGridImportKwh'] == 0.0 && $o['slots'][count($o['slots']) - 1]['socEndPct'] > 12.0, json_encode($o['slots'][0]));
+$o = $core(12.0, 0.0, 1000.0, 0.45, 0.0, [38 => 10000.0, 39 => 10000.0]);
+$o0 = $core(12.0, 0.0, 1000.0, 0.45, 0.0);
+check('Geplantes Netzladen vor dem Fenster (Slots 38/39): weniger Netzbezug im Fenster als ohne Ladung', $o['expectedGridImportKwh'] < $o0['expectedGridImportKwh'] - 0.5, $o['expectedGridImportKwh'] . ' vs ' . $o0['expectedGridImportKwh']);
+$o = $core(12.0, 0.0, 1000.0, 0.45, 0.0, [42 => 10000.0]);
+check('Geplantes Netzladen im Fenster wird ausgewiesen (plannedGridChargeKwh > 0)', $o['plannedGridChargeKwh'] > 1.0, json_encode($o['plannedGridChargeKwh']));
+$pr = $flat(0.45); for ($i = 44; $i < 48; $i++) { $pr[$i] = null; }
+$o = $core(12.0, 0.0, 1000.0, 0.45, 0.0, [], $pr);
+check('Preise fehlen in Teilen des Fensters: Durchschnitt nur ueber bekannte Slots, Netzbezug zaehlt trotzdem', $o['expectedGridImportKwh'] > 1.0 && $o['avgPriceCt'] === 45.0, json_encode($o));
+$o = call($ems, 'gridImportOutlookCore', [$flat(0.30), $flat(0.0), $flat(1000.0), [], 40, 38, 48, 12.0, 0.0, $ctxO]);
+check('Fensterbeginn vor jetzt wird auf jetzt gekuerzt (8 Slots statt 10)', count($o['slots']) === 8, (string)count($o['slots']));
+prop('BAT_Active', true);
+$now = time();
+$r = call($ems, 'GetGridImportOutlook', [$now + 60, $now + 30, 0.0, false]);
+check('Fenster leer: ok=false mit Grund (HeishaMon faellt auf die einfache Regel zurueck)', $r['ok'] === false && strpos($r['reason'], 'Fenster') !== false, json_encode($r));
+$r = call($ems, 'GetGridImportOutlook', [$now, $now + 13 * 3600, 0.0, false]);
+check('Fenster ueber 12 h: ok=false', $r['ok'] === false && strpos($r['reason'], '12') !== false, json_encode($r));
+$r = call($ems, 'GetGridImportOutlook', [$now, $now + 3600, 0.0, true]);
+check('Ohne PV-Prognose: ok=false (nicht raten)', $r['ok'] === false && strpos($r['reason'], 'PV-Prognose') !== false, json_encode($r));
+prop('BAT_Active', false);
+$r = call($ems, 'GetGridImportOutlook', [$now, $now + 3600, 0.0, false]);
+check('Batteriespeicher im EMS aus: ok=false', $r['ok'] === false && strpos($r['reason'], 'Batterie') !== false, json_encode($r));
+
+// ===========================================================================
 echo "\n" . ($fails === 0 ? "ALLE SZENARIEN BESTANDEN" : "$fails SZENARIO(S) VERLETZT") . "\n\n";
 exit($fails === 0 ? 0 : 1);

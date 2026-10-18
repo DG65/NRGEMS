@@ -2,6 +2,9 @@
 
 Ältere Versionen: [CHANGELOG-Archiv.md](CHANGELOG-Archiv.md)
 
+## 0.75.0 (2026-10-18)
+- **Neu: `EMS_GetGridImportOutlook($id, $fromTs, $toTs, $loadDeltaW, $conservative)` (Vertrag 1.0, Auftrag Dietmar 18.10.2026 über HeishaMon, Preis-Sperre der Heizungs-Automatik):** Reiner Berater, EMS schaltet nichts (Situation B). Rechnet ab jetzt viertelstundenweise die Batterie durch (PV-Prognose p50, mit `$conservative` p10; Lastprognose inklusive Wärmepumpe; geplantes Netzladen aus dem Tagesplan; Entladegrenze Reserve + Wandlungsverlust) und liefert den Netzbezug im Fenster, einmal für den Plan wie er ist (`baseline`) und einmal mit `$loadDeltaW` zusätzlicher Last im Fenster (negativ = Entlastung). Rückgabe: `ok`, `reason`, `expectedGridImportKwh`, `baselineGridImportKwh`, `avoidedImportKwh`, `avgPriceCt`, `maxPriceCt`, `minSocPct`, `reserveSocPct`, `batteryCoversLoad`, `reserveRespected`, `plannedGridChargeKwh`, `baseline{…}`, `slots[]`. `ok=false` mit Grund bei leerem oder zu langem Fenster (über 12 h), ohne PV-Prognose oder ohne Batterie. Alle fünf Aufrufargumente sind Pflicht (feste Arität des Kernel-Wrappers). Dreizehn neue Prüfungen, vier Mutationstests bestätigt.
+
 ## 0.74.5 (2026-10-18)
 - **Sondereffekt-Quelle `heisha-price-block` (Preis-Sperre der Heizungs-Automatik):** `EMS_GetSpecialEvents` nimmt zusätzlich die Sperrfenster auf, die HeishaMon über `HEISHA_GetHeatingAutomation()['price']['blockWindows']` bereitstellt (Liste `{from, to}`, `to=0` = läuft noch), als Ereignis `heisha-price-block` mit `affects=['load']`, Grund „Preis-Sperre der Heizungs-Automatik“, `deviceId` = Instanz der Wärmepumpe. Damit lernen die Lastprognose und andere lernende Module die gesperrte Last nicht als Normalfall. Nur lesend; ohne HeishaMon-Version mit dieser Funktion (ab 1.36.0) passiert nichts, eine Ausnahme der Gegenseite wird ignoriert. Fünf neue Prüfungen, drei Mutationstests bestätigt.
 

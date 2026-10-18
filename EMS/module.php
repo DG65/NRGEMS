@@ -41,7 +41,7 @@ define('EMS_LOG_VERBOSE',     2);
 // Formular-Konvention (siehe EMS/SUITE.md "Einheitliche Formular-Optik"):
 // Was-ist-Neu-Panel ist versionsscharf dismissible, Referenzmuster InverterHub.
 define('EMS_COLOR_AUTO', 0x2E8B3D); // Gruen: Wert wurde automatisch uebernommen (🔗-Zeilen im Formular)
-define('EMS_NEWS_VERSION', '0.74.5');
+define('EMS_NEWS_VERSION', '0.75.0');
 
 // NRG-Stack Partnermodul-GUIDs (fuer automatische Discovery, siehe discoverPartners())
 define('GUID_CHARGERHUB',    '{9256C34E-5CFD-4F37-8BFE-E65390EBB37C}');
@@ -686,6 +686,10 @@ class EMS extends IPSModule
                 'caption'  => '🆕 Neu in Version ' . EMS_NEWS_VERSION,
                 'expanded' => true,
                 'items'    => array(
+                    array(
+                        'type'    => 'Label',
+                        'caption' => '• NEU: Netzbezug-Ausblick für andere Module (EMS_GetGridImportOutlook): EMS rechnet für ein Zeitfenster aus PV-Prognose, Lastprognose, Batterie und geplantem Netzladen, ob Netzbezug entsteht und zu welchem Preis, und was eine Laständerung (z. B. eine gesperrte Wärmepumpe) davon vermeiden würde. Reiner Ratgeber, EMS schaltet dadurch nichts. Erster Nutzer ist die Preis-Sperre der HeishaMon-Heizungs-Automatik.'
+                    ),
                     array(
                         'type'    => 'Label',
                         'caption' => '• NEU: Erreicht der Netzbezugsmodus (Modus 9) beim Laden eines Autos seinen Sollwert nicht und speist die Hausbatterie dabei spürbar ins Auto (beobachtet bei einphasig ladendem Auto mit etwa 3,6 kW), wechselt EMS nach 90 Sekunden für 15 Minuten auf „Laden aus PV“ (Modus 2). Danach wird Modus 9 neu versucht. Das Haus läuft in dieser Zeit aus dem Netz, die Batterie wird nicht entladen.'
@@ -2383,6 +2387,139 @@ class EMS extends IPSModule
             'contractVersion' => '1.1',
             'events'          => $events,
         );
+    }
+
+    /**
+     * Netzbezug-Ausblick fuer ein Zeitfenster (Auftrag Dietmar 18.10.2026, Anlass: Preis-Sperre der HeishaMon-Heizungs-
+     * Automatik). Reiner BERATER (Situation B): EMS schaltet nichts. Rechnet ab jetzt die Batterie viertelstundenweise
+     * durch (PV-Prognose p50 oder, mit $conservative, p10; Lastprognose inkl. Waermepumpe; geplantes Netzladen aus dem
+     * Tagesplan) und liefert den Netzbezug im Fenster [von, bis), einmal fuer den Plan wie er ist (`baseline`) und einmal
+     * mit $loadDeltaW zusaetzlicher Last im Fenster (negativ = Entlastung, z. B. -WP-Leistung bei Sperre).
+     * Alle vier Parameter sind Pflicht (feste Arität des Kernel-Wrappers). Siehe SUITE.md, Heizungs-Automatik.
+     */
+    public function GetGridImportOutlook(int $fromTs, int $toTs, float $loadDeltaW, bool $conservative)
+    {
+        $fail = function (string $reason) {
+            return array('contractVersion' => '1.0', 'ok' => false, 'reason' => $reason, 'generatedAt' => time());
+        };
+        $now = time();
+        if (!$this->ReadPropertyBoolean('BAT_Active')) { return $fail('Batteriespeicher im EMS nicht aktiv'); }
+        $fromTs = max($fromTs, $now);
+        if ($toTs <= $fromTs) { return $fail('Fenster leer oder liegt in der Vergangenheit'); }
+        if ($toTs - $fromTs > 12 * 3600) { return $fail('Fenster laenger als 12 Stunden'); }
+        if ($toTs > $now + 40 * 3600) { return $fail('Fenster liegt zu weit in der Zukunft (hoechstens 40 Stunden)'); }
+
+        $pv = $this->getPvfSlotsWatt($conservative ? 'p10' : 'p50');
+        if (count($pv) < 192) { return $fail('keine PV-Prognose verfuegbar'); }
+        $prices = array_merge(array_values($this->parsePT15M($this->getPT15MTodayJson())), array_values($this->parsePT15M($this->getPT15MTomorrowJson(), 1)));
+        $avg  = (float)$this->ReadPropertyInteger('NEG_Avg_House_Load_W');
+        $lfc  = $this->getLfcInstance();
+        $lt   = $lfc > 0 ? $this->getLoadForecastSlots($lfc, 0) : array();
+        $lm   = $lfc > 0 ? $this->getLoadForecastSlots($lfc, 1) : array();
+        $load = array();
+        for ($i = 0; $i < 96; $i++) { $load[$i] = (float)($lt[$i] ?? $avg); $load[96 + $i] = (float)($lm[$i] ?? $avg); }
+        $ops = array();
+        foreach (array(0 => 'DayPlan', 96 => 'DayPlanTomorrow') as $off => $attr) {
+            $pl = json_decode($this->ReadAttributeString($attr), true);
+            if (!is_array($pl)) { continue; }
+            foreach ($pl as $k => $e) {
+                if ((int)($e['op'] ?? 0) === EMS_OP_NET_CHARGE && (int)($e['power'] ?? 0) > 0) { $ops[$off + (int)$k] = (float)$e['power']; }
+            }
+        }
+        $inv = $this->getInverterEntry();
+        $maxW = (float)$this->ReadPropertyInteger('EMS_Max_Power_W');
+        $capKwh = $this->batteryCapacityKwh();
+        if ($capKwh <= 0.0) { return $fail('Batteriekapazitaet unbekannt'); }
+        $lim = $this->getBatteryPowerLimitsKw($inv, $maxW, $capKwh);
+        $ctx = array('capKwh' => $capKwh, 'chargeKw' => $lim['chargeKw'], 'dischargeKw' => $lim['dischargeKw'], 'chargeCurve' => $this->chargeCurveKw(),
+            'maxW' => $maxW, 'socMin' => (float)$this->ReadPropertyInteger('BAT_SOC_Min'), 'socReserve' => (float)$this->ReadPropertyInteger('BAT_SOC_Reserve_Backup'),
+            'margin' => (float)$this->ReadPropertyInteger('BAT_SOC_Safety_Margin_Pct'));
+        $base0 = strtotime('today');
+        $r = $this->gridImportOutlookCore($prices, $pv, $load, $ops, (int)floor(($now - $base0) / 900), (int)floor(($fromTs - $base0) / 900),
+            (int)ceil(($toTs - $base0) / 900), (float)$this->getCurrentBatterySoc(), $loadDeltaW, $ctx);
+        $r['contractVersion'] = '1.0';
+        $r['ok'] = true;
+        $r['generatedAt'] = $now;
+        $r['conservative'] = $conservative;
+        $r['from'] = $fromTs;
+        $r['to'] = $toTs;
+        return $r;
+    }
+
+    /**
+     * Rechenkern von GetGridImportOutlook() (rein, ohne Instanzzugriffe, einzeln pruefbar).
+     * Index = Viertelstunde ab heute 0:00 (0-191). Rechnet ab $nowIdx, wertet $winFrom..$winTo-1 aus.
+     */
+    private function gridImportOutlookCore(array $prices, array $pv, array $load, array $chargeOps, int $nowIdx, int $winFrom, int $winTo, float $soc0, float $loadDeltaW, array $ctx): array
+    {
+        $floor = (float)$ctx['socMin'] + (float)$ctx['socReserve'];
+        $reserveSoc = $floor + (float)($ctx['margin'] ?? 0.0);
+        $winFrom = max($winFrom, $nowIdx); $winTo = min($winTo, 192);
+        $run = function (float $delta) use ($prices, $pv, $load, $chargeOps, $nowIdx, $winFrom, $winTo, $soc0, $ctx, $floor) {
+            $soc = $soc0; $imp = 0.0; $cost = 0.0; $costKnown = 0.0; $impKnown = 0.0; $maxPrice = null; $minSoc = 100.0; $slots = array(); $planned = 0.0;
+            $cap = max(0.001, (float)$ctx['capKwh']); $eff = $this->convEff();
+            for ($i = $nowIdx; $i < $winTo; $i++) {
+                $in = ($i >= $winFrom);
+                $l = max(0.0, (float)($load[$i] ?? 0.0) + ($in ? $delta : 0.0));
+                $p = (float)($pv[$i] ?? 0.0);
+                $slotImp = 0.0;
+                if (isset($chargeOps[$i]) && $soc < 99.5) {
+                    // geplantes Netzladen: Batterie laedt aus dem Netz, das Haus laeuft dabei ebenfalls aus Netz/PV
+                    $gain = min((float)$chargeOps[$i] * 0.25 / 1000.0, (100.0 - $soc) / 100.0 * $cap, ((float)$ctx['maxW'] / 1000.0) * 0.25);
+                    $soc = min(100.0, $soc + $gain / $cap * 100.0);
+                    if ($in) { $planned += $gain; }
+                    $slotImp = max(0.0, $l - $p) * 0.25 / 1000.0;
+                } else {
+                    $surplus = $p - $l;
+                    if ($surplus > 0.0) {
+                        if ($soc < 99.5) {
+                            $kw = min($surplus / 1000.0, (isset($ctx['chargeCurve']) && !empty($ctx['chargeCurve'])) ? $this->ctxChargeKw($ctx, $soc) : (float)$ctx['chargeKw']);
+                            $soc = min(100.0, $soc + $kw * 0.25 / $cap * 100.0);
+                        }
+                    } else {
+                        $needKwh = (-$surplus) * 0.25 / 1000.0;
+                        $availKwh = max(0.0, ($soc - $floor) / 100.0 * $cap) * $eff;
+                        $give = min($needKwh, $availKwh, (float)$ctx['dischargeKw'] * 0.25);
+                        $soc = max(min($soc, $floor), $soc - $give / $eff / $cap * 100.0);
+                        $slotImp = $needKwh - $give;
+                    }
+                }
+                if ($in) {
+                    $pr = (isset($prices[$i]) && $prices[$i] !== null) ? (float)$prices[$i] : null;
+                    $imp += $slotImp;
+                    if ($pr !== null) { $cost += $slotImp * $pr; $impKnown += $slotImp; if ($slotImp > 0.001 && ($maxPrice === null || $pr > $maxPrice)) { $maxPrice = $pr; } }
+                    $minSoc = min($minSoc, $soc);
+                    $slots[] = array('slot' => $i, 'importKwh' => round($slotImp, 3), 'priceCt' => $pr === null ? null : round($pr * 100.0, 2), 'socEndPct' => round($soc, 1));
+                }
+            }
+            return array('imp' => $imp, 'cost' => $cost, 'impKnown' => $impKnown, 'maxPrice' => $maxPrice, 'minSoc' => $minSoc, 'slots' => $slots, 'planned' => $planned);
+        };
+        $b = $run(0.0);
+        $s = $run($loadDeltaW);
+        $sum = function (array $x) use ($reserveSoc) {
+            return array(
+                'expectedGridImportKwh' => round($x['imp'], 3),
+                'avgPriceCt' => ($x['impKnown'] > 0.001) ? round($x['cost'] / $x['impKnown'] * 100.0, 2) : null,
+                'maxPriceCt' => $x['maxPrice'] === null ? null : round($x['maxPrice'] * 100.0, 2),
+                'minSocPct' => round($x['minSoc'], 1),
+                'batteryCoversLoad' => ($x['imp'] < 0.2),
+                'reserveRespected' => ($x['minSoc'] >= $reserveSoc - 0.01),
+            );
+        };
+        $bs = $sum($b); $ss = $sum($s);
+        $slots = array();
+        foreach ($s['slots'] as $k => $sl) {
+            $slots[] = array('startAt' => strtotime('today') + $sl['slot'] * 900, 'importKwh' => $sl['importKwh'],
+                'baselineImportKwh' => $b['slots'][$k]['importKwh'] ?? 0.0, 'priceCt' => $sl['priceCt'], 'socEndPct' => $sl['socEndPct']);
+        }
+        $res = $ss;
+        $res['baselineGridImportKwh'] = $bs['expectedGridImportKwh'];
+        $res['avoidedImportKwh'] = round(max(0.0, $b['imp'] - $s['imp']), 3);
+        $res['reserveSocPct'] = round($reserveSoc, 1);
+        $res['plannedGridChargeKwh'] = round($s['planned'], 2);
+        $res['baseline'] = $bs;
+        $res['slots'] = $slots;
+        return $res;
     }
 
     /** Sperrfenster der Heizungs-Automatik als Sondereffekte (siehe GetSpecialEvents()). */
