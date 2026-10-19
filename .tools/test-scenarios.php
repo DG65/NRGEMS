@@ -837,7 +837,12 @@ check('Referenz 1 ohne Preisvergleichswert: kein Netzladen (Grenze unerreichbar)
 prop('PLAN_NightGrid_Active', true); prop('PLAN_NightGrid_EndHour', 6); prop('PLAN_NightGrid_ExtendHours', 0);
 $nwU = call($ems, 'nightWindowPlan', [$tagU, 0, 0.0, $ctxU]);
 check('Nutzer ohne Verguetung laedt trotzdem in den 12-ct-Slots nach (kein Sperren wegen Verguetung 0)', $nwU !== null && count($nwU['charge']) > 0 && max(array_keys($nwU['charge'])) < 24, json_encode($nwU));
-check('Nutzer ohne Verguetung: Halten (Haus aus dem Netz) wird nicht aus der Verguetung abgeleitet', call($ems, 'nightWindowSlot', [30, 0.12, 60.0, $nwU, $ctxU]) === null);
+$slU = null; for ($i = 0; $i < $nwU['end']; $i++) { if (!isset($nwU['charge'][$i])) { $slU = $i; break; } }
+check('Referenz Ersatzpreis: es gibt einen Nicht-Ladeslot im Fenster (Testvoraussetzung)', $slU !== null, json_encode($nwU));
+check('Referenz Ersatzpreis (Nutzer ohne Verguetung): uebriger Slot im Fenster (12 ct < 36 ct x 0,95 - 3 ct = 31,2 ct) -> Akku halten, Haus aus dem Netz, Begruendung nennt den Ersatzpreis', ($hU = call($ems, 'nightWindowSlot', [$slU, 0.12, 60.0, $nwU, $ctxU])) !== null && $hU['plan']['op'] === EMS_OP_HOLD && $hU['plan']['gw'] === GW_MODE_AC_EXPORT && strpos($hU['plan']['reason'], 'Ersatzpreis') !== false, json_encode($hU['plan'] ?? null));
+check('Referenz Ersatzpreis: Grenze 31,2 ct (31 ct noch halten, 32 ct schon Akku)', call($ems, 'nightWindowSlot', [$slU, 0.31, 60.0, $nwU, $ctxU]) !== null && call($ems, 'nightWindowSlot', [$slU, 0.32, 60.0, $nwU, $ctxU]) === null);
+check('Referenz Ersatzpreis ohne Preisvergleichswert: kein Halten', call($ems, 'nightWindowSlot', [$slU, 0.12, 60.0, $nwU, array_merge($ctxU, ['replacePrice' => null])]) === null);
+check('Referenz Ersatzpreis: Halten unabhaengig von der Einspeiseverguetung (Verguetung 18,36 ct, Preis 30 ct, Ersatz 50 ct -> halten)', ($hV = call($ems, 'nightWindowSlot', [$slU, 0.30, 60.0, $nwU, array_merge($ctxU, ['feedTariff' => 0.1836, 'replacePrice' => 0.50])])) !== null && $hV['plan']['op'] === EMS_OP_HOLD, json_encode($hV['plan'] ?? null));
 prop('ANL_Verguetung_ct', 8.0); // niedrige Verguetung (z. B. Ue20/Direktvermarktung)
 check('Verguetung 8 ct, Referenz Verguetung: Netzladen sehr streng (Grenze 7,6 ct)', abs(call($ems, 'gridChargeLimitEur', [['feedTariff' => 0.08, 'refMode' => 0]]) - 0.076) < 0.0005);
 prop('NETZLADUNG_Referenz', 1);

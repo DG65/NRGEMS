@@ -2,6 +2,9 @@
 
 Ältere Versionen: [CHANGELOG-Archiv.md](CHANGELOG-Archiv.md)
 
+## 0.75.4 (2026-10-20)
+- **Nachtfenster: Haus aus dem Netz folgt jetzt derselben Preisreferenz wie das Laden (Dietmar 20.10.2026):** Mit der Referenz „erwarteter Ersatz-Bezugspreis“ (`NETZLADUNG_Referenz` = 1) lud EMS im Nachtfenster zwar in den günstigsten Viertelstunden, ließ in den übrigen Viertelstunden aber weiter den Akku das Haus versorgen („Bezug 30,9 ct teuer, Eigenverbrauch aus Batterie“), weil die Haltezeit („Haus aus dem Netz, Akku wird nicht entladen“) noch fest an die Einspeisevergütung gekoppelt war (30 ct Bezug lag nie unter 17,4 ct). Jetzt gilt bei Referenz Ersatzpreis: Halten, wenn der Bezugspreis unter Ersatzpreis × Wirkungsgrad − Mindestspanne liegt (nur eine Wandlung, weil kein Wiederaufladen nötig ist; vermiedene Entlade- und Ladezyklen kommen als Vorteil obendrauf). Damit steht die gespeicherte Energie nur in den teuren Stunden zur Verfügung statt auch nachts, und die Doppelwandlung für die Nachtlast entfällt. Referenz Vergütung (Standard) bleibt unverändert. Bei SOC an der Reserve fällt der Plan wie bisher auf die Automatik zurück. Vier neue Prüfungen, drei davon gegen die alte Fassung nachweislich rot. Eine bis dahin wirkungslose Prüfung („Halten wird nicht aus der Vergütung abgeleitet“, Slot lag außerhalb des Fensters) ist durch gültige Fälle ersetzt. **Live noch nicht gemessen.**
+
 ## 0.75.3 (2026-10-18)
 - **Messpunkt-Zeile im Verbund-Status:** Das Panel „Verbund-Status“ zeigt jetzt in einer Zeile, welche Messpunkte des gefundenen Wechselrichters EMS nutzt (PV, Netz, Batterie, SOC, AC-Leistung, je ✓/✗), ob EMS steuern darf oder nur beobachtet, und ob EMS im Formular deaktiviert ist (Status 104). Aktualisiert sich nach „Jetzt neu suchen“. Anlass: Bei einem Solis-Wechselrichter wirkte EMS, als fände es die Messpunkte nicht; tatsächlich war EMS deaktiviert (und die Instanz lief auf einem sehr alten Stand). Keine Verhaltensänderung.
 

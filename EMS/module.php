@@ -41,7 +41,7 @@ define('EMS_LOG_VERBOSE',     2);
 // Formular-Konvention (siehe EMS/SUITE.md "Einheitliche Formular-Optik"):
 // Was-ist-Neu-Panel ist versionsscharf dismissible, Referenzmuster InverterHub.
 define('EMS_COLOR_AUTO', 0x2E8B3D); // Gruen: Wert wurde automatisch uebernommen (🔗-Zeilen im Formular)
-define('EMS_NEWS_VERSION', '0.75.3');
+define('EMS_NEWS_VERSION', '0.75.4');
 
 // NRG-Stack Partnermodul-GUIDs (fuer automatische Discovery, siehe discoverPartners())
 define('GUID_CHARGERHUB',    '{9256C34E-5CFD-4F37-8BFE-E65390EBB37C}');
@@ -691,6 +691,10 @@ class EMS extends IPSModule
                 'caption'  => '🆕 Neu in Version ' . EMS_NEWS_VERSION,
                 'expanded' => true,
                 'items'    => array(
+                    array(
+                        'type'    => 'Label',
+                        'caption' => '• GEÄNDERT: Nachtfenster mit der Preisreferenz „erwarteter Ersatz-Bezugspreis“: Zwischen den Ladeviertelstunden versorgt jetzt das Netz das Haus (Akku halten), wenn der Bezug unter dem erwarteten späteren Preis liegt, statt den Akku nachts leerzuziehen. Der gespeicherte Strom steht dadurch in den teuren Stunden zur Verfügung.'
+                    ),
                     array(
                         'type'    => 'Label',
                         'caption' => '• NEU: Im Verbund-Status steht jetzt in einer Zeile, welche Messpunkte des Wechselrichters EMS gefunden hat (PV, Netz, Batterie, SOC, AC-Leistung), ob EMS steuern darf oder nur beobachtet und ob EMS deaktiviert ist.'
@@ -3260,11 +3264,21 @@ class EMS extends IPSModule
                         : array($endLabel, $nw['charge'][$slot], $nw['n'], $price * 100, $ctx['socTargetNight']))),
                 'price' => $price, 'soc' => round($soc, 1)), 'soc' => $soc);
         }
-        // Haus nur dann aus dem Netz, wenn Netzstrom inkl. 5 % Batterieverlust billiger ist als die
-        // Einspeiseverguetung (Dietmar 19.09.2026); sonst versorgt wie sonst der Akku das Haus.
-        $holdBelow = $ctx['feedTariff'] * $this->convEff();
-        if ($price >= $holdBelow) { return null; }
-        $why = sprintf('%.2fct < %.2fct (Einspeisevergütung %.2fct abzüglich 5 %% Batterieverlust)', $price * 100, $holdBelow * 100, $ctx['feedTariff'] * 100);
+        // Haus nur dann aus dem Netz, wenn sich das Halten lohnt (sonst versorgt wie sonst der Akku das Haus).
+        // Referenz Einspeisevergütung (Dietmar 19.09.2026): Netzstrom inkl. 5 % Batterieverlust billiger als die Vergütung.
+        // Referenz Ersatz-Bezugspreis (Dietmar 20.10.2026, gleiche Referenz wie das Laden): die gehaltene Energie ersetzt
+        // später den teuren Bezug; nur eine Wandlung (Entladen) statt Hin und Rück, abzüglich Mindestspanne. Der Wegfall
+        // von Entlade-/Ladezyklen für diese Energie kommt als Vorteil obendrauf und wird nicht abgezogen.
+        if (($ctx['refMode'] ?? 0) === 1) {
+            if (!isset($ctx['replacePrice']) || $ctx['replacePrice'] === null) { return null; }
+            $holdBelow = $ctx['replacePrice'] * $this->convEff() - ($ctx['spread'] ?? 0.0);
+            if ($price >= $holdBelow) { return null; }
+            $why = sprintf('%.2fct < %.2fct (erwarteter Ersatzpreis %.2fct abzüglich 5 %% Verlust und Mindestspanne)', $price * 100, $holdBelow * 100, $ctx['replacePrice'] * 100);
+        } else {
+            $holdBelow = $ctx['feedTariff'] * $this->convEff();
+            if ($price >= $holdBelow) { return null; }
+            $why = sprintf('%.2fct < %.2fct (Einspeisevergütung %.2fct abzüglich 5 %% Batterieverlust)', $price * 100, $holdBelow * 100, $ctx['feedTariff'] * 100);
+        }
         $reason = ($nw['n'] > 0 || $soc < $ctx['socTargetNight'])
             ? sprintf('Nachtfenster bis %s: Haus aus dem Netz, %s -- Akku wird nicht entladen', $endLabel, $why)
             : sprintf('Nachtfenster bis %s: Haus aus dem Netz, %s -- Akku voll (Ziel %.0f%% erreicht)', $endLabel, $why, $ctx['socTargetNight']);
