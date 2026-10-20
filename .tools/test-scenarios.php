@@ -1117,6 +1117,78 @@ check('Wechselrichter mit ctl_ems_mode wird NICHT als Solis erkannt (GoodWe-Pfad
 obj(402, 1, 'Leer', 0);
 check('Wechselrichter ganz ohne Stellglieder: kein Solis', call($ems, 'isSolisDriver', [402]) === false);
 
+echo "\n8k6) Solis: Akku halten ueber die Entladesperre (svc_discharge_inhibit, Speicherbetrieb 17)\n";
+$vInh = vari('Entladesperre', IHUB_IID, 'svc_discharge_inhibit', false, 0);
+$vSt = vari('Speicherbetrieb (Einstellung)', IHUB_IID, 'cfg_storage_mode', 33, 1);
+$vPrev = vari('Vorheriger Speicherbetrieb', IHUB_IID, 'svc_prev_storage', 0, 1);
+foreach (['SolisHoldActive' => false, 'SolisHoldChangedAt' => 0, 'SolisUserStorage' => -1, 'SolisHoldTries' => 0, 'SolisHoldTryAt' => 0, 'SolisHoldBlockedUntil' => 0, 'SolisRestoreTarget' => -1, 'SolisLastMode' => 0, 'SolisLastWriteAt' => 0] as $k => $v) { attr($k, $v); }
+$GLOBALS['VAL'][$vDev] = 0; // Zwangsmodus am Geraet aus
+$ems->SetValue('EMS_PVPower', 0.0); $ems->SetValue('EMS_HousePower', 5000.0);
+$acts = function () { return array_map(fn($a) => $a[1] . '=' . json_encode($a[2]), $GLOBALS['ACTIONS']); };
+$GLOBALS['ACTIONS'] = [];
+call($ems, 'setGoodweMode', [GW_MODE_AC_EXPORT, 0, true]);
+check('Akku halten (Modus 5, 0 W) ohne PV: Entladesperre wird gesetzt, Nutzerwert 33 gemerkt', in_array('svc_discharge_inhibit=true', $acts(), true) && $ems->ReadAttributeInteger('SolisUserStorage') === 33 && $ems->ReadAttributeBoolean('SolisHoldActive') === true, json_encode($acts()));
+check('Halten erlaubt: Statuszeile ohne "Nur beobachtend"', call($ems, 'statusText', ['x']) === 'OK: x', call($ems, 'statusText', ['x']));
+$GLOBALS['ACTIONS'] = [];
+call($ems, 'setGoodweMode', [GW_MODE_AC_EXPORT, 0, true]);
+check('gleich danach (Befehl noch nicht zurueckgelesen, unter 60 s): nichts neu geschrieben, kein zweiter Merkvorgang', count($acts()) === 0, json_encode($acts()));
+$GLOBALS['VAL'][$vSt] = 17; $GLOBALS['VAL'][$vPrev] = 33; $GLOBALS['ACTIONS'] = [];
+call($ems, 'setGoodweMode', [GW_MODE_AC_EXPORT, 0, true]);
+check('Speicherbetrieb 17 zurueckgelesen: nichts mehr zu schreiben', count($acts()) === 0, json_encode($acts()));
+// Befehl kam nicht an: Neuschreiben im Abstand von 60 s, hoechstens dreimal, dann Pause
+$GLOBALS['VAL'][$vSt] = 33; $GLOBALS['ACTIONS'] = [];
+attr('SolisHoldTryAt', time() - 61); attr('SolisHoldTries', 0);
+call($ems, 'setGoodweMode', [GW_MODE_AC_EXPORT, 0, true]);
+check('Speicherbetrieb blieb 33 (Befehl verschluckt): nach 61 s einmal neu geschrieben', $acts() === ['svc_discharge_inhibit=true'] && $ems->ReadAttributeInteger('SolisHoldTries') === 1, json_encode($acts()));
+attr('SolisHoldTries', 3); attr('SolisHoldTryAt', time() - 61); $GLOBALS['ACTIONS'] = [];
+call($ems, 'setGoodweMode', [GW_MODE_AC_EXPORT, 0, true]);
+check('nach drei Fehlversuchen: keine weiteren Schreibzugriffe, Halten pausiert 10 min, Automatik', count($acts()) === 0 && $ems->ReadAttributeBoolean('SolisHoldActive') === false && $ems->ReadAttributeInteger('SolisHoldBlockedUntil') > time() + 500, json_encode($acts()));
+$GLOBALS['ACTIONS'] = [];
+call($ems, 'setGoodweMode', [GW_MODE_AC_EXPORT, 0, true]);
+check('waehrend der Pause wird nicht erneut versucht, Statuszeile nennt das Pausieren', count($acts()) === 0 && strpos(call($ems, 'statusText', ['x']), 'pausiert') !== false, json_encode($acts()) . call($ems, 'statusText', ['x']));
+attr('SolisHoldBlockedUntil', 0);
+// PV-Ueberschuss: nicht halten
+$GLOBALS['VAL'][$vSt] = 33; $ems->SetValue('EMS_PVPower', 4000.0); $ems->SetValue('EMS_HousePower', 800.0); $GLOBALS['ACTIONS'] = [];
+call($ems, 'setGoodweMode', [GW_MODE_AC_EXPORT, 0, true]);
+check('PV-Ueberschuss 3,2 kW: kein Halten (PV soll die Batterie laden duerfen), Statuszeile nennt das Pausieren', count($acts()) === 0 && strpos(call($ems, 'statusText', ['x']), 'pausiert') !== false, json_encode($acts()));
+$ems->SetValue('EMS_PVPower', 0.0); $ems->SetValue('EMS_HousePower', 5000.0);
+// Freigeben: Nutzerwert zurueck (InverterHub hat ihn gemerkt)
+attr('SolisHoldActive', true); attr('SolisHoldChangedAt', time() - 120); attr('SolisUserStorage', 33); $GLOBALS['VAL'][$vSt] = 17; $GLOBALS['VAL'][$vPrev] = 33; $GLOBALS['ACTIONS'] = [];
+call($ems, 'setGoodweMode', [GW_MODE_AUTO, 0, false]);
+check('Automatik nach Halten: Entladesperre wird freigegeben (svc_discharge_inhibit=false), Zielwert 33 zum Rücklesen gemerkt', in_array('svc_discharge_inhibit=false', $acts(), true) && $ems->ReadAttributeBoolean('SolisHoldActive') === false && $ems->ReadAttributeInteger('SolisRestoreTarget') === 33, json_encode($acts()));
+// Freigabe kam nicht an: ausdruecklich auf den gemerkten Wert schreiben
+$GLOBALS['VAL'][$vSt] = 17; attr('SolisHoldTryAt', time() - 61); attr('SolisHoldTries', 0); $GLOBALS['ACTIONS'] = [];
+call($ems, 'setGoodweMode', [GW_MODE_AUTO, 0, false]);
+check('Speicherbetrieb steht nach der Freigabe noch auf 17: nach 61 s ausdruecklich auf 33 geschrieben', in_array('ctl_storage_mode=33', $acts(), true), json_encode($acts()));
+$GLOBALS['VAL'][$vSt] = 33; call($ems, 'setGoodweMode', [GW_MODE_AUTO, 0, false]);
+check('Speicherbetrieb 33 zurueckgelesen: Merkziel geloescht', $ems->ReadAttributeInteger('SolisRestoreTarget') === -1);
+// InverterHub hat nichts gemerkt (neu angelegt): EMS schreibt den eigenen Merkwert
+attr('SolisHoldActive', true); attr('SolisHoldChangedAt', time() - 120); attr('SolisUserStorage', 35); $GLOBALS['VAL'][$vPrev] = 0; $GLOBALS['VAL'][$vSt] = 17; $GLOBALS['ACTIONS'] = [];
+call($ems, 'setGoodweMode', [GW_MODE_AUTO, 0, false]);
+check('InverterHub ohne gemerkten Wert: EMS schreibt seinen eigenen Merkwert (35) in den Speicherbetrieb', in_array('ctl_storage_mode=35', $acts(), true) && !in_array('svc_discharge_inhibit=false', $acts(), true), json_encode($acts()));
+attr('SolisRestoreTarget', -1);
+// Netzladen waehrend Halten: erst freigeben, dann laden
+attr('SolisHoldActive', true); attr('SolisHoldChangedAt', time() - 120); attr('SolisUserStorage', 33); $GLOBALS['VAL'][$vPrev] = 33; $GLOBALS['VAL'][$vSt] = 17; $GLOBALS['VAL'][$vDev] = 0; attr('SolisLastMode', 0); $GLOBALS['ACTIONS'] = [];
+call($ems, 'setGoodweMode', [GW_MODE_BAT_CHARGE, 8000, true]);
+check('Netzladen waehrend gehaltenem Akku: Entladesperre freigegeben UND Zwangsladen gesetzt', in_array('svc_discharge_inhibit=false', $acts(), true) && in_array('ctl_force_mode=1', $acts(), true), json_encode($acts()));
+attr('SolisRestoreTarget', -1);
+// Wartezeit zwischen zwei Wechseln (Register fest gespeichert)
+attr('SolisHoldActive', false); attr('SolisHoldChangedAt', time() - 10); $GLOBALS['VAL'][$vSt] = 33; $GLOBALS['ACTIONS'] = [];
+call($ems, 'setGoodweMode', [GW_MODE_AC_EXPORT, 0, true]);
+check('letzter Wechsel vor 10 s: Halten wird noch nicht erneut gesetzt (mind. 60 s Abstand wegen fester Speicherung)', count($acts()) === 0, json_encode($acts()));
+// Ohne Entladesperre-Steuerpunkt: kein Halten
+$GLOBALS['OBJ'][$vInh]['ObjectIdent'] = 'x_svc'; attr('SolisHoldChangedAt', 0); $GLOBALS['ACTIONS'] = [];
+call($ems, 'setGoodweMode', [GW_MODE_AC_EXPORT, 0, true]);
+check('InverterHub ohne svc_discharge_inhibit (aelterer Stand): kein Halten, Statuszeile "nicht unterstützt"', !in_array('svc_discharge_inhibit=true', $acts(), true) && strpos(call($ems, 'statusText', ['x']), 'nicht unterstützt') !== false, json_encode($acts()) . call($ems, 'statusText', ['x']));
+$GLOBALS['OBJ'][$vInh]['ObjectIdent'] = 'svc_discharge_inhibit';
+// KeepAlive: Zyklus bleibt aus -> Entladesperre freigeben
+prop('EMS_Active', true); prop('EMS_DryRun', false);
+attr('LastGoodweMode', GW_MODE_AC_EXPORT); attr('LastGoodweEnable', true); attr('LastGoodweWriteAt', time() - 3600);
+attr('SolisHoldActive', true); attr('SolisHoldChangedAt', time() - 3000); attr('SolisUserStorage', 33); $GLOBALS['VAL'][$vPrev] = 33; $GLOBALS['VAL'][$vSt] = 17; $GLOBALS['ACTIONS'] = [];
+call($ems, 'KeepAlive');
+check('Regelzyklus laeuft nicht mehr (Stunden): KeepAlive gibt die Entladesperre frei (kein Totmann am Geraet)', in_array('svc_discharge_inhibit=false', $acts(), true), json_encode($acts()));
+attr('SolisRestoreTarget', -1);
+
 echo "\n8l) Wallbox bei PV-Ueberschuss auch ueber der Preisschwelle\n";
 $ems = freshEms();
 $sW = state(['tib_active' => true, 'pv_total_w' => 3000.0, 'house_pow_w' => 800.0, 'wb1_pow_kw' => 0.0]);
