@@ -83,6 +83,7 @@ function IPS_GetInstance($iid) {
 function IPS_GetLibrary($id)      { return ['Version' => 'test', 'Build' => 0]; }
 function IPS_LogMessage($sender, $msg) { $GLOBALS['LOG'][] = $sender . ': ' . $msg; }
 function IPS_ApplyChanges($iid)   {}
+function IPS_SetProperty($iid, $n, $v) { $GLOBALS['PROP'][$iid][$n] = $v; }
 function IPS_RequestAction($iid, $ident, $value) {
     $GLOBALS['ACTIONS'][] = [$iid, $ident, $value];
     $GLOBALS['CTL'][$ident] = $value;
@@ -996,6 +997,52 @@ prop('TIBBER_Active', true);
 $gP = call($ems, 'GetDayPlan');
 check('beides an, aber keine Preise: Grund nennt fehlende Viertelstunden-Preise (nicht "EMS installieren")', $gP['planAvailable'] === false && (strpos($gP['reason'], 'Viertelstunden-Preise') !== false || strpos($gP['reason'], 'berechnet') !== false), json_encode($gP['reason']));
 check('alle drei Gruende sind verschieden', count(array_unique([$gE['reason'], $gT['reason'], $gP['reason']])) === 3 || count(array_unique([$gE['reason'], $gT['reason']])) === 2, json_encode([$gE['reason'], $gT['reason'], $gP['reason']]));
+
+echo "\n8k4) EMS_GetManualPlan / EMS_SetManualPlan (Vertrag manualplan 1.0)\n";
+$ems = freshEms(); prop('PLAN_Manual', '[]');
+$g0 = call($ems, 'GetManualPlan');
+check('Get ohne Eintraege: Vertrag 1.0, leere Liste, drei Aktionen, Revision und maxEntries', $g0['contractVersion'] === '1.0' && $g0['entries'] === [] && count($g0['actions']) === 3 && is_string($g0['revision']) && $g0['maxEntries'] === 50, json_encode($g0));
+$tmrDe = date('d.m.Y', strtotime('tomorrow')); $tmrIso = date('Y-m-d', strtotime('tomorrow'));
+$r1 = call($ems, 'SetManualPlan', [json_encode(['revision' => $g0['revision'], 'entries' => [
+    ['date' => $tmrDe, 'from' => '0:00', 'to' => '06:00', 'action' => EMS_OP_NET_CHARGE, 'power' => 20000],
+    ['date' => '', 'from' => '22:00', 'to' => '', 'action' => EMS_OP_HOLD, 'power' => 0],
+]])]);
+check('Set mit gueltiger Liste: ok, keine Fehler, zwei Eintraege', $r1['ok'] === true && $r1['errors'] === [] && count($r1['plan']['entries']) === 2, json_encode($r1['errors']));
+$stored = json_decode($GLOBALS['PROP'][EMS_IID]['PLAN_Manual'], true);
+check('gespeichert wird normalisiert: Datum JJJJ-MM-TT, Zeit HH:MM, Aktion/Leistung als Zahl', $stored[0]['Date'] === $tmrIso && $stored[0]['From'] === '00:00' && $stored[0]['To'] === '06:00' && $stored[0]['Action'] === EMS_OP_NET_CHARGE && $stored[0]['Power'] === 20000 && $stored[1]['Date'] === '' && $stored[1]['To'] === '', json_encode($stored));
+$g1 = call($ems, 'GetManualPlan');
+check('Get danach: Status morgen bzw. jeden Tag, beide ok, Text vorhanden, neue Revision', $g1['entries'][0]['state'] === 'tomorrow' && $g1['entries'][1]['state'] === 'everyDay' && $g1['entries'][0]['ok'] && $g1['entries'][0]['text'] !== '' && $g1['revision'] !== $g0['revision'], json_encode($g1['entries']));
+$before = $GLOBALS['PROP'][EMS_IID]['PLAN_Manual'];
+$rOld = call($ems, 'SetManualPlan', [json_encode(['revision' => $g0['revision'], 'entries' => []])]);
+check('veraltete Revision: abgelehnt, nichts geaendert', $rOld['ok'] === false && $rOld['errors'][0]['field'] === 'revision' && $GLOBALS['PROP'][EMS_IID]['PLAN_Manual'] === $before, json_encode($rOld['errors']));
+$rBad = call($ems, 'SetManualPlan', [json_encode(['entries' => [
+    ['date' => '21.10.2023', 'from' => '00:00', 'to' => '06:00', 'action' => EMS_OP_NET_CHARGE, 'power' => 1000],
+    ['date' => '', 'from' => '25:00', 'to' => '06:00', 'action' => EMS_OP_NET_CHARGE, 'power' => 0],
+    ['date' => '', 'from' => '10:00', 'to' => '09:00', 'action' => EMS_OP_HOLD, 'power' => 0],
+    ['date' => '', 'from' => '10:00', 'to' => '11:00', 'action' => 5, 'power' => 0],
+    ['date' => '', 'from' => '10:00', 'to' => '11:00', 'action' => EMS_OP_AUTO, 'power' => 200000],
+    ['date' => 'irgendwann', 'from' => '10:00', 'to' => '11:00', 'action' => EMS_OP_AUTO, 'power' => 0],
+]])]);
+$fields = array_column($rBad['errors'], 'field');
+check('Set mit Fehlern: ok false, ein Fehler je Problem mit Pfad (Datum, Zeit, Ende, Aktion, Leistung, Datum unlesbar)', $rBad['ok'] === false && in_array('entries[0].date', $fields, true) && in_array('entries[1].from', $fields, true) && in_array('entries[2].to', $fields, true) && in_array('entries[3].action', $fields, true) && in_array('entries[4].power', $fields, true) && in_array('entries[5].date', $fields, true), json_encode($fields));
+check('bei Fehlern bleibt der gespeicherte Plan unveraendert', $GLOBALS['PROP'][EMS_IID]['PLAN_Manual'] === $before);
+$rOv = call($ems, 'SetManualPlan', [json_encode(['entries' => [
+    ['date' => $tmrIso, 'from' => '01:00', 'to' => '03:00', 'action' => EMS_OP_NET_CHARGE, 'power' => 0],
+    ['date' => '', 'from' => '02:00', 'to' => '04:00', 'action' => EMS_OP_HOLD, 'power' => 0],
+    ['date' => $tmrIso, 'from' => '03:00', 'to' => '05:00', 'action' => EMS_OP_HOLD, 'power' => 0],
+]])]);
+check('Ueberschneidung (auch "jeden Tag" gegen ein Datum) wird gemeldet, direkt aufeinanderfolgende Zeiten sind erlaubt', $rOv['ok'] === false && count($rOv['errors']) === 1 && $rOv['errors'][0]['field'] === 'entries[1]' && strpos($rOv['errors'][0]['message'], 'Überschneidet') !== false, json_encode($rOv['errors']));
+$rMany = call($ems, 'SetManualPlan', [json_encode(['entries' => array_fill(0, 51, ['date' => '', 'from' => '10:00', 'to' => '11:00', 'action' => EMS_OP_AUTO, 'power' => 0])])]);
+check('mehr als 50 Eintraege: abgelehnt', $rMany['ok'] === false && $rMany['errors'][0]['field'] === 'entries', json_encode(array_slice($rMany['errors'], 0, 1)));
+$rJson = call($ems, 'SetManualPlan', ['kein json']);
+check('ungueltiges JSON: ok false mit verstaendlichem Fehler, nichts geaendert', $rJson['ok'] === false && $rJson['errors'][0]['field'] === 'entries' && $GLOBALS['PROP'][EMS_IID]['PLAN_Manual'] === $before);
+$gNow = call($ems, 'GetManualPlan');
+$rGood = call($ems, 'SetManualPlan', [json_encode(['revision' => $gNow['revision'], 'entries' => []])]);
+check('Set mit aktueller Revision und leerer Liste loescht alles', $rGood['ok'] === true && $rGood['plan']['entries'] === [] && $GLOBALS['PROP'][EMS_IID]['PLAN_Manual'] === '[]');
+prop('PLAN_Manual', json_encode([['Date' => '21.10.2023', 'From' => '00:00', 'To' => '06:00', 'Action' => EMS_OP_NET_CHARGE, 'Power' => 20000]]));
+$gPast = call($ems, 'GetManualPlan');
+check('Get zeigt einen vergangenen Eintrag aus dem Formular als past/nicht ok mit Text', $gPast['entries'][0]['state'] === 'past' && $gPast['entries'][0]['ok'] === false && strpos($gPast['entries'][0]['text'], 'Vergangenheit') !== false, json_encode($gPast['entries'][0]));
+prop('PLAN_Manual', '[]');
 
 echo "\n8l) Wallbox bei PV-Ueberschuss auch ueber der Preisschwelle\n";
 $ems = freshEms();

@@ -41,7 +41,7 @@ define('EMS_LOG_VERBOSE',     2);
 // Formular-Konvention (siehe EMS/SUITE.md "Einheitliche Formular-Optik"):
 // Was-ist-Neu-Panel ist versionsscharf dismissible, Referenzmuster InverterHub.
 define('EMS_COLOR_AUTO', 0x2E8B3D); // Gruen: Wert wurde automatisch uebernommen (🔗-Zeilen im Formular)
-define('EMS_NEWS_VERSION', '0.75.7');
+define('EMS_NEWS_VERSION', '0.76.0');
 
 // NRG-Stack Partnermodul-GUIDs (fuer automatische Discovery, siehe discoverPartners())
 define('GUID_CHARGERHUB',    '{9256C34E-5CFD-4F37-8BFE-E65390EBB37C}');
@@ -691,6 +691,10 @@ class EMS extends IPSModule
                 'caption'  => '🆕 Neu in Version ' . EMS_NEWS_VERSION,
                 'expanded' => true,
                 'items'    => array(
+                    array(
+                        'type'    => 'Label',
+                        'caption' => '• NEU: Die manuellen Tagesplan-Einträge lassen sich jetzt auch von außen bearbeiten (EMS_GetManualPlan / EMS_SetManualPlan), z. B. im Editor des PV-Monitors. Die Eingaben werden geprüft, bei einem Fehler wird nichts geändert.'
+                    ),
                     array(
                         'type'    => 'Label',
                         'caption' => '• NEU: Manuelle Tagesplan-Einträge nehmen jetzt auch das Datum TT.MM.JJJJ, und unter der Liste steht je Zeile, ob und wann der Eintrag wirkt oder warum er ignoriert wird (z. B. Datum in der Vergangenheit).'
@@ -2841,6 +2845,114 @@ class EMS extends IPSModule
             }
         }
         return $out;
+    }
+
+    /** Aktionen der manuellen Plan-Eintraege (Wert, Schluessel, Beschriftung, ob die Leistung gilt). */
+    private function manualPlanActions(): array
+    {
+        return array(
+            array('value' => EMS_OP_NET_CHARGE, 'key' => 'charge', 'label' => 'Netz laden', 'usesPower' => true),
+            array('value' => EMS_OP_HOLD,       'key' => 'hold',   'label' => 'Akku halten (Haus aus dem Netz)', 'usesPower' => false),
+            array('value' => EMS_OP_AUTO,       'key' => 'auto',   'label' => 'Automatik (Akku deckt das Haus, kein Netzladen)', 'usesPower' => false),
+        );
+    }
+
+    /**
+     * Manuelle Tagesplan-Eintraege fuer externe Editoren (Dashboard-PV-Monitor), Vertrag `manualplan` 1.0 (20.10.2026).
+     * `entries[]`: id (Zeilennummer ab 0), date ('' = jeden Tag, sonst JJJJ-MM-TT), from, to ('' = bis Mitternacht), action,
+     * power (W, nur bei Netz laden), state (everyDay|today|tomorrow|later|past|invalid), ok, text (Klartext wie im Formular).
+     * `revision` fuer die optimistische Sperre in EMS_SetManualPlan(). Rein lesend.
+     */
+    public function GetManualPlan()
+    {
+        $raw = $this->ReadPropertyString('PLAN_Manual');
+        $list = json_decode($raw, true);
+        if (!is_array($list)) { $list = array(); }
+        $status = $this->manualPlanStatusLines();
+        $today = date('Y-m-d'); $tomorrow = date('Y-m-d', strtotime('tomorrow'));
+        $entries = array();
+        foreach (array_values($list) as $i => $r) {
+            $d = $this->manualEntryDate((string)($r['Date'] ?? ''));
+            $act = (int)($r['Action'] ?? -1);
+            $st = $status[$i] ?? array('ok' => false, 'text' => '');
+            if ($d === null || !$st['ok']) { $state = (($d !== null && $d < $today && $d !== '') ? 'past' : 'invalid'); }
+            elseif ($d === '') { $state = 'everyDay'; }
+            elseif ($d === $today) { $state = 'today'; }
+            elseif ($d === $tomorrow) { $state = 'tomorrow'; }
+            else { $state = 'later'; }
+            $entries[] = array(
+                'id' => $i, 'date' => ($d === null) ? trim((string)($r['Date'] ?? '')) : $d,
+                'from' => trim((string)($r['From'] ?? '')), 'to' => trim((string)($r['To'] ?? '')),
+                'action' => $act, 'power' => max(0, (int)($r['Power'] ?? 0)),
+                'state' => $state, 'ok' => (bool)$st['ok'], 'text' => (string)$st['text'],
+            );
+        }
+        return array('contractVersion' => '1.0', 'now' => time(), 'revision' => (string)crc32($raw), 'maxEntries' => 50,
+            'actions' => $this->manualPlanActions(), 'entries' => $entries);
+    }
+
+    /**
+     * Ersetzt die manuellen Tagesplan-Eintraege (Vertrag `manualplan` 1.0). $json = {"revision": "...", "entries": [{date, from, to,
+     * action, power}, ...]}; die Liste ersetzt die bisherige vollstaendig (leer = alles loeschen). `revision` (aus EMS_GetManualPlan)
+     * ist optional; passt sie nicht mehr, wird nichts geaendert. Bei JEDEM Fehler wird nichts geaendert.
+     * Rueckgabe: {ok, errors[{field, message}], plan (= EMS_GetManualPlan), revision}. Der Plan rechnet sich innerhalb eines Zyklus
+     * neu. Zeiten sind Ortszeit; Datum JJJJ-MM-TT oder TT.MM.JJJJ (leer = jeden Tag), vergangene Daten werden abgelehnt.
+     */
+    public function SetManualPlan(string $json)
+    {
+        $errors = array();
+        $in = json_decode($json, true);
+        if (!is_array($in) || !isset($in['entries']) || !is_array($in['entries'])) {
+            $errors[] = array('field' => 'entries', 'message' => 'Erwartet wird {"entries": [...]} mit einer Liste von Einträgen.');
+            return array('ok' => false, 'errors' => $errors, 'plan' => $this->GetManualPlan(), 'revision' => $this->GetManualPlan()['revision']);
+        }
+        $cur = $this->GetManualPlan();
+        if (isset($in['revision']) && (string)$in['revision'] !== $cur['revision']) {
+            $errors[] = array('field' => 'revision', 'message' => 'Der Plan wurde zwischenzeitlich geändert (z. B. im Formular). Bitte neu laden und erneut speichern.');
+        }
+        if (count($in['entries']) > $cur['maxEntries']) {
+            $errors[] = array('field' => 'entries', 'message' => 'Höchstens ' . $cur['maxEntries'] . ' Einträge.');
+        }
+        $valid = array(EMS_OP_AUTO, EMS_OP_NET_CHARGE, EMS_OP_HOLD);
+        $today = date('Y-m-d');
+        $norm = array(); $sets = array();
+        foreach (array_values($in['entries']) as $i => $e) {
+            $f = 'entries[' . $i . ']';
+            if (!is_array($e)) { $errors[] = array('field' => $f, 'message' => 'Kein Eintrag.'); continue; }
+            $bad = false;
+            $d = $this->manualEntryDate((string)($e['date'] ?? ''));
+            if ($d === null) { $errors[] = array('field' => $f . '.date', 'message' => 'Das Datum ist nicht lesbar (JJJJ-MM-TT oder TT.MM.JJJJ, leer = jeden Tag).'); $bad = true; }
+            elseif ($d !== '' && $d < $today) { $errors[] = array('field' => $f . '.date', 'message' => 'Das Datum liegt in der Vergangenheit.'); $bad = true; }
+            $act = isset($e['action']) ? (int)$e['action'] : -1;
+            if (!in_array($act, $valid, true)) { $errors[] = array('field' => $f . '.action', 'message' => 'Unbekannte Aktion (erlaubt: 0 Automatik, 2 Netz laden, 8 Akku halten).'); $bad = true; }
+            $from = trim((string)($e['from'] ?? '')); $to = trim((string)($e['to'] ?? ''));
+            $fm = null; $tm = null;
+            if (!preg_match('/^(\d{1,2}):(\d{2})$/', $from, $a) || (int)$a[1] > 23 || (int)$a[2] > 59) { $errors[] = array('field' => $f . '.from', 'message' => 'Die Uhrzeit „von“ muss HH:MM sein (00:00 bis 23:59).'); $bad = true; }
+            else { $fm = (int)$a[1] * 60 + (int)$a[2]; $from = sprintf('%02d:%02d', (int)$a[1], (int)$a[2]); }
+            if ($to === '') { $tm = 1440; }
+            elseif (!preg_match('/^(\d{1,2}):(\d{2})$/', $to, $b) || (int)$b[2] > 59 || ((int)$b[1] * 60 + (int)$b[2]) > 1440) { $errors[] = array('field' => $f . '.to', 'message' => 'Die Uhrzeit „bis“ muss HH:MM sein (bis 24:00) oder leer (bis Mitternacht).'); $bad = true; }
+            else { $tm = (int)$b[1] * 60 + (int)$b[2]; $to = sprintf('%02d:%02d', (int)$b[1], (int)$b[2]); }
+            if ($fm !== null && $tm !== null && $tm <= $fm) { $errors[] = array('field' => $f . '.to', 'message' => 'Das Ende muss nach dem Beginn liegen.'); $bad = true; }
+            $pw = $e['power'] ?? 0;
+            if (!is_numeric($pw) || (float)$pw < 0 || (float)$pw > 100000) { $errors[] = array('field' => $f . '.power', 'message' => 'Die Leistung muss zwischen 0 und 100000 W liegen.'); $bad = true; }
+            if ($bad) { continue; }
+            // Ueberlappung: gleicher Tag oder einer der beiden gilt jeden Tag
+            foreach ($sets as $j => $o) {
+                if (($o['d'] === '' || $d === '' || $o['d'] === $d) && $fm < $o['tm'] && $o['fm'] < $tm) {
+                    $errors[] = array('field' => $f, 'message' => 'Überschneidet sich mit Eintrag ' . $j . ' (gleicher Tag und gleiche Uhrzeit).'); $bad = true; break;
+                }
+            }
+            if ($bad) { continue; }
+            $sets[$i] = array('d' => $d, 'fm' => $fm, 'tm' => $tm);
+            $norm[] = array('Date' => $d, 'From' => $from, 'To' => ($to === '' ? '' : $to), 'Action' => $act, 'Power' => (int)round((float)$pw));
+        }
+        if (!empty($errors)) {
+            return array('ok' => false, 'errors' => $errors, 'plan' => $cur, 'revision' => $cur['revision']);
+        }
+        IPS_SetProperty($this->InstanceID, 'PLAN_Manual', json_encode($norm));
+        IPS_ApplyChanges($this->InstanceID);
+        $plan = $this->GetManualPlan();
+        return array('ok' => true, 'errors' => array(), 'plan' => $plan, 'revision' => $plan['revision']);
     }
 
     /**
