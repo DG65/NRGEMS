@@ -984,6 +984,19 @@ $line = call($ems, 'priceThresholdLine', ['charge', $pW]);
 check('Statuszeile nennt den wirksamen Wert in ct', is_string($line) && strpos($line, 'Wirksam:') !== false && strpos($line, 'ct/kWh') !== false, (string)$line);
 prop('OPT_Arbitrage_Min_Spread_ct', 3.0);
 
+echo "\n8k3) EMS_GetDayPlan 1.3: planAvailable und reason\n";
+$ems = freshEms(); attr('DayPlan', '[]'); attr('DayPlanTomorrow', '[]');
+prop('BAT_Active', false); prop('TIBBER_Active', false);
+$gE = call($ems, 'GetDayPlan');
+check('ohne Plan: planAvailable false, Vertrag 1.3, Grund nennt den ausgeschalteten Batteriespeicher', $gE['contractVersion'] === '1.3' && $gE['planAvailable'] === false && $gE['slots'] === [] && strpos($gE['reason'], 'Batteriespeicher') !== false, json_encode($gE['reason']));
+prop('BAT_Active', true);
+$gT = call($ems, 'GetDayPlan');
+check('Batteriespeicher an, Preisoptimierung aus: Grund nennt die Preisoptimierung', $gT['planAvailable'] === false && strpos($gT['reason'], 'Preisoptimierung') !== false, json_encode($gT['reason']));
+prop('TIBBER_Active', true);
+$gP = call($ems, 'GetDayPlan');
+check('beides an, aber keine Preise: Grund nennt fehlende Viertelstunden-Preise (nicht "EMS installieren")', $gP['planAvailable'] === false && (strpos($gP['reason'], 'Viertelstunden-Preise') !== false || strpos($gP['reason'], 'berechnet') !== false), json_encode($gP['reason']));
+check('alle drei Gruende sind verschieden', count(array_unique([$gE['reason'], $gT['reason'], $gP['reason']])) === 3 || count(array_unique([$gE['reason'], $gT['reason']])) === 2, json_encode([$gE['reason'], $gT['reason'], $gP['reason']]));
+
 echo "\n8l) Wallbox bei PV-Ueberschuss auch ueber der Preisschwelle\n";
 $ems = freshEms();
 $sW = state(['tib_active' => true, 'pv_total_w' => 3000.0, 'house_pow_w' => 800.0, 'wb1_pow_kw' => 0.0]);
@@ -1038,7 +1051,7 @@ for ($i = 0; $i < 96; $i++) { $planW[$i] = ['op' => EMS_OP_AUTO, 'gw' => GW_MODE
 for ($i = 8; $i < 12; $i++) { $planW[$i] = ['op' => EMS_OP_NET_CHARGE, 'gw' => GW_MODE_BAT_CHARGE, 'power' => 8000, 'reason' => '', 'price' => 0.10, 'soc' => 60.0]; }
 attr('DayPlan', json_encode($planW)); attr('DayPlanTomorrow', '[]');
 $gp = call($ems, 'GetDayPlan');
-check('Tagesplan 1.2: ein Ladefenster, 8 kWh (4 x 8 kW x 0,25 h)', $gp['contractVersion'] === '1.2' && count($gp['windows']) === 1 && abs($gp['windows'][0]['kWh'] - 8.0) < 0.05, json_encode($gp['windows']));
+check('Tagesplan 1.3: ein Ladefenster, 8 kWh (4 x 8 kW x 0,25 h)', $gp['contractVersion'] === '1.3' && count($gp['windows']) === 1 && $gp['planAvailable'] === true && $gp['reason'] === '' && abs($gp['windows'][0]['kWh'] - 8.0) < 0.05, json_encode($gp['windows']));
 $refExp = (92 * 30.0 + 4 * 10.0) / 96; $saveExp = round(($refExp - 10.0) * 8.0 / 100.0, 2);
 check('Ersparnis = (Oe-Planpreis - Fensterpreis) x kWh, Tagessumme = Fenstersumme', abs($gp['windows'][0]['savingsEur'] - $saveExp) < 0.011 && abs($gp['savingsEur'] - $saveExp) < 0.011, "erwartet $saveExp: " . json_encode($gp));
 check('Fenster hat Start < Ende und Preis in ct', $gp['windows'][0]['end'] - $gp['windows'][0]['start'] === 3600 && abs($gp['windows'][0]['avgPriceCt'] - 10.0) < 0.01, json_encode($gp['windows'][0]));

@@ -41,7 +41,7 @@ define('EMS_LOG_VERBOSE',     2);
 // Formular-Konvention (siehe EMS/SUITE.md "Einheitliche Formular-Optik"):
 // Was-ist-Neu-Panel ist versionsscharf dismissible, Referenzmuster InverterHub.
 define('EMS_COLOR_AUTO', 0x2E8B3D); // Gruen: Wert wurde automatisch uebernommen (🔗-Zeilen im Formular)
-define('EMS_NEWS_VERSION', '0.75.5');
+define('EMS_NEWS_VERSION', '0.75.6');
 
 // NRG-Stack Partnermodul-GUIDs (fuer automatische Discovery, siehe discoverPartners())
 define('GUID_CHARGERHUB',    '{9256C34E-5CFD-4F37-8BFE-E65390EBB37C}');
@@ -691,6 +691,10 @@ class EMS extends IPSModule
                 'caption'  => '🆕 Neu in Version ' . EMS_NEWS_VERSION,
                 'expanded' => true,
                 'items'    => array(
+                    array(
+                        'type'    => 'Label',
+                        'caption' => '• NEU: Gibt es keinen Tagesplan, nennt EMS jetzt den Grund (z. B. „Preisoptimierung ausgeschaltet“, „keine Viertelstunden-Preise“). Das Dashboard kann ihn anzeigen (EMS_GetDayPlan Vertrag 1.3, planAvailable und reason).'
+                    ),
                     array(
                         'type'    => 'Label',
                         'caption' => '• NEU: Die Preisschwellen (Laden, Entladen) rechnen bei „0 = automatisch“ jetzt wirtschaftlich: nie lockerer, als es sich nach Einspeisevergütung bzw. Ersatzpreis, Verlusten, Verschleiß und Mindestspanne lohnt. Unter jeder Schwelle steht der wirksame Wert mit Herkunft.'
@@ -3813,8 +3817,30 @@ class EMS extends IPSModule
             $out[] = $this->addDayPlanSwitching($entry);
         }
         $win = $this->dayPlanWindows($out);
-        return array('contractVersion' => '1.2', 'priceUnit' => 'ct/kWh', 'slots' => $out,
-            'savingsEur' => $win['savingsEur'], 'windows' => $win['windows']);
+        // Vertrag 1.3 (additiv, Dietmar 20.10.2026): planAvailable + reason. Ohne Plan sagt reason, woran es liegt
+        // (Konsumenten zeigen den Grund statt "EMS installieren/konfigurieren"); mit Plan ist reason ein leerer Text.
+        $reason = empty($out) ? $this->dayPlanUnavailableReason() : '';
+        return array('contractVersion' => '1.3', 'priceUnit' => 'ct/kWh', 'slots' => $out,
+            'savingsEur' => $win['savingsEur'], 'windows' => $win['windows'],
+            'planAvailable' => !empty($out), 'reason' => $reason);
+    }
+
+    /**
+     * Warum es (noch) keinen Tagesplan gibt, als Klartext fuer die Anzeige. Reihenfolge wie die Bedingungen in
+     * BuildDayPlan(): erst Voraussetzungen im Formular, dann fehlende Preise, sonst "wird noch berechnet".
+     */
+    private function dayPlanUnavailableReason(): string
+    {
+        if (!$this->ReadPropertyBoolean('BAT_Active')) {
+            return 'Der Batteriespeicher ist im EMS ausgeschaltet (Bereich „Batteriespeicher“, Schalter einschalten).';
+        }
+        if (!$this->ReadPropertyBoolean('TIBBER_Active')) {
+            return 'Die Preisoptimierung mit dynamischem Tarif ist ausgeschaltet (Bereich „Tibber & Tarif“, Schalter einschalten).';
+        }
+        if (trim((string)$this->getPT15MTodayJson()) === '') {
+            return 'Es liegen keine Viertelstunden-Preise vor (Preisquelle fehlt oder liefert nichts, siehe Bereich „Tibber & Tarif“).';
+        }
+        return 'Der Tagesplan wird noch berechnet, er erscheint mit dem nächsten Preis-Update.';
     }
 
     /**

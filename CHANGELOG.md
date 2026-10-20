@@ -2,6 +2,9 @@
 
 Ältere Versionen: [CHANGELOG-Archiv.md](CHANGELOG-Archiv.md)
 
+## 0.75.6 (2026-10-20)
+- **`EMS_GetDayPlan()` Vertrag 1.3 (additiv): `planAvailable` und `reason`:** Ohne Tagesplan sagt `reason` im Klartext, woran es liegt: Batteriespeicher im EMS aus, Preisoptimierung mit dynamischem Tarif aus, keine Viertelstunden-Preise, oder „wird noch berechnet“. Mit Plan ist `planAvailable` wahr und `reason` ein leerer Text. Bisher lieferte die Funktion nur eine leere Liste, und das Dashboard schrieb „EMS installieren/konfigurieren“, obwohl EMS lief (Pauls Anlage, Preisoptimierung war aus). Alle bisherigen Felder unverändert. Vier neue Prüfungen, nachweislich rot ohne die Änderung.
+
 ## 0.75.5 (2026-10-20)
 - **Preisschwellen: Automatik rechnet wirtschaftlich (Dietmar 20.10.2026):** Bei „0 = automatisch“ galten bisher nur Quartile des Preisverlaufs der nächsten 24 Stunden (unteres Viertel laden, oberes Viertel entladen). Jetzt werden sie nie lockerer, als es sich rechnet: **Laden** höchstens bis zur wirtschaftlichen Ladegrenze (Einspeisevergütung aus Inbetriebnahme und kWp bzw. erwarteter Ersatzpreis, Wirkungsgrad, Verschleißkosten aus Speicherpreis und Zyklen, Mindestspanne – dieselbe Grenze, die Nachtfenster und Bedarfsabsicherung schon nutzen), **Entladen** mindestens Einspeisevergütung × Wirkungsgrad + Verschleiß (darunter lohnt Einspeisen mehr). Sind die Angaben nicht bekannt, bleibt es bei den Quartilen; bei flachem Verlauf weiter „keine Preissteuerung“; eingetragene Werte gelten unverändert. Bei Dietmars Winterpreisen (30 bis 55 ct, Referenz Ersatzpreis) ändert sich nichts, die Quartile liegen darunter bzw. darüber. Im Formular steht unter jeder Schwelle der **wirksame Wert mit Herkunft** („Wirksam: 30,1 ct/kWh (automatisch: unteres Viertel …)“). Auslöser: Pauls EMS hatte 0,07 € eingetragen, wirkungslos gegen Tibber-Preise ab 35 ct. Neun neue Prüfungen, drei davon gegen die abgeschaltete Logik nachweislich rot. **Live noch nicht gemessen.**
 
