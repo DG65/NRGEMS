@@ -1420,7 +1420,7 @@
                 {
                     "type": "NumberSpinner",
                     "name": "TIB_Threshold_Charge",
-                    "caption": "Preisschwelle Netz→Batterie laden (EUR/kWh, 0 = automatisch: unteres Viertel der nächsten 24 Stunden)",
+                    "caption": "Preisschwelle Netz→Batterie laden (EUR/kWh, 0 = automatisch: unteres Viertel der nächsten 24 Stunden, höchstens so viel, wie sich nach Verlusten, Verschleiß und Mindestspanne rechnet)",
                     "minimum": 0,
                     "maximum": 1,
                     "digits": 4,
@@ -1429,7 +1429,7 @@
                 {
                     "type": "NumberSpinner",
                     "name": "TIB_Threshold_Discharge",
-                    "caption": "Preisschwelle Batterie→Haus entladen (EUR/kWh, 0 = automatisch: oberes Viertel der nächsten 24 Stunden)",
+                    "caption": "Preisschwelle Batterie→Haus entladen (EUR/kWh, 0 = automatisch: oberes Viertel der nächsten 24 Stunden, mindestens Einspeisevergütung nach Verlusten plus Verschleiß)",
                     "minimum": 0,
                     "maximum": 1,
                     "digits": 4,

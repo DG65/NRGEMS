@@ -941,6 +941,49 @@ prop('TIB_Threshold_WB', 0.0);
 $thMix = call($ems, 'priceThresholds', [$pTh]);
 check('gemischt: eingetragen bleibt, 0 wird automatisch', $thMix['charge'] === 0.15 && $thMix['wb'] > 0.2 && $thMix['wb'] < 0.3, json_encode($thMix));
 
+echo "\n8k2) Preisschwellen: Automatik rechnet wirtschaftlich (Dietmar 20.10.2026)\n";
+$ems = freshEms();
+prop('BAT_Capacity_kWh', 40.0); prop('BAT_Price_EUR', 9998.0); prop('BAT_Cycles', 8000); prop('OPT_Arbitrage_Min_Spread_ct', 3.0);
+// a) Winter-Preise 30..55 ct, Referenz Ersatzpreis: Quartile bleiben, wirtschaftliche Grenze (rund 39 ct) lockert nie
+$pW = []; for ($i = 0; $i < 96; $i++) { $pW[] = 0.30 + $i * (0.25 / 95); }
+prop('NETZLADUNG_Referenz', 1);
+$info = []; $thW = call($ems, 'priceThresholdsCore', [$pW, &$info]);
+check('Winter 30-55 ct, Referenz Ersatzpreis: Ladeschwelle bleibt unteres Viertel (wirtschaftliche Grenze ~39 ct lockert nicht)', abs($thW['charge'] - $pW[(int)round(0.25 * 95)]) < 1e-9 && strpos($info['charge'], 'unteres Viertel') !== false, json_encode([$thW, $info]));
+// b) enger Verlauf 30..34 ct: Verschleiss 3,1 ct + Mindestspanne 3 ct + Wandlungsverluste machen Laden unwirtschaftlich
+$pN = []; for ($i = 0; $i < 96; $i++) { $pN[] = 0.30 + $i * (0.04 / 95); }
+$info = []; $thN = call($ems, 'priceThresholdsCore', [$pN, &$info]);
+check('enger Verlauf 30-34 ct: Ladeschwelle wird auf die wirtschaftliche Grenze (unter 30 ct) gesenkt, nichts gilt als guenstig', $thN['charge'] < 0.30 && $thN['charge'] < $pN[(int)round(0.25 * 95)] && strpos($info['charge'], 'Wirtschaftlichkeit') !== false, json_encode([$thN, $info]));
+// c) eingetragen gilt unveraendert, auch wenn unwirtschaftlich
+prop('TIB_Threshold_Charge', 0.07);
+$info = []; $thE = call($ems, 'priceThresholdsCore', [$pN, &$info]);
+check('eingetragene Ladeschwelle (7 ct) gilt unveraendert und wird als eingetragen gemeldet', $thE['charge'] === 0.07 && $info['charge'] === 'eingetragen', json_encode([$thE, $info]));
+prop('TIB_Threshold_Charge', 0.0);
+// d) Entladeschwelle: guenstiger Tarif 10..18 ct, Verguetung 18,36 ct: Einspeisen lohnt mehr als Entladen unter ~20,4 ct
+prop('ANL_Verguetung_ct', 18.36);
+$pC = []; for ($i = 0; $i < 96; $i++) { $pC[] = 0.10 + $i * (0.08 / 95); }
+$info = []; $thC = call($ems, 'priceThresholdsCore', [$pC, &$info]);
+$floorD = 0.1836 * 0.95 + 0.0312;
+check('billiger Tarif: Entladeschwelle mindestens Verguetung x 0,95 + Verschleiss (~20,5 ct) statt oberes Viertel (16 ct)', abs($thC['discharge'] - $floorD) < 0.001 && strpos($info['discharge'], 'Einspeisevergütung') !== false, json_encode([$thC, $info]));
+// e) teurer Tarif: oberes Viertel liegt ueber der Untergrenze, bleibt unveraendert
+$info = []; $thH = call($ems, 'priceThresholdsCore', [$pW, &$info]);
+check('Winter-Tarif: Entladeschwelle bleibt oberes Viertel (Untergrenze 20,5 ct lockert nicht)', abs($thH['discharge'] - $pW[(int)round(0.75 * 95)]) < 1e-9 && strpos($info['discharge'], 'oberes Viertel') !== false, json_encode([$thH, $info]));
+// f) ohne bekannte Verguetung keine Untergrenze fuer Entladen
+prop('ANL_Verguetung_ct', 0.0);
+$thNF = call($ems, 'priceThresholds', [$pC]);
+check('ohne bekannte Einspeiseverguetung: keine Untergrenze, Entladeschwelle = oberes Viertel', abs($thNF['discharge'] - $pC[(int)round(0.75 * 95)]) < 1e-9, json_encode($thNF));
+// g) flacher Tarif: unveraendert keine Preissteuerung
+$infoF = []; $thFl = call($ems, 'priceThresholdsCore', [array_fill(0, 96, 0.30), &$infoF]);
+check('flacher Tarif: weiter keine Preissteuerung, Statuszeile sagt es', $thFl['charge'] >= 1e8 && strpos($infoF['charge'], 'flacher Preisverlauf') !== false, json_encode([$thFl, $infoF]));
+// h) Referenz Verguetung (Standard bei bekannter Verguetung): Ladegrenze = Verguetung x 0,95 - Verschleiss (~14,3 ct)
+prop('ANL_Verguetung_ct', 18.36); prop('NETZLADUNG_Referenz', 0);
+$info = []; $thV = call($ems, 'priceThresholdsCore', [$pW, &$info]);
+check('Referenz Verguetung: Ladeschwelle auf Verguetung x 0,95 - Verschleiss (~14,3 ct) begrenzt', abs($thV['charge'] - (0.1836 * 0.95 - 0.0312)) < 0.001 && strpos($info['charge'], 'Einspeisevergütung') !== false, json_encode([$thV, $info]));
+// i) Statuszeile fuers Formular
+prop('NETZLADUNG_Referenz', 1); prop('ANL_Verguetung_ct', 0.0);
+$line = call($ems, 'priceThresholdLine', ['charge', $pW]);
+check('Statuszeile nennt den wirksamen Wert in ct', is_string($line) && strpos($line, 'Wirksam:') !== false && strpos($line, 'ct/kWh') !== false, (string)$line);
+prop('OPT_Arbitrage_Min_Spread_ct', 3.0);
+
 echo "\n8l) Wallbox bei PV-Ueberschuss auch ueber der Preisschwelle\n";
 $ems = freshEms();
 $sW = state(['tib_active' => true, 'pv_total_w' => 3000.0, 'house_pow_w' => 800.0, 'wb1_pow_kw' => 0.0]);

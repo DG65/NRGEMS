@@ -41,7 +41,7 @@ define('EMS_LOG_VERBOSE',     2);
 // Formular-Konvention (siehe EMS/SUITE.md "Einheitliche Formular-Optik"):
 // Was-ist-Neu-Panel ist versionsscharf dismissible, Referenzmuster InverterHub.
 define('EMS_COLOR_AUTO', 0x2E8B3D); // Gruen: Wert wurde automatisch uebernommen (🔗-Zeilen im Formular)
-define('EMS_NEWS_VERSION', '0.75.4');
+define('EMS_NEWS_VERSION', '0.75.5');
 
 // NRG-Stack Partnermodul-GUIDs (fuer automatische Discovery, siehe discoverPartners())
 define('GUID_CHARGERHUB',    '{9256C34E-5CFD-4F37-8BFE-E65390EBB37C}');
@@ -693,6 +693,10 @@ class EMS extends IPSModule
                 'items'    => array(
                     array(
                         'type'    => 'Label',
+                        'caption' => '• NEU: Die Preisschwellen (Laden, Entladen) rechnen bei „0 = automatisch“ jetzt wirtschaftlich: nie lockerer, als es sich nach Einspeisevergütung bzw. Ersatzpreis, Verlusten, Verschleiß und Mindestspanne lohnt. Unter jeder Schwelle steht der wirksame Wert mit Herkunft.'
+                    ),
+                    array(
+                        'type'    => 'Label',
                         'caption' => '• GEÄNDERT: Nachtfenster mit der Preisreferenz „erwarteter Ersatz-Bezugspreis“: Zwischen den Ladeviertelstunden versorgt jetzt das Netz das Haus (Akku halten), wenn der Bezug unter dem erwarteten späteren Preis liegt, statt den Akku nachts leerzuziehen. Der gespeicherte Strom steht dadurch in den teuren Stunden zur Verfügung.'
                     ),
                     array(
@@ -828,6 +832,24 @@ class EMS extends IPSModule
                         break;
                     }
                 }
+                break;
+            }
+        }
+        unset($element);
+
+        // 3b1. Preisschwellen: wirksamen Wert und Herkunft unter jedem Feld anzeigen (Dietmar 20.10.2026)
+        $thKeys = array('TIB_Threshold_Charge' => 'charge', 'TIB_Threshold_Discharge' => 'discharge', 'TIB_Threshold_WB' => 'wb');
+        foreach ($form['elements'] as &$element) {
+            if (($element['type'] ?? '') === 'ExpansionPanel' && ($element['caption'] ?? '') === '💰 Tibber & Tarif') {
+                $newItems = array();
+                foreach ($element['items'] as $item) {
+                    $newItems[] = $item;
+                    $nm = $item['name'] ?? '';
+                    if (isset($thKeys[$nm])) {
+                        $newItems[] = array('type' => 'Label', 'name' => 'ThresholdStatus_' . $thKeys[$nm], 'caption' => $this->priceThresholdLine($thKeys[$nm]));
+                    }
+                }
+                $element['items'] = $newItems;
                 break;
             }
         }
@@ -5630,24 +5652,80 @@ class EMS extends IPSModule
      */
     private function priceThresholds(?array $prices24 = null): array
     {
+        $info = array();
+        return $this->priceThresholdsCore($prices24, $info);
+    }
+
+    /**
+     * Kern der Preisschwellen. $info bekommt je Schwelle ('charge'/'discharge'/'wb') einen kurzen Klartext, woher der
+     * wirksame Wert kommt (fuer die Statuszeilen im Formular).
+     * Automatik (Dietmar 20.10.2026): Quartile des Preisverlaufs, zusaetzlich nie lockerer als es sich rechnet:
+     * - Laden: hoechstens die wirtschaftliche Ladegrenze (gridChargeLimitEur: Einspeiseverguetung bzw. erwarteter
+     *   Ersatzpreis, Wirkungsgrad, Verschleisskosten, Mindestspanne), sobald diese Angaben bekannt sind.
+     * - Entladen: mindestens Einspeiseverguetung x Wirkungsgrad + Verschleisskosten (darunter lohnt Einspeisen mehr).
+     * Ohne diese Angaben bleibt es bei den Quartilen, bei flachem Verlauf bei "keine Preissteuerung".
+     */
+    private function priceThresholdsCore(?array $prices24, array &$info): array
+    {
         $fixed = array(
             'charge'    => (float)$this->ReadPropertyFloat('TIB_Threshold_Charge'),
             'discharge' => (float)$this->ReadPropertyFloat('TIB_Threshold_Discharge'),
             'wb'        => (float)$this->ReadPropertyFloat('TIB_Threshold_WB'),
         );
+        $entered = array();
+        foreach ($fixed as $k => $val) { $entered[$k] = ($val > 0); if ($entered[$k]) { $info[$k] = 'eingetragen'; } }
         if ($fixed['charge'] > 0 && $fixed['discharge'] > 0 && $fixed['wb'] > 0) { return $fixed; }
         if ($prices24 === null) { $prices24 = $this->planPrices24(); }
         $v = array();
         foreach ($prices24 as $p) { if ($p !== null) { $v[] = (float)$p; } }
         sort($v);
         $off = array('charge' => 1.0e9, 'discharge' => 1.0e9, 'wb' => 1.0e9);
-        if (count($v) < 8 || ($v[count($v) - 1] - $v[0]) < 0.02) { $auto = $off; }
-        else {
+        if (count($v) < 8 || ($v[count($v) - 1] - $v[0]) < 0.02) {
+            $auto = $off;
+            $why = (count($v) < 8) ? 'automatisch: noch zu wenige Preise' : 'automatisch: flacher Preisverlauf';
+            foreach (array('charge', 'discharge', 'wb') as $k) { if (empty($entered[$k])) { $info[$k] = $why; } }
+        } else {
             $q = function (float $f) use ($v) { $i = (int)round($f * (count($v) - 1)); return $v[max(0, min(count($v) - 1, $i))]; };
             $auto = array('charge' => $q(0.25), 'wb' => $q(0.50), 'discharge' => $q(0.75));
+            $info['charge']    = $entered['charge']    ? 'eingetragen' : 'automatisch: unteres Viertel der nächsten 24 Stunden';
+            $info['discharge'] = $entered['discharge'] ? 'eingetragen' : 'automatisch: oberes Viertel der nächsten 24 Stunden';
+            $info['wb']        = $entered['wb']        ? 'eingetragen' : 'automatisch: Mitte der nächsten 24 Stunden';
+            $eff   = $this->convEff();
+            $cycle = $this->cycleCostCt() / 100.0;
+            $feed  = $this->planFeedTariffEur();
+            if (empty($entered['charge'])) {
+                $ctxE = array('refMode' => $this->chargeReferenceMode(), 'feedTariff' => $feed, 'cycleCost' => $cycle,
+                    'spread' => max(0.0, (float)$this->ReadPropertyFloat('OPT_Arbitrage_Min_Spread_ct')) / 100.0,
+                    'replacePrice' => $this->replacementPriceEur($v, 0));
+                $lim = $this->gridChargeLimitEur($ctxE);
+                if ($lim > -PHP_FLOAT_MAX / 2 && $lim < PHP_FLOAT_MAX / 2 && $lim < $auto['charge']) {
+                    $auto['charge'] = $lim;
+                    $info['charge'] = ($ctxE['refMode'] === 1)
+                        ? 'automatisch: begrenzt durch die Wirtschaftlichkeit (erwarteter Ersatzpreis nach Verlusten, Verschleiß und Mindestspanne)'
+                        : 'automatisch: begrenzt durch die Wirtschaftlichkeit (Einspeisevergütung nach Verlusten und Verschleiß)';
+                }
+            }
+            if (empty($entered['discharge']) && $feed > 0.0) {
+                $floor = $feed * $eff + $cycle;
+                if ($floor > $auto['discharge']) {
+                    $auto['discharge'] = $floor;
+                    $info['discharge'] = 'automatisch: mindestens Einspeisevergütung nach Verlusten plus Verschleiß (darunter lohnt Einspeisen mehr)';
+                }
+            }
         }
         foreach ($fixed as $k => $val) { if ($val <= 0) { $fixed[$k] = $auto[$k]; } }
         return $fixed;
+    }
+
+    /** Statuszeile je Preisschwelle fuers Formular: wirksamer Wert und Herkunft. */
+    private function priceThresholdLine(string $key, ?array $prices24 = null): string
+    {
+        $info = array();
+        $th = $this->priceThresholdsCore($prices24, $info);
+        $val = $th[$key] ?? 0.0;
+        $why = $info[$key] ?? 'automatisch';
+        if ($val >= 1.0e8) { return 'ℹ️ Wirksam: keine Preissteuerung (' . preg_replace('/^automatisch: /', '', $why) . ').'; }
+        return sprintf('ℹ️ Wirksam: %.1f ct/kWh (%s).', $val * 100.0, $why);
     }
 
     /** Preise der naechsten 24 Stunden aus dem gespeicherten Tagesplan (heute ab jetzt, dann morgen). */
