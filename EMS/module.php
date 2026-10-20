@@ -41,7 +41,7 @@ define('EMS_LOG_VERBOSE',     2);
 // Formular-Konvention (siehe EMS/SUITE.md "Einheitliche Formular-Optik"):
 // Was-ist-Neu-Panel ist versionsscharf dismissible, Referenzmuster InverterHub.
 define('EMS_COLOR_AUTO', 0x2E8B3D); // Gruen: Wert wurde automatisch uebernommen (🔗-Zeilen im Formular)
-define('EMS_NEWS_VERSION', '0.75.6');
+define('EMS_NEWS_VERSION', '0.75.7');
 
 // NRG-Stack Partnermodul-GUIDs (fuer automatische Discovery, siehe discoverPartners())
 define('GUID_CHARGERHUB',    '{9256C34E-5CFD-4F37-8BFE-E65390EBB37C}');
@@ -693,6 +693,10 @@ class EMS extends IPSModule
                 'items'    => array(
                     array(
                         'type'    => 'Label',
+                        'caption' => '• NEU: Manuelle Tagesplan-Einträge nehmen jetzt auch das Datum TT.MM.JJJJ, und unter der Liste steht je Zeile, ob und wann der Eintrag wirkt oder warum er ignoriert wird (z. B. Datum in der Vergangenheit).'
+                    ),
+                    array(
+                        'type'    => 'Label',
                         'caption' => '• NEU: Gibt es keinen Tagesplan, nennt EMS jetzt den Grund (z. B. „Preisoptimierung ausgeschaltet“, „keine Viertelstunden-Preise“). Das Dashboard kann ihn anzeigen (EMS_GetDayPlan Vertrag 1.3, planAvailable und reason).'
                     ),
                     array(
@@ -858,6 +862,29 @@ class EMS extends IPSModule
             }
         }
         unset($element);
+
+        // 3b3. Manuelle Plan-Eintraege: Status je Zeile unter der Liste (Dietmar 20.10.2026: Eintrag mit Datum 2023 wurde stumm ignoriert)
+        $manLines = $this->manualPlanStatusLines();
+        if (!empty($manLines)) {
+            foreach ($form['elements'] as &$element) {
+                if (($element['type'] ?? '') === 'ExpansionPanel' && ($element['caption'] ?? '') === '📅 Tagesplan') {
+                    $newItems = array();
+                    foreach ($element['items'] as $item) {
+                        $newItems[] = $item;
+                        if (($item['name'] ?? '') === 'PLAN_Manual') {
+                            foreach ($manLines as $k => $ln) {
+                                $lbl = array('type' => 'Label', 'name' => 'ManualPlanStatus_' . $k, 'caption' => ($ln['ok'] ? '✅ ' : '⚠️ ') . $ln['text']);
+                                if (!$ln['ok']) { $lbl['color'] = 0xE65100; }
+                                $newItems[] = $lbl;
+                            }
+                        }
+                    }
+                    $element['items'] = $newItems;
+                    break;
+                }
+            }
+            unset($element);
+        }
 
         // 3b2. Verschleisskosten: berechneten Wert anzeigen (aus Preis und Zyklen), damit der Nutzer sieht, was gilt
         $cycText = $this->cycleCostText();
@@ -2806,10 +2833,66 @@ class EMS extends IPSModule
                 $t = (int)$b[1] * 4 + (int)ceil((int)$b[2] / 15);
                 if ($t > $from) { $to = min(96, $t); }
             }
-            $date = trim((string)($r['Date'] ?? ''));
+            $date = $this->manualEntryDate((string)($r['Date'] ?? ''));
+            if ($date === null) { continue; } // Datum nicht lesbar: ignoriert, das Formular meldet es
             foreach ($dates as $off => $d) {
                 if ($date !== '' && $date !== $d) { continue; }
                 for ($i = $from; $i < $to; $i++) { $out[$off][$i] = array('op' => $act, 'power' => max(0, (int)($r['Power'] ?? 0))); }
+            }
+        }
+        return $out;
+    }
+
+    /**
+     * Datum eines manuellen Eintrags als 'Y-m-d'. '' = leer = jeden Tag, null = nicht lesbar.
+     * Erlaubt JJJJ-MM-TT, TT.MM.JJJJ und TT.MM. (laufendes Jahr); ungueltige Kalendertage sind nicht lesbar.
+     */
+    private function manualEntryDate(string $raw): ?string
+    {
+        $raw = trim($raw);
+        if ($raw === '') { return ''; }
+        if (preg_match('/^(\d{4})-(\d{1,2})-(\d{1,2})$/', $raw, $m)) { $y = (int)$m[1]; $mo = (int)$m[2]; $d = (int)$m[3]; }
+        elseif (preg_match('/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/', $raw, $m)) { $d = (int)$m[1]; $mo = (int)$m[2]; $y = (int)$m[3]; }
+        elseif (preg_match('/^(\d{1,2})\.(\d{1,2})\.?$/', $raw, $m)) { $d = (int)$m[1]; $mo = (int)$m[2]; $y = (int)date('Y'); }
+        else { return null; }
+        if (!checkdate($mo, $d, $y)) { return null; }
+        return sprintf('%04d-%02d-%02d', $y, $mo, $d);
+    }
+
+    /**
+     * Statuszeilen zu den manuellen Plan-Eintraegen fuers Formular: je Zeile, ob und wann sie wirkt oder warum nicht.
+     * Jede Zeile: array('ok' => bool, 'text' => string).
+     */
+    private function manualPlanStatusLines(): array
+    {
+        $raw = json_decode($this->ReadPropertyString('PLAN_Manual'), true);
+        if (!is_array($raw) || empty($raw)) { return array(); }
+        $today = date('Y-m-d'); $tomorrow = date('Y-m-d', strtotime('tomorrow'));
+        $out = array();
+        foreach (array_values($raw) as $i => $r) {
+            $n = $i + 1;
+            $act = (int)($r['Action'] ?? -1);
+            if (!in_array($act, array(EMS_OP_AUTO, EMS_OP_NET_CHARGE, EMS_OP_HOLD), true)) {
+                $out[] = array('ok' => false, 'text' => sprintf('Zeile %d: Die Aktion fehlt oder ist unbekannt, der Eintrag wird ignoriert.', $n)); continue;
+            }
+            if (!preg_match('/^(\d{1,2}):(\d{2})$/', trim((string)($r['From'] ?? '')))) {
+                $out[] = array('ok' => false, 'text' => sprintf('Zeile %d: Die Uhrzeit „Von“ ist nicht lesbar (Format HH:MM), der Eintrag wird ignoriert.', $n)); continue;
+            }
+            $dRaw = trim((string)($r['Date'] ?? ''));
+            $d = $this->manualEntryDate($dRaw);
+            if ($d === null) {
+                $out[] = array('ok' => false, 'text' => sprintf('Zeile %d: Das Datum „%s“ ist nicht lesbar (JJJJ-MM-TT oder TT.MM.JJJJ), der Eintrag wird ignoriert.', $n, $dRaw)); continue;
+            }
+            if ($d === '') { $out[] = array('ok' => true, 'text' => sprintf('Zeile %d: gilt jeden Tag.', $n)); continue; }
+            $dShow = date('d.m.Y', strtotime($d));
+            if ($d < $today) {
+                $out[] = array('ok' => false, 'text' => sprintf('Zeile %d: Das Datum %s liegt in der Vergangenheit, der Eintrag wird ignoriert.', $n, $dShow));
+            } elseif ($d === $today) {
+                $out[] = array('ok' => true, 'text' => sprintf('Zeile %d: gilt heute (%s).', $n, $dShow));
+            } elseif ($d === $tomorrow) {
+                $out[] = array('ok' => true, 'text' => sprintf('Zeile %d: gilt morgen (%s), sobald der Plan für morgen berechnet ist (Preise kommen am Nachmittag).', $n, $dShow));
+            } else {
+                $out[] = array('ok' => true, 'text' => sprintf('Zeile %d: Das Datum %s liegt weiter in der Zukunft. Der Plan umfasst heute und morgen, der Eintrag wirkt ab dem Vortag.', $n, $dShow));
             }
         }
         return $out;

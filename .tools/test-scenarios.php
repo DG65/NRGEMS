@@ -2402,6 +2402,31 @@ $m = call($ems, 'manualPlanEntries');
 check('Manuell: heute 12:00-13:00 = Slots 48-51 Netz laden 8000 W', isset($m[0][48], $m[0][51]) && !isset($m[0][47], $m[0][52]) && $m[0][48]['op'] === EMS_OP_NET_CHARGE && $m[0][48]['power'] === 8000, json_encode(array_keys($m[0])));
 check('Manuell: ohne Bis gilt der Eintrag bis Mitternacht, ohne Datum an beiden Tagen', isset($m[0][88], $m[0][95], $m[1][88], $m[1][95]) && $m[0][88]['op'] === EMS_OP_HOLD);
 check('Manuell: vergangenes Datum und ungueltige Zeit werden ignoriert', !isset($m[0][40]) && !isset($m[1][40]) && count(array_filter(array_keys($m[0]), fn($i) => $i < 48)) === 0);
+// Datumsformate (Dietmar 20.10.2026: "21.10.2026" wurde stumm ignoriert, weil nur JJJJ-MM-TT erkannt wurde)
+check('Datum: JJJJ-MM-TT, TT.MM.JJJJ, T.M.JJJJ und TT.MM. werden gelesen, leer = jeden Tag', call($ems, 'manualEntryDate', ['2026-10-21']) === '2026-10-21' && call($ems, 'manualEntryDate', ['21.10.2026']) === '2026-10-21' && call($ems, 'manualEntryDate', ['1.2.2027']) === '2027-02-01' && call($ems, 'manualEntryDate', ['21.10.']) === date('Y') . '-10-21' && call($ems, 'manualEntryDate', ['  ']) === '');
+check('Datum: Unsinn und ungueltige Kalendertage sind nicht lesbar (null)', call($ems, 'manualEntryDate', ['morgen']) === null && call($ems, 'manualEntryDate', ['31.02.2026']) === null && call($ems, 'manualEntryDate', ['2026-13-01']) === null);
+$deTomorrow = date('d.m.Y', strtotime('tomorrow'));
+prop('PLAN_Manual', json_encode([['Date' => $deTomorrow, 'From' => '00:00', 'To' => '06:00', 'Action' => EMS_OP_NET_CHARGE, 'Power' => 20000]]));
+$mDe = call($ems, 'manualPlanEntries');
+check('Eintrag mit deutschem Datum (morgen) landet im Morgen-Plan, Slots 0-23, nicht heute', isset($mDe[1][0], $mDe[1][23]) && !isset($mDe[1][24]) && count($mDe[0]) === 0 && $mDe[1][0]['power'] === 20000, json_encode(array_keys($mDe[1])));
+prop('PLAN_Manual', json_encode([['Date' => '21.10.2023', 'From' => '00:00', 'To' => '06:00', 'Action' => EMS_OP_NET_CHARGE, 'Power' => 20000]]));
+$mOld = call($ems, 'manualPlanEntries');
+check('Eintrag mit Datum 21.10.2023: ignoriert (nichts im Plan)', count($mOld[0]) === 0 && count($mOld[1]) === 0);
+// Statuszeilen im Formular
+prop('PLAN_Manual', json_encode([
+    ['Date' => '21.10.2023', 'From' => '00:00', 'To' => '06:00', 'Action' => EMS_OP_NET_CHARGE, 'Power' => 20000],
+    ['Date' => $deTomorrow, 'From' => '00:00', 'To' => '06:00', 'Action' => EMS_OP_NET_CHARGE, 'Power' => 0],
+    ['Date' => $today, 'From' => '12:00', 'To' => '13:00', 'Action' => EMS_OP_HOLD, 'Power' => 0],
+    ['Date' => '', 'From' => '22:00', 'To' => '', 'Action' => EMS_OP_AUTO, 'Power' => 0],
+    ['Date' => 'irgendwann', 'From' => '10:00', 'To' => '11:00', 'Action' => EMS_OP_AUTO, 'Power' => 0],
+    ['Date' => $today, 'From' => 'kaputt', 'To' => '13:00', 'Action' => EMS_OP_NET_CHARGE, 'Power' => 0],
+    ['Date' => date('d.m.Y', strtotime('+5 days')), 'From' => '10:00', 'To' => '11:00', 'Action' => EMS_OP_HOLD, 'Power' => 0],
+]));
+$sl = call($ems, 'manualPlanStatusLines');
+check('Status: sieben Zeilen, vergangenes Datum und kaputte Zeit/Datum als nicht ok, der Rest ok', count($sl) === 7 && $sl[0]['ok'] === false && $sl[1]['ok'] === true && $sl[2]['ok'] === true && $sl[3]['ok'] === true && $sl[4]['ok'] === false && $sl[5]['ok'] === false && $sl[6]['ok'] === true, json_encode(array_column($sl, 'ok')));
+check('Status: Vergangenheit nennt das Datum und "Vergangenheit", morgen nennt "morgen", unlesbares Datum nennt den Text', strpos($sl[0]['text'], '21.10.2023') !== false && strpos($sl[0]['text'], 'Vergangenheit') !== false && strpos($sl[1]['text'], 'morgen') !== false && strpos($sl[4]['text'], 'irgendwann') !== false, json_encode(array_column($sl, 'text')));
+prop('PLAN_Manual', '[]');
+check('Status: ohne Eintraege keine Zeilen', call($ems, 'manualPlanStatusLines') === []);
 check('Manuell: morgen 06:30-07:00 = Slots 26-27 Automatik', isset($m[1][26], $m[1][27]) && !isset($m[1][28]) && $m[1][26]['op'] === EMS_OP_AUTO);
 $mc = call($ems, 'manualPlanSlot', [48, 0.2, 0.0, 50.0, ['op' => EMS_OP_NET_CHARGE, 'power' => 8000], $ctxA]);
 check('Manueller Ladeslot: Leistung 8000 W, Marker man, SOC steigt', $mc['plan']['power'] === 8000 && !empty($mc['plan']['man']) && $mc['soc'] > 50.0, json_encode($mc['plan']));

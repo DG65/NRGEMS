@@ -2,6 +2,9 @@
 
 Ältere Versionen: [CHANGELOG-Archiv.md](CHANGELOG-Archiv.md)
 
+## 0.75.7 (2026-10-20)
+- **Manuelle Tagesplan-Einträge: deutsches Datum und Hinweis je Zeile (Dietmar 20.10.2026):** Ein Eintrag mit Datum „21.10.2026“ wurde stumm ignoriert, weil nur JJJJ-MM-TT erkannt wurde, und einer mit Datum 2023 ebenfalls (vergangen), ohne dass das Formular etwas sagte. Jetzt werden JJJJ-MM-TT, TT.MM.JJJJ und TT.MM. (laufendes Jahr) gelesen. Unter der Liste steht je Zeile, ob und wann der Eintrag wirkt („gilt morgen (21.10.2026), sobald der Plan für morgen berechnet ist“) oder warum nicht („Das Datum 21.10.2023 liegt in der Vergangenheit, der Eintrag wird ignoriert“, „Datum nicht lesbar“, „Uhrzeit nicht lesbar“, unbekannte Aktion). Das Verhalten für gültige Einträge bleibt gleich. Sieben neue Prüfungen, nachweislich rot ohne die Datumserkennung.
+
 ## 0.75.6 (2026-10-20)
 - **`EMS_GetDayPlan()` Vertrag 1.3 (additiv): `planAvailable` und `reason`:** Ohne Tagesplan sagt `reason` im Klartext, woran es liegt: Batteriespeicher im EMS aus, Preisoptimierung mit dynamischem Tarif aus, keine Viertelstunden-Preise, oder „wird noch berechnet“. Mit Plan ist `planAvailable` wahr und `reason` ein leerer Text. Bisher lieferte die Funktion nur eine leere Liste, und das Dashboard schrieb „EMS installieren/konfigurieren“, obwohl EMS lief (Pauls Anlage, Preisoptimierung war aus). Alle bisherigen Felder unverändert. Vier neue Prüfungen, nachweislich rot ohne die Änderung.
 

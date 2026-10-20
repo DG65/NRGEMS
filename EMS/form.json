@@ -1505,7 +1505,7 @@
                 },
                 {
                     "type": "Label",
-                    "caption": "Manuelle Einträge im Tagesplan: Sie haben Vorrang vor der automatischen Planung (nicht vor §14a-Vorgaben des Netzbetreibers und nicht vor Grid Rewards). Datum im Format JJJJ-MM-TT (leer = jeden Tag), Zeiten als HH:MM (Bis ist exklusiv; fehlt es, gilt der Eintrag bis Mitternacht). Aktion „Netz laden“ lädt aus dem Netz (Leistung 0 = so viel wie möglich), „Akku halten“ versorgt das Haus aus dem Netz, „Automatik“ erzwingt die Wechselrichter-Automatik. Vergangene Datumseinträge werden ignoriert."
+                    "caption": "Manuelle Einträge im Tagesplan: Sie haben Vorrang vor der automatischen Planung (nicht vor §14a-Vorgaben des Netzbetreibers und nicht vor Grid Rewards). Datum im Format JJJJ-MM-TT oder TT.MM.JJJJ (leer = jeden Tag), Zeiten als HH:MM (Bis ist exklusiv; fehlt es, gilt der Eintrag bis Mitternacht). Aktion „Netz laden“ lädt aus dem Netz (Leistung 0 = so viel wie möglich), „Akku halten“ versorgt das Haus aus dem Netz, „Automatik“ erzwingt die Wechselrichter-Automatik. Vergangene Datumseinträge werden ignoriert."
                 },
                 {
                     "type": "List",
