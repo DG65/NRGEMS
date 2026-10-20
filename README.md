@@ -28,7 +28,7 @@ Das Modul ist modular aufgebaut: Jeder Geräteblock (Wechselrichter, Batterie, W
 ### Unterstützte Geräte
 | Gerät | Pflicht | Steuerung |
 |---|---|---|
-| Wechselrichter mit Batterie (über den InverterHub, 15 Treiber lesend) | Ja | Derzeit nur GoodWe steuerbar (EMS-Register); bei anderen Herstellern liest EMS und beobachtet nur |
+| Wechselrichter mit Batterie (über den InverterHub, 15 Treiber lesend) | Ja | Steuerbar: GoodWe (EMS-Register) und Solis (Zwangsladen und Automatik, minimal); bei anderen Herstellern liest EMS und beobachtet nur |
 | Batteriespeicher (BMS) | Nein | Indirekt über den Wechselrichter |
 | Zähler am Netzanschlusspunkt (z. B. SmartMeter des Wechselrichters) | Empfohlen | Nein — Messung |
 | Siemens PAC2200 | Nein | Nein — Redundanzmessung |

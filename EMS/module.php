@@ -41,7 +41,7 @@ define('EMS_LOG_VERBOSE',     2);
 // Formular-Konvention (siehe EMS/SUITE.md "Einheitliche Formular-Optik"):
 // Was-ist-Neu-Panel ist versionsscharf dismissible, Referenzmuster InverterHub.
 define('EMS_COLOR_AUTO', 0x2E8B3D); // Gruen: Wert wurde automatisch uebernommen (🔗-Zeilen im Formular)
-define('EMS_NEWS_VERSION', '0.76.0');
+define('EMS_NEWS_VERSION', '0.77.0');
 
 // NRG-Stack Partnermodul-GUIDs (fuer automatische Discovery, siehe discoverPartners())
 define('GUID_CHARGERHUB',    '{9256C34E-5CFD-4F37-8BFE-E65390EBB37C}');
@@ -479,6 +479,9 @@ class EMS extends IPSModule
         $this->RegisterAttributeBoolean('LastGoodweEnable',  true);
         $this->RegisterAttributeInteger('LastGoodwePowerW',  0);
         $this->RegisterAttributeInteger('NoControlLoggedAt', 0);
+        $this->RegisterAttributeInteger('SolisLastMode', -1);     // zuletzt an den Solis gesendeter Zwangsmodus (-1 = unbekannt)
+        $this->RegisterAttributeInteger('SolisLastPowerW', 0);
+        $this->RegisterAttributeInteger('SolisLastWriteAt', 0);
         $this->RegisterAttributeString('ChargeObsCurve',   '{}'); // real beobachtete Ladeleistung (Spitzenwert) je SOC-Stufe {stufe: [kW, Zeitstempel]}
         $this->RegisterAttributeString('NightTargetDay',   '');   // Datum (Y-m-d), an dem das Nachtziel im Nachtfenster erreicht wurde (kein Neustart des Netzladens bei kleinem Rueckgang)
         $this->RegisterAttributeString('ChargeLimitCurve', '{}'); // gelernte BMS-Ladegrenze je SOC-Stufe {stufe: [kW, Zeitstempel]}
@@ -691,6 +694,10 @@ class EMS extends IPSModule
                 'caption'  => '🆕 Neu in Version ' . EMS_NEWS_VERSION,
                 'expanded' => true,
                 'items'    => array(
+                    array(
+                        'type'    => 'Label',
+                        'caption' => '• NEU: Solis-Wechselrichter lassen sich jetzt steuern, minimal: Netzladen per Zwangsladen (Leistung begrenzt auf die Ladegrenze des Geräts), sonst Automatik. Der Zwangsmodus wird im Takt des Fernsteuer-Zeitlimits neu geschrieben. Akku halten und Entladen gibt es beim Solis noch nicht, sie laufen als Automatik.'
+                    ),
                     array(
                         'type'    => 'Label',
                         'caption' => '• NEU: Die manuellen Tagesplan-Einträge lassen sich jetzt auch von außen bearbeiten (EMS_GetManualPlan / EMS_SetManualPlan), z. B. im Editor des PV-Monitors. Die Eingaben werden geprüft, bei einem Fehler wird nichts geändert.'
@@ -1305,9 +1312,13 @@ class EMS extends IPSModule
                 try {
                     $inv = $this->getInverterEntry();
                     if ($inv !== null && ($inv['instanceID'] ?? 0) > 0) {
-                        @IPS_RequestAction($inv['instanceID'], 'ctl_ems_enable', false);
-                        @IPS_RequestAction($inv['instanceID'], 'ctl_ems_mode', GW_MODE_AUTO);
-                        @IPS_RequestAction($inv['instanceID'], 'ctl_ems_power', 0);
+                        if ($this->findChildVariableIdByIdent($inv['instanceID'], 'ctl_ems_mode') <= 0 && $this->isSolisDriver((int)$inv['instanceID'])) {
+                            $this->setSolisMode((int)$inv['instanceID'], GW_MODE_AUTO, 0); // Zwangsmodus freigeben, falls aktiv
+                        } else {
+                            @IPS_RequestAction($inv['instanceID'], 'ctl_ems_enable', false);
+                            @IPS_RequestAction($inv['instanceID'], 'ctl_ems_mode', GW_MODE_AUTO);
+                            @IPS_RequestAction($inv['instanceID'], 'ctl_ems_power', 0);
+                        }
                     }
                     $this->WriteAttributeBoolean('EmsInactiveHandoffDone', true);
                 } catch (Throwable $e) {
@@ -4281,6 +4292,12 @@ class EMS extends IPSModule
                     return 'ℹ️ Keine InverterHub-Instanz gefunden — Felder unten werden für die Steuerung benötigt.';
                 }
                 $authority = $inv['controlAuthority'] ?? 'none';
+                if ($authority === 'ems' && ($inv['controllable'] ?? false) && $this->isSolisDriver((int)$inv['instanceID'])) {
+                    return sprintf(
+                        '✅ Automatisch verbunden: EMS steuert den Solis über InverterHub #%d (Netzladen per Zwangsladen, sonst Automatik; Felder unten werden ignoriert).',
+                        $inv['instanceID']
+                    );
+                }
                 if ($authority === 'ems' && ($inv['controllable'] ?? false)) {
                     return sprintf(
                         '✅ Automatisch verbunden: EMS steuert InverterHub #%d direkt (ctl_ems_*) — Felder unten werden ignoriert.',
@@ -8393,9 +8410,90 @@ class EMS extends IPSModule
         // Nur, wenn der Zyklus in letzter Zeit lief (kein Halten eines veralteten Sollwerts nach Ausfall)
         if (time() - $this->ReadAttributeInteger('LastGoodweWriteAt') > 3 * max(30, (int)$this->ReadPropertyInteger('EMS_Interval')) + 60) { return; }
         $iid = $inv['instanceID'];
+        if ($this->findChildVariableIdByIdent($iid, 'ctl_ems_mode') <= 0 && $this->isSolisDriver((int)$iid)) {
+            $this->setSolisMode((int)$iid, (int)$mode, $this->ReadAttributeInteger('LastGoodwePowerW')); // gedrosselt auf das Wiederholintervall
+            return;
+        }
         IPS_RequestAction($iid, 'ctl_ems_mode', $mode);
         IPS_RequestAction($iid, 'ctl_ems_power', $this->ReadAttributeInteger('LastGoodwePowerW'));
         IPS_RequestAction($iid, 'ctl_ems_enable', true);
+    }
+
+    /** Hat dieser InverterHub die Solis-Steuerpunkte (Zwangsmodus/-leistung) und KEINE GoodWe-EMS-Stellglieder? */
+    private function isSolisDriver(int $iid): bool
+    {
+        return $this->findChildVariableIdByIdent($iid, 'ctl_force_mode') > 0
+            && $this->findChildVariableIdByIdent($iid, 'ctl_force_w') > 0
+            && $this->findChildVariableIdByIdent($iid, 'ctl_ems_mode') <= 0;
+    }
+
+    /**
+     * Wiederholabstand fuer den Solis-Zwangsmodus (s). Das Geraet nimmt ihn nach dem Fernsteuer-Zeitlimit (Register 43282,
+     * InverterHub `cfg_rc_timeout_min`, gemessen 3 min) zurueck. EMS schreibt hoechstens alle halbe Zeitlimit-Dauer neu,
+     * nie seltener als alle 60 s, nie oefter als alle 15 s; ohne lesbares Zeitlimit 60 s.
+     */
+    private function solisRewriteIntervalSec(int $iid): int
+    {
+        $id = $this->findChildVariableIdByIdent($iid, 'cfg_rc_timeout_min');
+        $min = ($id > 0) ? (int)GetValue($id) : 0;
+        if ($min <= 0) { return 60; }
+        return (int)max(15, min(60, intdiv($min * 60, 2)));
+    }
+
+    /**
+     * Solis (minimale Steuerung, Dietmar 20.10.2026): EMS-Entscheidung auf Zwangsladen/Automatik abbilden. Reine Weitergabe im
+     * InverterHub, Dauerhalten und Rueckfall liegen hier: Netzladen (Modus 11 mit Leistung) setzt ctl_force_w und
+     * ctl_force_mode=1 und schreibt sie im Wiederholabstand neu; alles andere gibt den Zwangsmodus frei (ctl_force_mode=0,
+     * der Wechselrichter regelt selbst). Nicht abbildbare Modi (Laden aus PV, Netzbezugsregelung, Halten, Entladen) laufen als
+     * Automatik und stehen als Grund in der Statuszeile. Die Leistung wird auf die vom InverterHub gemeldete Ladegrenze begrenzt.
+     */
+    private function setSolisMode(int $iid, int $mode, int $powerW): void
+    {
+        $now = time();
+        $capId = $this->findChildVariableIdByIdent($iid, 'bat_charge_max_w');
+        $cap = ($capId > 0) ? (float)GetValue($capId) : 0.0;
+        if ($cap <= 0.0) { $cap = 30000.0; }
+        $w = (int)(round(max(0.0, min((float)$powerW, $cap, 30000.0)) / 10.0) * 10);
+        $wantCharge = ($mode === GW_MODE_BAT_CHARGE && $w > 0);
+        $unsupported = (!$wantCharge && $mode !== GW_MODE_AUTO && $mode !== GW_MODE_STOP);
+        $why = $unsupported ? sprintf('Solis: Modus %d wird nicht unterstützt, der Wechselrichter bleibt in Automatik', $mode) : '';
+        if ($this->ReadAttributeString('NoControlReason') !== $why) { $this->WriteAttributeString('NoControlReason', $why); }
+
+        $devId = $this->findChildVariableIdByIdent($iid, 'cfg_force_mode');
+        $dev = ($devId > 0) ? (int)GetValue($devId) : -1; // vom Geraet zurueckgelesen, -1 = unbekannt
+        $interval = $this->solisRewriteIntervalSec($iid);
+        $lastMode = $this->ReadAttributeInteger('SolisLastMode');
+        $lastPower = $this->ReadAttributeInteger('SolisLastPowerW');
+        $lastAt = $this->ReadAttributeInteger('SolisLastWriteAt');
+
+        if ($wantCharge) {
+            $need = ($lastMode !== 1) || ($w !== $lastPower) || (($now - $lastAt) >= $interval) || ($dev === 0 && ($now - $lastAt) >= 10);
+            if ($dev === 0 && $lastMode === 1 && ($now - $lastAt) > (2 * $interval + 30)
+                && $now - $this->ReadAttributeInteger('NoControlLoggedAt') > 3600) {
+                $this->WriteAttributeInteger('NoControlLoggedAt', $now);
+                $this->emsLog(EMS_LOG_BASIC, sprintf('Solis: der Zwangsmodus wurde vom Gerät zurückgenommen, obwohl alle %d s neu geschrieben wird -- Fernsteuer-Zeitlimit prüfen', $interval));
+            }
+            if ($need) {
+                IPS_RequestAction($iid, 'ctl_force_w', $w);       // erst die Leistung, dann der Modus
+                IPS_RequestAction($iid, 'ctl_force_mode', 1);
+                $this->WriteAttributeInteger('SolisLastMode', 1);
+                $this->WriteAttributeInteger('SolisLastPowerW', $w);
+                $this->WriteAttributeInteger('SolisLastWriteAt', $now);
+            }
+            return;
+        }
+        // Freigeben: nur schreiben, wenn das Geraet (noch) im Zwangsmodus ist oder der Zustand unbekannt ist
+        if ($dev === 0) {
+            if ($lastMode !== 0) { $this->WriteAttributeInteger('SolisLastMode', 0); $this->WriteAttributeInteger('SolisLastPowerW', 0); }
+            return;
+        }
+        $need = ($dev > 0) ? (($lastMode !== 0) || ($now - $lastAt) >= 60) : ($lastMode !== 0);
+        if ($need) {
+            IPS_RequestAction($iid, 'ctl_force_mode', 0);
+            $this->WriteAttributeInteger('SolisLastMode', 0);
+            $this->WriteAttributeInteger('SolisLastPowerW', 0);
+            $this->WriteAttributeInteger('SolisLastWriteAt', $now);
+        }
     }
 
     /**
@@ -8458,6 +8556,11 @@ class EMS extends IPSModule
                 $iid       = $inv['instanceID'];
                 $modeVarId = $this->findChildVariableIdByIdent($iid, 'ctl_ems_mode');
                 // Wechselrichter ohne EMS-Stellglieder (andere Hersteller): nichts schreiben, einmal pro Stunde melden
+                // Solis (InverterHub-Steuerpunkte ctl_force_mode/ctl_force_w, ohne ctl_ems_*): eigener, kleiner Zweig
+                if ($modeVarId <= 0 && $this->isSolisDriver((int)$iid)) {
+                    $this->setSolisMode((int)$iid, (int)$mode, (int)$powerW);
+                    return;
+                }
                 $hasKids = count(IPS_GetChildrenIDs($iid)) > 0;
                 if ($hasKids && ($modeVarId <= 0 || $this->findChildVariableIdByIdent($iid, 'ctl_ems_power') <= 0 || $this->findChildVariableIdByIdent($iid, 'ctl_ems_enable') <= 0)) {
                     $this->WriteAttributeString('NoControlReason', 'Wechselrichter ohne EMS-Stellglieder');

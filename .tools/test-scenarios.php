@@ -1044,6 +1044,79 @@ $gPast = call($ems, 'GetManualPlan');
 check('Get zeigt einen vergangenen Eintrag aus dem Formular als past/nicht ok mit Text', $gPast['entries'][0]['state'] === 'past' && $gPast['entries'][0]['ok'] === false && strpos($gPast['entries'][0]['text'], 'Vergangenheit') !== false, json_encode($gPast['entries'][0]));
 prop('PLAN_Manual', '[]');
 
+echo "\n8k5) Solis: minimale Steuerung (Zwangsladen und Automatik, Totmann-Nachfuehrung)\n";
+$ems = freshEms();
+$GLOBALS['INSTMOD'][IHUB_IID] = GUID_INVERTERHUB;
+attr('PartnerCache', json_encode(['inverterhub' => [['instanceID' => IHUB_IID, 'controlAuthority' => 'ems', 'controllable' => true]]]));
+foreach (array_keys($GLOBALS['OBJ']) as $oid) { if (($GLOBALS['OBJ'][$oid]['ParentID'] ?? -1) === IHUB_IID && strpos($GLOBALS['OBJ'][$oid]['ObjectIdent'], 'ctl_ems') === 0) { $GLOBALS['OBJ'][$oid]['ObjectIdent'] = 'x_' . $GLOBALS['OBJ'][$oid]['ObjectIdent']; } }
+$GLOBALS['OBJ'][IHUB_IID]['HasChildren'] = true;
+vari('SOC', IHUB_IID, 'soc', 50, 1);
+$vForce = vari('Zwangsladen/-entladen', IHUB_IID, 'ctl_force_mode', 0, 1);
+vari('Zwangsleistung', IHUB_IID, 'ctl_force_w', 0, 1);
+$vDev = vari('Zwangsmodus (Einstellung)', IHUB_IID, 'cfg_force_mode', 0, 1);
+$vTo = vari('Zeitlimit', IHUB_IID, 'cfg_rc_timeout_min', 3, 1);
+vari('Max. Ladeleistung', IHUB_IID, 'bat_charge_max_w', 16900.0, 2);
+check('Solis wird erkannt (Zwangsmodus-Punkte, keine ctl_ems_*)', call($ems, 'isSolisDriver', [IHUB_IID]) === true);
+check('Wiederholabstand bei 3 min Zeitlimit: 60 s', call($ems, 'solisRewriteIntervalSec', [IHUB_IID]) === 60);
+$GLOBALS['VAL'][$vTo] = 1; check('Zeitlimit 1 min: 30 s', call($ems, 'solisRewriteIntervalSec', [IHUB_IID]) === 30);
+$GLOBALS['VAL'][$vTo] = 0; check('Zeitlimit 0 oder unlesbar: 60 s', call($ems, 'solisRewriteIntervalSec', [IHUB_IID]) === 60);
+$GLOBALS['VAL'][$vTo] = 20; check('Zeitlimit 20 min: nie seltener als alle 60 s', call($ems, 'solisRewriteIntervalSec', [IHUB_IID]) === 60);
+$GLOBALS['VAL'][$vTo] = 3;
+// Netzladen 12 kW
+$GLOBALS['ACTIONS'] = [];
+call($ems, 'setGoodweMode', [GW_MODE_BAT_CHARGE, 12000, true]);
+check('Netzladen 12 kW: erst Leistung, dann Zwangsmodus 1 (keine ctl_ems_*-Schreibzugriffe)', array_map(fn($a) => [$a[1], $a[2]], $GLOBALS['ACTIONS']) === [['ctl_force_w', 12000], ['ctl_force_mode', 1]], json_encode($GLOBALS['ACTIONS']));
+check('Solis steuerbar: kein "Nur beobachtend"', $ems->ReadAttributeString('NoControlReason') === '' || call($ems, 'statusText', ['x']) === 'OK: x');
+// Leistung ueber der gemeldeten Ladegrenze wird begrenzt (16,9 kW), auch in der Anzeige gerundet
+$GLOBALS['ACTIONS'] = [];
+call($ems, 'setGoodweMode', [GW_MODE_BAT_CHARGE, 24000, true]);
+check('Sollleistung 24 kW wird auf die Ladegrenze des Wechselrichters (16,9 kW) begrenzt', end($GLOBALS['ACTIONS'])[1] === 'ctl_force_mode' && $GLOBALS['ACTIONS'][0][2] === 16900, json_encode($GLOBALS['ACTIONS']));
+// Wiederholung: gleicher Sollwert innerhalb des Intervalls nichts neu schreiben, danach schon
+$GLOBALS['VAL'][$vDev] = 1; $GLOBALS['ACTIONS'] = [];
+call($ems, 'setGoodweMode', [GW_MODE_BAT_CHARGE, 24000, true]);
+check('gleicher Sollwert innerhalb von 60 s: nichts neu geschrieben', count($GLOBALS['ACTIONS']) === 0, json_encode($GLOBALS['ACTIONS']));
+attr('SolisLastWriteAt', time() - 61);
+call($ems, 'setGoodweMode', [GW_MODE_BAT_CHARGE, 24000, true]);
+check('nach 61 s (Zeitlimit 3 min, Abstand 60 s): Sollwert wird neu geschrieben (haelt den Zwangsmodus am Leben)', array_column($GLOBALS['ACTIONS'], 1) === ['ctl_force_w', 'ctl_force_mode'], json_encode($GLOBALS['ACTIONS']));
+// Geraet hat zurueckgenommen (Totmann): sofort neu schreiben
+$GLOBALS['VAL'][$vDev] = 0; attr('SolisLastWriteAt', time() - 20); $GLOBALS['ACTIONS'] = [];
+call($ems, 'setGoodweMode', [GW_MODE_BAT_CHARGE, 24000, true]);
+check('Geraet meldet Zwangsmodus 0 obwohl Laden gewollt (mind. 10 s nach dem Schreiben): sofort neu geschrieben', array_column($GLOBALS['ACTIONS'], 1) === ['ctl_force_w', 'ctl_force_mode'], json_encode($GLOBALS['ACTIONS']));
+// Leistungsaenderung: sofort
+$GLOBALS['VAL'][$vDev] = 1; $GLOBALS['ACTIONS'] = [];
+call($ems, 'setGoodweMode', [GW_MODE_BAT_CHARGE, 8000, true]);
+check('geaenderte Leistung (16,9 -> 8 kW): sofort geschrieben', $GLOBALS['ACTIONS'][0][2] === 8000, json_encode($GLOBALS['ACTIONS']));
+// Freigeben
+$GLOBALS['ACTIONS'] = [];
+call($ems, 'setGoodweMode', [GW_MODE_AUTO, 0, false]);
+check('Automatik: Zwangsmodus 0 wird einmal geschrieben', array_map(fn($a) => [$a[1], $a[2]], $GLOBALS['ACTIONS']) === [['ctl_force_mode', 0]], json_encode($GLOBALS['ACTIONS']));
+$GLOBALS['VAL'][$vDev] = 0; $GLOBALS['ACTIONS'] = [];
+call($ems, 'setGoodweMode', [GW_MODE_AUTO, 0, false]);
+check('Automatik, Geraet schon frei: nichts mehr geschrieben', count($GLOBALS['ACTIONS']) === 0, json_encode($GLOBALS['ACTIONS']));
+// Start ohne Vorgeschichte: Geraet frei -> kein unnoetiger Schreibzugriff
+attr('SolisLastMode', -1); $GLOBALS['ACTIONS'] = [];
+call($ems, 'setGoodweMode', [GW_MODE_AUTO, 0, false]);
+check('erster Aufruf mit Automatik und freiem Geraet: kein Schreibzugriff (Pauls eigene Einstellungen bleiben)', count($GLOBALS['ACTIONS']) === 0, json_encode($GLOBALS['ACTIONS']));
+// nicht abbildbare Modi: Automatik + Grund
+$GLOBALS['VAL'][$vDev] = 1; attr('SolisLastMode', 1); attr('SolisLastWriteAt', time() - 5); $GLOBALS['ACTIONS'] = [];
+call($ems, 'setGoodweMode', [GW_MODE_BUY, 8000, true]);
+check('nicht abbildbarer Modus (Netzbezugsregelung 9): Zwangsmodus freigegeben, Grund "nicht unterstützt" in der Statuszeile', array_map(fn($a) => [$a[1], $a[2]], $GLOBALS['ACTIONS']) === [['ctl_force_mode', 0]] && strpos(call($ems, 'statusText', ['x']), 'nicht unterstützt') !== false, json_encode($GLOBALS['ACTIONS']) . ' / ' . call($ems, 'statusText', ['x']));
+// KeepAlive
+prop('EMS_Active', true); prop('EMS_DryRun', false);
+attr('LastGoodweMode', GW_MODE_BAT_CHARGE); attr('LastGoodweEnable', true); attr('LastGoodwePowerW', 10000); attr('LastGoodweWriteAt', time());
+attr('SolisLastMode', 1); attr('SolisLastPowerW', 10000); attr('SolisLastWriteAt', time() - 5); $GLOBALS['VAL'][$vDev] = 1; $GLOBALS['ACTIONS'] = [];
+call($ems, 'KeepAlive');
+check('KeepAlive (alle 15 s) schreibt beim Solis innerhalb des Intervalls nichts', count($GLOBALS['ACTIONS']) === 0, json_encode($GLOBALS['ACTIONS']));
+attr('SolisLastWriteAt', time() - 61);
+call($ems, 'KeepAlive');
+check('KeepAlive nach 61 s: Zwangsladen wird nachgefuehrt, nur ctl_force_* (nie ctl_ems_*)', array_column($GLOBALS['ACTIONS'], 1) === ['ctl_force_w', 'ctl_force_mode'], json_encode($GLOBALS['ACTIONS']));
+// GoodWe bleibt unberuehrt
+$GLOBALS['ACTIONS'] = [];
+obj(401, 1, 'GoodWe-Hub', 0); vari('EMS Modus', 401, 'ctl_ems_mode', 1, 1); vari('Zwangsmodus', 401, 'ctl_force_mode', 0, 1); vari('Zwangsleistung', 401, 'ctl_force_w', 0, 1);
+check('Wechselrichter mit ctl_ems_mode wird NICHT als Solis erkannt (GoodWe-Pfad bleibt unberuehrt, auch wenn Zwangsmodus-Punkte vorhanden)', call($ems, 'isSolisDriver', [401]) === false);
+obj(402, 1, 'Leer', 0);
+check('Wechselrichter ganz ohne Stellglieder: kein Solis', call($ems, 'isSolisDriver', [402]) === false);
+
 echo "\n8l) Wallbox bei PV-Ueberschuss auch ueber der Preisschwelle\n";
 $ems = freshEms();
 $sW = state(['tib_active' => true, 'pv_total_w' => 3000.0, 'house_pow_w' => 800.0, 'wb1_pow_kw' => 0.0]);
