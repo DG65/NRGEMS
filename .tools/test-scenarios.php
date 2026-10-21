@@ -1110,6 +1110,39 @@ check('KeepAlive (alle 15 s) schreibt beim Solis innerhalb des Intervalls nichts
 attr('SolisLastWriteAt', time() - 61);
 call($ems, 'KeepAlive');
 check('KeepAlive nach 61 s: Zwangsladen wird nachgefuehrt, nur ctl_force_* (nie ctl_ems_*)', array_column($GLOBALS['ACTIONS'], 1) === ['ctl_force_w', 'ctl_force_mode'], json_encode($GLOBALS['ACTIONS']));
+// Extern gesetzter Zwangsmodus (Messskript, App/Portal): EMS fasst ihn NIE an (Befund 21.10.2026)
+$acts = function () { return array_map(fn($a) => $a[1] . '=' . json_encode($a[2]), $GLOBALS['ACTIONS']); };
+attr('SolisLastMode', 0); attr('SolisLastWriteAt', time() - 3600); attr('SolisReleaseTries', 0); attr('SolisHoldActive', false);
+$GLOBALS['VAL'][$vDev] = 2; $GLOBALS['ACTIONS'] = [];
+foreach ([0, 61, 600] as $dt) { attr('SolisLastWriteAt', time() - 3600 + $dt); call($ems, 'setGoodweMode', [GW_MODE_AUTO, 0, false]); }
+check('Zwangsmodus 2 am Geraet, von EMS nicht gesetzt: Automatik-Entscheidung schreibt NIE ctl_force_mode (auch nicht nach 61 s oder 10 min)', count($acts()) === 0, json_encode($acts()));
+attr('SolisLastMode', -1); $GLOBALS['ACTIONS'] = [];
+call($ems, 'setGoodweMode', [GW_MODE_AUTO, 0, false]);
+check('auch bei unbekanntem Zustand (SolisLastMode -1, z. B. nach Neuanlage) bleibt ein fremder Zwangsmodus unangetastet', count($acts()) === 0, json_encode($acts()));
+// Vom EMS selbst gesetztes Zwangsladen: Freigabe mit Wiederholung bis zur Bestaetigung
+attr('SolisLastMode', 1); attr('SolisLastWriteAt', time() - 30); attr('SolisReleaseTries', 0); $GLOBALS['VAL'][$vDev] = 1; $GLOBALS['ACTIONS'] = [];
+call($ems, 'setGoodweMode', [GW_MODE_AUTO, 0, false]);
+check('von EMS selbst gesetzt: Freigabe wird geschrieben (ctl_force_mode=0), Zaehler 1', $acts() === ['ctl_force_mode=0'] && $ems->ReadAttributeInteger('SolisReleaseTries') === 1, json_encode($acts()));
+$GLOBALS['ACTIONS'] = [];
+call($ems, 'setGoodweMode', [GW_MODE_AUTO, 0, false]);
+check('Geraet meldet noch 1: innerhalb von 10 s nicht erneut geschrieben', count($acts()) === 0, json_encode($acts()));
+attr('SolisLastWriteAt', time() - 11);
+call($ems, 'setGoodweMode', [GW_MODE_AUTO, 0, false]);
+check('nach 11 s noch nicht frei: zweiter Versuch', $acts() === ['ctl_force_mode=0'] && $ems->ReadAttributeInteger('SolisReleaseTries') === 2, json_encode($acts()));
+attr('SolisReleaseTries', 3); attr('SolisLastWriteAt', time() - 100); $GLOBALS['ACTIONS'] = [];
+call($ems, 'setGoodweMode', [GW_MODE_AUTO, 0, false]);
+check('nach drei Versuchen: aufgeben (Zeitlimit des Geraets gibt frei), kein weiterer Schreibzugriff, Zustand zurueckgesetzt', count($acts()) === 0 && $ems->ReadAttributeInteger('SolisLastMode') === 0, json_encode($acts()));
+$GLOBALS['VAL'][$vDev] = 0; attr('SolisLastMode', 1); attr('SolisReleaseTries', 1); $GLOBALS['ACTIONS'] = [];
+call($ems, 'setGoodweMode', [GW_MODE_AUTO, 0, false]);
+check('Geraet meldet 0: Freigabe bestaetigt, nichts geschrieben, Zustand zurueckgesetzt', count($acts()) === 0 && $ems->ReadAttributeInteger('SolisLastMode') === 0 && $ems->ReadAttributeInteger('SolisReleaseTries') === 0);
+// Trockenlauf: nie ein fremder Zwangsmodus
+prop('EMS_DryRun', true); attr('LastGoodweEnable', true); attr('LastGoodweMode', GW_MODE_AUTO); attr('SolisLastMode', 0);
+$GLOBALS['VAL'][$vDev] = 2; $GLOBALS['ACTIONS'] = [];
+call($ems, 'applyDryRun', [['op_mode' => EMS_OP_AUTO, 'gw_mode' => GW_MODE_AUTO, 'gw_power_w' => 0, 'gw_enable' => false, 'reason' => 'Test']]);
+call($ems, 'applyDryRun', [['op_mode' => EMS_OP_AUTO, 'gw_mode' => GW_MODE_AUTO, 'gw_power_w' => 0, 'gw_enable' => false, 'reason' => 'Test']]);
+check('Trockenlauf mit fremdem Zwangsmodus 2 am Geraet: EMS schreibt am Solis nichts (auch nicht beim ersten Lauf)', count(array_filter($GLOBALS['ACTIONS'], fn($a) => strpos($a[1], 'ctl_force') === 0)) === 0, json_encode($acts()));
+prop('EMS_DryRun', false);
+
 // GoodWe bleibt unberuehrt
 $GLOBALS['ACTIONS'] = [];
 obj(401, 1, 'GoodWe-Hub', 0); vari('EMS Modus', 401, 'ctl_ems_mode', 1, 1); vari('Zwangsmodus', 401, 'ctl_force_mode', 0, 1); vari('Zwangsleistung', 401, 'ctl_force_w', 0, 1);

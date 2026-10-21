@@ -41,7 +41,7 @@ define('EMS_LOG_VERBOSE',     2);
 // Formular-Konvention (siehe EMS/SUITE.md "Einheitliche Formular-Optik"):
 // Was-ist-Neu-Panel ist versionsscharf dismissible, Referenzmuster InverterHub.
 define('EMS_COLOR_AUTO', 0x2E8B3D); // Gruen: Wert wurde automatisch uebernommen (🔗-Zeilen im Formular)
-define('EMS_NEWS_VERSION', '0.78.0');
+define('EMS_NEWS_VERSION', '0.78.1');
 
 // NRG-Stack Partnermodul-GUIDs (fuer automatische Discovery, siehe discoverPartners())
 define('GUID_CHARGERHUB',    '{9256C34E-5CFD-4F37-8BFE-E65390EBB37C}');
@@ -482,6 +482,7 @@ class EMS extends IPSModule
         $this->RegisterAttributeInteger('SolisLastMode', -1);     // zuletzt an den Solis gesendeter Zwangsmodus (-1 = unbekannt)
         $this->RegisterAttributeInteger('SolisLastPowerW', 0);
         $this->RegisterAttributeInteger('SolisLastWriteAt', 0);
+        $this->RegisterAttributeInteger('SolisReleaseTries', 0);
         $this->RegisterAttributeBoolean('SolisHoldActive', false);   // Entladesperre (Speicherbetrieb 17) von EMS gesetzt
         $this->RegisterAttributeInteger('SolisHoldChangedAt', 0);
         $this->RegisterAttributeInteger('SolisUserStorage', -1);      // vom Nutzer eingestellter Speicherbetrieb, vor dem Halten gemerkt
@@ -701,6 +702,10 @@ class EMS extends IPSModule
                 'caption'  => '🆕 Neu in Version ' . EMS_NEWS_VERSION,
                 'expanded' => true,
                 'items'    => array(
+                    array(
+                        'type'    => 'Label',
+                        'caption' => '• GEÄNDERT: Beim Solis nimmt EMS nur noch einen Zwangsmodus zurück, den es selbst gesetzt hat. Ein von außen gesetzter Zwangsmodus (Skript, App, Portal) bleibt in jedem Zustand unangetastet, auch im Trockenlauf.'
+                    ),
                     array(
                         'type'    => 'Label',
                         'caption' => '• NEU: Beim Solis kann EMS jetzt auch „Akku halten“ (Haus aus dem Netz, Akku wird nicht entladen), über die Entladesperre des InverterHub (Speicherbetrieb 17, nie 49/51). EMS merkt Ihren Speicherbetrieb und stellt ihn wieder her, prüft nach dem Schreiben, hält nur ohne PV-Überschuss und gibt die Sperre frei, wenn EMS ausfällt.'
@@ -8607,21 +8612,40 @@ class EMS extends IPSModule
                 $this->WriteAttributeInteger('SolisLastMode', 1);
                 $this->WriteAttributeInteger('SolisLastPowerW', $w);
                 $this->WriteAttributeInteger('SolisLastWriteAt', $now);
+                $this->WriteAttributeInteger('SolisReleaseTries', 0);
             }
             return;
         }
-        // Freigeben: nur schreiben, wenn das Geraet (noch) im Zwangsmodus ist oder der Zustand unbekannt ist
+        // Freigeben: NUR einen Zwangsmodus, den EMS selbst gesetzt hat (SolisLastMode = 1). Ein Zwangsmodus von aussen
+        // (Messskript, Solis-App/-Portal, Fremdregler) wird nie angefasst, auch nicht im Trockenlauf und nicht bei
+        // EMS aus (Befund 21.10.2026: mit EMS im Trockenlauf fiel ein extern gesetztes Zwangsentladen nach 31 bis 122 s
+        // zurueck, mit EMS aus erst nach dem Geraete-Zeitlimit). Das Freigeben wird bis zur Bestaetigung hoechstens
+        // dreimal im Abstand von 10 s wiederholt (Schreibbefehle gehen am Solis gelegentlich verloren), danach gibt das
+        // Geraete-Zeitlimit den Modus ohnehin frei.
+        if ($lastMode !== 1) { return; }
         if ($dev === 0) {
-            if ($lastMode !== 0) { $this->WriteAttributeInteger('SolisLastMode', 0); $this->WriteAttributeInteger('SolisLastPowerW', 0); }
-            return;
-        }
-        $need = ($dev > 0) ? (($lastMode !== 0) || ($now - $lastAt) >= 60) : ($lastMode !== 0);
-        if ($need) {
-            IPS_RequestAction($iid, 'ctl_force_mode', 0);
             $this->WriteAttributeInteger('SolisLastMode', 0);
             $this->WriteAttributeInteger('SolisLastPowerW', 0);
-            $this->WriteAttributeInteger('SolisLastWriteAt', $now);
+            $this->WriteAttributeInteger('SolisReleaseTries', 0);
+            return;
         }
+        $tries = $this->ReadAttributeInteger('SolisReleaseTries');
+        if ($tries >= 3 || ($tries > 0 && ($now - $lastAt) < 10)) {
+            if ($tries >= 3) {
+                $this->WriteAttributeInteger('SolisLastMode', 0);
+                $this->WriteAttributeInteger('SolisLastPowerW', 0);
+                $this->WriteAttributeInteger('SolisReleaseTries', 0);
+            }
+            return;
+        }
+        IPS_RequestAction($iid, 'ctl_force_mode', 0);
+        $this->WriteAttributeInteger('SolisLastWriteAt', $now);
+        if ($dev < 0) { // ohne Rueckmeldung nicht wiederholen
+            $this->WriteAttributeInteger('SolisLastMode', 0);
+            $this->WriteAttributeInteger('SolisLastPowerW', 0);
+            return;
+        }
+        $this->WriteAttributeInteger('SolisReleaseTries', $tries + 1);
     }
 
     /**
