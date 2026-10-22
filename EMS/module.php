@@ -41,7 +41,7 @@ define('EMS_LOG_VERBOSE',     2);
 // Formular-Konvention (siehe EMS/SUITE.md "Einheitliche Formular-Optik"):
 // Was-ist-Neu-Panel ist versionsscharf dismissible, Referenzmuster InverterHub.
 define('EMS_COLOR_AUTO', 0x2E8B3D); // Gruen: Wert wurde automatisch uebernommen (🔗-Zeilen im Formular)
-define('EMS_NEWS_VERSION', '0.78.2');
+define('EMS_NEWS_VERSION', '0.79.0');
 
 // NRG-Stack Partnermodul-GUIDs (fuer automatische Discovery, siehe discoverPartners())
 define('GUID_CHARGERHUB',    '{9256C34E-5CFD-4F37-8BFE-E65390EBB37C}');
@@ -479,6 +479,12 @@ class EMS extends IPSModule
         $this->RegisterAttributeBoolean('LastGoodweEnable',  true);
         $this->RegisterAttributeInteger('LastGoodwePowerW',  0);
         $this->RegisterAttributeInteger('NoControlLoggedAt', 0);
+        $this->RegisterAttributeBoolean('EverActive', false);       // war EMS auf dieser Instanz schon einmal aktiv?
+        $this->RegisterAttributeBoolean('DryRunAuto', false);       // Einfuehrungs-Trockenlauf nach der ersten Aktivierung (bis "Jetzt live schalten")
+        $this->RegisterAttributeInteger('WriteFailAt', 0);          // letzter fehlgeschlagener Schreibzugriff am WR/an der Wallbox
+        $this->RegisterAttributeString('WriteFailText', '');
+        $this->RegisterAttributeString('DataStaleText', '');        // veraltete Messwerte (Netz/PV), leer = alles frisch
+        $this->RegisterAttributeString('PriceSourceNote', '');      // Herkunft des aktuellen Preises ('' = unbekannt)
         $this->RegisterAttributeInteger('SolisLastMode', -1);     // zuletzt an den Solis gesendeter Zwangsmodus (-1 = unbekannt)
         $this->RegisterAttributeInteger('SolisLastPowerW', 0);
         $this->RegisterAttributeInteger('SolisLastWriteAt', 0);
@@ -548,6 +554,7 @@ class EMS extends IPSModule
         $this->RegisterAttributeString('PartnerCache', '{}');
         $this->RegisterAttributeString('UnresponsiveInstances', '{}');
         $this->RegisterVariableString('EMS_Partners', 'NRG-Stack Partnermodule', '', 5);
+        $this->RegisterVariableBoolean('EMS_WriteWarn', '⚠️ Schreibzugriff fehlgeschlagen (Wechselrichter/Wallbox)', '', 6);
         $this->RegisterVariableString('EMS_Situation', 'Steuerhoheit (Situation A/B)', '', 6);
         $this->RegisterVariableString('EMS_FederationHealth', 'Verbund-Gesundheit', '', 7);
 
@@ -615,6 +622,33 @@ class EMS extends IPSModule
         }
 
         $this->SetValue('EMS_Active_State', $active);
+
+        // Erste Aktivierung einer NEUEN Instanz: zuerst im Trockenlauf (Einfuehrung), bis der Nutzer "Jetzt live schalten" waehlt.
+        // Bestehende Instanzen (EMS hat schon einmal entschieden oder ist schon aktiv) bleiben unveraendert.
+        if ($active && !$this->ReadAttributeBoolean('EverActive')) {
+            $this->WriteAttributeBoolean('EverActive', true);
+            if ($this->ReadAttributeInteger('LastDecision') === 0 && !$this->ReadPropertyBoolean('EMS_DryRun')) {
+                $this->WriteAttributeBoolean('DryRunAuto', true);
+                $this->emsLog(EMS_LOG_BASIC, 'Erste Aktivierung: EMS läuft zunächst im Trockenlauf (nichts wird geschrieben), bis „Jetzt live schalten“ gewählt wird');
+            }
+        }
+    }
+
+    /** Läuft EMS im Trockenlauf? Eingestellt (Formular) oder als Einführung nach der ersten Aktivierung. */
+    private function isDryRun(): bool
+    {
+        return $this->ReadPropertyBoolean('EMS_DryRun') || $this->ReadAttributeBoolean('DryRunAuto');
+    }
+
+    /** Beendet den Einführungs-Trockenlauf einer neuen Instanz: ab jetzt schreibt EMS wirklich (Schaltfläche im Formular). */
+    public function GoLive()
+    {
+        $this->WriteAttributeBoolean('DryRunAuto', false);
+        $this->emsLog(EMS_LOG_BASIC, 'EMS live geschaltet (Einführungs-Trockenlauf beendet)');
+        if ($this->ReadPropertyBoolean('EMS_DryRun')) {
+            return '⚠️ Der Trockenlauf im Formular (Bereich „Allgemein“) ist weiter eingeschaltet: dort ausschalten, damit EMS schreibt.';
+        }
+        return '✅ EMS schreibt ab dem nächsten Zyklus an Wechselrichter und Wallbox.';
     }
 
     // ----------------------------------------------------------------
@@ -643,6 +677,26 @@ class EMS extends IPSModule
                     'caption' => 'Koordiniert alle NRG-Stack-Module (InverterHub, MeterHub, ChargerHub, HeishaMon, Tessie, TibberGridRewards, StromGedacht, SteuerboxHub) über deren *_GetFunctions-Verträge. Details: https://github.com/DG65/NRGEMS'
                 ),
             )
+        ));
+
+        // 2b. Konfigurationsprüfung (nach dem Verbund-Status): was still schiefgehen kann, sichtbar statt versteckt
+        $ccLines = $this->configCheckLines();
+        $ccWarn = count(array_filter($ccLines, function ($l) { return $l['level'] === 'warn'; }));
+        $ccItems = array();
+        foreach ($ccLines as $i => $l) {
+            $icon = ($l['level'] === 'warn') ? '⚠️ ' : (($l['level'] === 'ok') ? '✅ ' : 'ℹ️ ');
+            $it = array('type' => 'Label', 'name' => 'ConfigCheck_' . $i, 'caption' => $icon . $l['text']);
+            if ($l['level'] === 'warn') { $it['color'] = 0xE65100; }
+            $ccItems[] = $it;
+        }
+        if ($this->ReadAttributeBoolean('DryRunAuto')) {
+            $ccItems[] = array('type' => 'Button', 'caption' => '▶ Jetzt live schalten', 'onClick' => 'echo EMS_GoLive($id);');
+        }
+        array_unshift($form['elements'], array(
+            'type'     => 'ExpansionPanel',
+            'caption'  => '🩺 Konfigurationsprüfung' . ($ccWarn > 0 ? ' (' . $ccWarn . ' Hinweis' . ($ccWarn > 1 ? 'e' : '') . ')' : ''),
+            'expanded' => ($ccWarn > 0),
+            'items'    => $ccItems,
         ));
 
         // 3. "Verbund-Status" — live Statusdaten direkt im Formular, nicht nur
@@ -702,6 +756,14 @@ class EMS extends IPSModule
                 'caption'  => '🆕 Neu in Version ' . EMS_NEWS_VERSION,
                 'expanded' => true,
                 'items'    => array(
+                    array(
+                        'type'    => 'Label',
+                        'caption' => '• NEU: Panel „🩺 Konfigurationsprüfung“ zeigt, was in Ihrer Einrichtung still schiefgehen kann (unbekannter Preis, veraltete Messwerte, fehlgeschlagene Schreibzugriffe, Batteriekapazität auf dem Standardwert, feste Preisschwellen, Netzanschluss-Standard). Der aktuelle Preis kommt jetzt automatisch aus der Preiskurve, auch ohne verknüpfte Preisvariable.'
+                    ),
+                    array(
+                        'type'    => 'Label',
+                        'caption' => '• NEU: Eine neue EMS-Instanz läuft nach der ersten Aktivierung zuerst im Trockenlauf (nichts wird geschrieben), bis Sie in der Konfigurationsprüfung „Jetzt live schalten“ wählen. Bestehende Instanzen bleiben unverändert.'
+                    ),
                     array(
                         'type'    => 'Label',
                         'caption' => '• GEÄNDERT: „Akku halten“ beim Solis wirkt nur unter dem Reserve-SOC des Geräts (bei Paul 80 %). Darüber, und bei PV-Überschuss, bleibt der Wechselrichter in Automatik; die Statuszeile nennt den Grund.'
@@ -1335,9 +1397,9 @@ class EMS extends IPSModule
                         if ($this->findChildVariableIdByIdent($inv['instanceID'], 'ctl_ems_mode') <= 0 && $this->isSolisDriver((int)$inv['instanceID'])) {
                             $this->setSolisMode((int)$inv['instanceID'], GW_MODE_AUTO, 0); // Zwangsmodus freigeben, falls aktiv
                         } else {
-                            @IPS_RequestAction($inv['instanceID'], 'ctl_ems_enable', false);
-                            @IPS_RequestAction($inv['instanceID'], 'ctl_ems_mode', GW_MODE_AUTO);
-                            @IPS_RequestAction($inv['instanceID'], 'ctl_ems_power', 0);
+                            $this->ipsWrite($inv['instanceID'], 'ctl_ems_enable', false);
+                            $this->ipsWrite($inv['instanceID'], 'ctl_ems_mode', GW_MODE_AUTO);
+                            $this->ipsWrite($inv['instanceID'], 'ctl_ems_power', 0);
                         }
                     }
                     $this->WriteAttributeBoolean('EmsInactiveHandoffDone', true);
@@ -1984,9 +2046,9 @@ class EMS extends IPSModule
             // enable=false + mode=1 (Automatik) + power=0 gesendet werden --
             // korrigiert die urspruengliche (falsche) Annahme, enable=false
             // allein reiche fuer "WR faehrt eigene Selbstverbrauchslogik".
-            @IPS_RequestAction($inv['instanceID'], 'ctl_ems_enable', false);
-            @IPS_RequestAction($inv['instanceID'], 'ctl_ems_mode', GW_MODE_AUTO);
-            @IPS_RequestAction($inv['instanceID'], 'ctl_ems_power', 0);
+            $this->ipsWrite($inv['instanceID'], 'ctl_ems_enable', false);
+            $this->ipsWrite($inv['instanceID'], 'ctl_ems_mode', GW_MODE_AUTO);
+            $this->ipsWrite($inv['instanceID'], 'ctl_ems_power', 0);
             $this->emsLog(EMS_LOG_BASIC, '↩️ Totmann-Reaktion: Fallback in WR-Eigenregelung (enable=false, mode=Automatik, power=0).');
         } else {
             $this->emsLog(EMS_LOG_BASIC, 'ℹ️ Totmann-Reaktion: Sicherheits-Stopp respektiert, keine weitere Aktion (Szenario A).');
@@ -2048,12 +2110,12 @@ class EMS extends IPSModule
                 $prev = json_decode($this->ReadAttributeString('FeedInLimitPrev'), true);
                 if (is_array($prev) && array_key_exists('enable', $prev)) {
                     if (!empty($prev['enable']) && isset($prev['limit'])) {
-                        @IPS_RequestAction($invId, 'ctl_export_limit', (int)$prev['limit']);
+                        $this->ipsWrite($invId, 'ctl_export_limit', (int)$prev['limit']);
                     }
-                    @IPS_RequestAction($invId, 'ctl_export_enable', (bool)$prev['enable']);
+                    $this->ipsWrite($invId, 'ctl_export_enable', (bool)$prev['enable']);
                     $txt = !empty($prev['enable']) ? sprintf('vorherige Grenze %d W wiederhergestellt', (int)$prev['limit']) : 'vorher unbegrenzt';
                 } else {
-                    @IPS_RequestAction($invId, 'ctl_export_enable', false);
+                    $this->ipsWrite($invId, 'ctl_export_enable', false);
                     $txt = 'vorheriger Zustand unbekannt, Begrenzung aus';
                 }
                 $this->WriteAttributeBoolean('SteuerboxFeedInLimitSetByUs', false);
@@ -2071,8 +2133,8 @@ class EMS extends IPSModule
             $this->WriteAttributeString('FeedInLimitPrev', ($ve > 0) ? json_encode(array(
                 'enable' => (bool)GetValue($ve), 'limit' => ($vl > 0) ? (int)GetValue($vl) : null)) : '');
         }
-        @IPS_RequestAction($invId, 'ctl_export_enable', true);
-        @IPS_RequestAction($invId, 'ctl_export_limit', $limitW);
+        $this->ipsWrite($invId, 'ctl_export_enable', true);
+        $this->ipsWrite($invId, 'ctl_export_limit', $limitW);
         $this->WriteAttributeBoolean('SteuerboxFeedInLimitSetByUs', true);
         $state = $limitW . '|' . implode(' + ', $gruende);
         if ($this->ReadAttributeString('FeedInLimitState') !== $state) {
@@ -4557,7 +4619,7 @@ class EMS extends IPSModule
             'reason'          => $reason,
             'source'          => $this->ReadAttributeString('LastDecisionSource'),
             'since'           => $this->ReadAttributeInteger('LastDecision'),
-            'dryRun'          => $this->ReadPropertyBoolean('EMS_DryRun'),
+            'dryRun'          => $this->isDryRun(),
             'observeOnly'     => ($observeWhy !== ''),
             'observeReason'   => $observeWhy,
         );
@@ -6296,11 +6358,15 @@ class EMS extends IPSModule
 
         $fromIhub = ($inv !== null && $inv['source'] === 'inverterhub');
 
-        // Netz (SmartMeter)
+        // Netz (SmartMeter); veraltete Messwerte werden gemeldet statt als normal durchzugehen (Frischegrenze 10 min wie beim SOC)
+        $stale = array();
         if ($fromIhub && ($inv['gridPowerID'] ?? 0) > 0) {
             $s['grid_total_w'] = (float)$this->readDiscoveredVar($inv['gridPowerID'], 0);
+            if (!$this->isFreshVar((int)$inv['gridPowerID'], 'Netzleistung')) { $stale[] = 'Netzleistung'; }
         } else {
             $s['grid_total_w'] = (float)$this->readVar('VAR_SM_Total_Power', 0);
+            $gid = (int)$this->ReadPropertyInteger('VAR_SM_Total_Power');
+            if ($gid > 0 && !$this->isFreshVar($gid, 'Netzleistung')) { $stale[] = 'Netzleistung'; }
         }
         $s['grid_l1_w']     = (float)$this->readVar('VAR_SM_L1_Power',    0);
         $s['grid_l2_w']     = (float)$this->readVar('VAR_SM_L2_Power',    0);
@@ -6309,8 +6375,16 @@ class EMS extends IPSModule
         // PV
         if ($fromIhub && ($inv['pvPowerID'] ?? 0) > 0) {
             $s['pv_total_w'] = (float)$this->readDiscoveredVar($inv['pvPowerID'], 0);
+            if (!$this->isFreshVar((int)$inv['pvPowerID'], 'PV-Leistung')) { $stale[] = 'PV-Leistung'; }
         } else {
             $s['pv_total_w'] = (float)$this->readVar('VAR_PV_Total_Power', 0);
+            $pid = (int)$this->ReadPropertyInteger('VAR_PV_Total_Power');
+            if ($pid > 0 && !$this->isFreshVar($pid, 'PV-Leistung')) { $stale[] = 'PV-Leistung'; }
+        }
+        $staleTxt = implode(', ', $stale);
+        if ($this->ReadAttributeString('DataStaleText') !== $staleTxt) {
+            $this->WriteAttributeString('DataStaleText', $staleTxt);
+            $this->emsLog(EMS_LOG_BASIC, $staleTxt !== '' ? 'Messwerte seit über 10 Minuten nicht aktualisiert: ' . $staleTxt . ' -- Hauslast und PV-Überschuss können falsch sein' : 'Messwerte wieder aktuell');
         }
         // Weitere Wechselrichter (ohne EMS-Steuerung): ihre PV-Leistung gehoert zur Hausbilanz
         if ($fromIhub) {
@@ -6400,7 +6474,10 @@ class EMS extends IPSModule
 
         // Tibber
         $s['tib_active']    = $this->ReadPropertyBoolean('TIBBER_Active');
-        $s['tib_price']     = $s['tib_active'] ? (float)$this->readVar('VAR_TIB_Price',       0)     : 0.0;
+        $priceInfo          = $s['tib_active'] ? $this->currentPriceEur() : array('eur' => 0.0, 'source' => '');
+        $s['tib_price']     = ($priceInfo['eur'] !== null) ? (float)$priceInfo['eur'] : 0.0;
+        $s['tib_price_unknown'] = ($s['tib_active'] && $priceInfo['eur'] === null);
+        if ($this->ReadAttributeString('PriceSourceNote') !== (string)$priceInfo['source']) { $this->WriteAttributeString('PriceSourceNote', (string)$priceInfo['source']); }
         $s['tib_level']     = $s['tib_active'] ? (int)  $this->readVar('VAR_TIB_Level',       2)     : 2;
         $s['tib_feed']      = $this->planFeedTariffEur(); // haengt an der Anlage, nicht am Tibber-Schalter; unbekannt = 0
 
@@ -8248,7 +8325,7 @@ class EMS extends IPSModule
         // nichts an Wechselrichter, Wallboxen und Netzdienlich-Pfad. Ein bereits aktiver Sollwert wird einmal an
         // die Automatik zurueckgegeben, sonst haelt der WR ihn ohne Neuschreiben nicht (Rueckfall auf 255).
         // Gesetzliche Einspeisegrenzen (Netzbetreiber, Negativpreis, dauerhafte Grenze) bleiben davon unberuehrt.
-        if ($this->ReadPropertyBoolean('EMS_DryRun')) {
+        if ($this->isDryRun()) {
             $this->applyDryRun($d);
             return;
         }
@@ -8267,7 +8344,7 @@ class EMS extends IPSModule
             if ($iid > 0 && $b1Now !== $b1Was) {
                 $ident = $this->gridServiceIdent($svc);
                 if ($ident !== '') {
-                    IPS_RequestAction($iid, $ident, true);
+                    $this->ipsWrite($iid, $ident, true);
                     $this->emsLog(EMS_LOG_BASIC, sprintf('Netzdienlich -> %s (%s) | %s', $svc, $ident, $d['reason'] ?? ''));
                 }
             }
@@ -8382,7 +8459,9 @@ class EMS extends IPSModule
     private function statusText(string $reason): string
     {
         $why = $this->ReadAttributeString('NoControlReason');
-        return ($why !== '') ? ('Nur beobachtend (' . $why . '): ' . $reason) : ('OK: ' . $reason);
+        $text = ($why !== '') ? ('Nur beobachtend (' . $why . '): ' . $reason) : ('OK: ' . $reason);
+        $stale = $this->ReadAttributeString('DataStaleText');
+        return ($stale !== '') ? ('⚠️ Messwerte veraltet (' . $stale . ') | ' . $text) : $text;
     }
 
     private function applyDryRun($d): void
@@ -8422,7 +8501,7 @@ class EMS extends IPSModule
      */
     public function KeepAlive()
     {
-        if (!$this->ReadPropertyBoolean('EMS_Active') || $this->ReadPropertyBoolean('EMS_DryRun') || !$this->ReadAttributeBoolean('LastGoodweEnable')) { return; }
+        if (!$this->ReadPropertyBoolean('EMS_Active') || $this->isDryRun() || !$this->ReadAttributeBoolean('LastGoodweEnable')) { return; }
         $mode = $this->ReadAttributeInteger('LastGoodweMode');
         if ($mode === GW_MODE_AUTO) { return; }
         $inv = $this->getInverterEntry();
@@ -8441,9 +8520,9 @@ class EMS extends IPSModule
             $this->setSolisMode((int)$iid, (int)$mode, $this->ReadAttributeInteger('LastGoodwePowerW')); // gedrosselt auf das Wiederholintervall
             return;
         }
-        IPS_RequestAction($iid, 'ctl_ems_mode', $mode);
-        IPS_RequestAction($iid, 'ctl_ems_power', $this->ReadAttributeInteger('LastGoodwePowerW'));
-        IPS_RequestAction($iid, 'ctl_ems_enable', true);
+        $this->ipsWrite($iid, 'ctl_ems_mode', $mode);
+        $this->ipsWrite($iid, 'ctl_ems_power', $this->ReadAttributeInteger('LastGoodwePowerW'));
+        $this->ipsWrite($iid, 'ctl_ems_enable', true);
     }
 
     /** Hat dieser InverterHub die Solis-Steuerpunkte (Zwangsmodus/-leistung) und KEINE GoodWe-EMS-Stellglieder? */
@@ -8465,6 +8544,119 @@ class EMS extends IPSModule
         $min = ($id > 0) ? (int)GetValue($id) : 0;
         if ($min <= 0) { return 60; }
         return (int)max(15, min(60, intdiv($min * 60, 2)));
+    }
+
+    /**
+     * Schreibzugriff auf eine fremde Instanz (Wechselrichter, Wallbox, InverterHub-Steuerpunkte). Wie IPS_RequestAction(), merkt sich
+     * aber Fehlschlaege (false oder Ausnahme) und zeigt sie sichtbar an (Variable EMS_WriteWarn, Log, Konfigurationsprüfung), statt sie
+     * zu verschlucken. Die Warnung geht zehn Minuten nach dem letzten Fehlschlag von selbst weg, wenn Schreibzugriffe wieder gelingen.
+     */
+    private function ipsWrite($id, $ident, $value): bool
+    {
+        $ok = false; $err = '';
+        try { $r = IPS_RequestAction($id, $ident, $value); $ok = ($r !== false); }
+        catch (Throwable $e) { $err = $e->getMessage(); }
+        $now = time();
+        if ($ok) {
+            $failAt = $this->ReadAttributeInteger('WriteFailAt');
+            if ($failAt > 0 && $now - $failAt > 600) {
+                $this->WriteAttributeInteger('WriteFailAt', 0);
+                $this->WriteAttributeString('WriteFailText', '');
+                try { $this->SetValue('EMS_WriteWarn', false); } catch (Throwable $e) {}
+            }
+            return true;
+        }
+        $text = sprintf('Instanz #%d, %s%s', (int)$id, (string)$ident, $err !== '' ? ' (' . $err . ')' : ' (abgelehnt)');
+        $first = ($this->ReadAttributeInteger('WriteFailAt') === 0 || $now - $this->ReadAttributeInteger('WriteFailAt') > 300);
+        $this->WriteAttributeInteger('WriteFailAt', $now);
+        $this->WriteAttributeString('WriteFailText', $text);
+        try { $this->SetValue('EMS_WriteWarn', true); } catch (Throwable $e) {}
+        if ($first) { $this->emsLog(EMS_LOG_BASIC, 'Schreibzugriff fehlgeschlagen: ' . $text); }
+        return false;
+    }
+
+    /**
+     * Aktueller Bezugspreis (EUR/kWh) fuer die laufende Viertelstunde. Eine verknuepfte Preisvariable (VAR_TIB_Price) gilt wie bisher;
+     * sonst kommt der Preis automatisch aus der PT15M-Preiskurve (Tibber Grid Reward, Boersenpreis o. ae.). Vorher blieb der Preis ohne
+     * Verknuepfung stillschweigend 0, und die Wallbox war immer freigegeben (Befund Pauls Anlage 22.10.2026).
+     * Rueckgabe: array('eur' => float|null (null = unbekannt), 'source' => 'Variable'|'Preiskurve'|'').
+     */
+    private function currentPriceEur(): array
+    {
+        $id = (int)$this->ReadPropertyInteger('VAR_TIB_Price');
+        if ($id > 0 && IPS_VariableExists($id)) {
+            return array('eur' => (float)GetValue($id), 'source' => 'Variable');
+        }
+        try {
+            $prices = $this->parsePT15M($this->getPT15MTodayJson());
+            $slot = (int)(((int)date('H') * 60 + (int)date('i')) / 15);
+            if (is_array($prices) && isset($prices[$slot]) && $prices[$slot] !== null) {
+                return array('eur' => (float)$prices[$slot], 'source' => 'Preiskurve');
+            }
+        } catch (Throwable $e) { /* unbekannt */ }
+        return array('eur' => null, 'source' => '');
+    }
+
+    /**
+     * Konfigurationsprüfung (Bestandsaufnahme 22.10.2026): was in dieser Instanz still schiefgehen kann, als lesbare Liste.
+     * Jede Zeile: array('level' => 'warn'|'info'|'ok', 'text' => string). Rein lesend.
+     */
+    private function configCheckLines(): array
+    {
+        $out = array();
+        $add = function (string $level, string $text) use (&$out) { $out[] = array('level' => $level, 'text' => $text); };
+        if ($this->ReadAttributeBoolean('DryRunAuto')) {
+            $add('warn', 'EMS läuft zur Einführung im Trockenlauf: Es rechnet und zeigt Entscheidungen, schreibt aber nichts. Nach dem Prüfen „Jetzt live schalten“ wählen.');
+        } elseif ($this->ReadPropertyBoolean('EMS_DryRun')) {
+            $add('info', 'Trockenlauf ist im Bereich „Allgemein“ eingeschaltet: EMS schreibt nichts an Wechselrichter und Wallbox.');
+        }
+        if ($this->getInverterEntry() === null && $this->ReadPropertyBoolean('BAT_Active')) {
+            $add('warn', 'Kein Wechselrichter über den InverterHub gefunden: Ohne Messwerte kann EMS die Batterie nicht sinnvoll steuern.');
+        }
+        $stale = $this->ReadAttributeString('DataStaleText');
+        if ($stale !== '') {
+            $add('warn', 'Messwerte seit über 10 Minuten nicht aktualisiert (' . $stale . '): Hauslast und PV-Überschuss können falsch sein. Verbindung zum Gerät prüfen.');
+        }
+        $failAt = $this->ReadAttributeInteger('WriteFailAt');
+        if ($failAt > 0 && time() - $failAt < 3600) {
+            $add('warn', 'Ein Schreibzugriff ist fehlgeschlagen (' . $this->ReadAttributeString('WriteFailText') . ', ' . date('H:i', $failAt) . ' Uhr). Gerät oder Instanz prüfen; EMS kann dort nichts schalten.');
+        }
+        if ($this->ReadPropertyBoolean('TIBBER_Active')) {
+            $src = $this->ReadAttributeString('PriceSourceNote');
+            if ($src === '') {
+                $add('warn', 'Die Preisoptimierung ist an, aber der aktuelle Preis ist unbekannt (keine Preisvariable verknüpft und keine Preiskurve gefunden). Die Wallbox bleibt dann ohne Preisprüfung freigegeben. Tibber oder eine Preisquelle verbinden.');
+            } else {
+                $add('ok', 'Aktueller Preis: ' . (($src === 'Preiskurve') ? 'automatisch aus der Preiskurve' : 'aus der verknüpften Preisvariable') . '.');
+            }
+        }
+        $cap = $this->getPlantStorageKwh();
+        if ($this->ReadPropertyBoolean('BAT_Active') && ($cap['quelle'] ?? '') !== 'wechselrichter' && abs((float)$this->ReadPropertyFloat('BAT_Capacity_kWh') - 10.0) < 0.001) {
+            $add('warn', 'Die Batteriekapazität steht auf dem Standardwert 10 kWh und kommt nicht vom Wechselrichter. Bitte die echte nutzbare Kapazität eintragen.');
+        }
+        $th = array('TIB_Threshold_Charge' => 'Laden', 'TIB_Threshold_Discharge' => 'Entladen', 'TIB_Threshold_WB' => 'Fahrzeugladung');
+        $fixed = array();
+        foreach ($th as $prop => $label) { $v = (float)$this->ReadPropertyFloat($prop); if ($v > 0) { $fixed[] = sprintf('%s %.2f €', $label, $v); } }
+        if (!empty($fixed)) {
+            $add('warn', 'Feste Preisschwellen eingetragen (' . implode(', ', $fixed) . '): Sie überstimmen die Automatik. Bei Tibber-Preisen ab 30 ct sind alte Standardwerte wie 0,15 € oder 0,07 € meist zu niedrig. 0 = automatisch.');
+        }
+        if ($this->planFeedTariffEur() <= 0.0) {
+            $add('info', 'Die Einspeisevergütung ist unbekannt: Inbetriebnahmedatum und Anlagengröße im Bereich „Anlage“ eintragen, dann rechnet EMS die Wirtschaftlichkeit genauer.');
+        }
+        if ((int)$this->ReadPropertyInteger('EMS_Max_Power_W') === 11000 && (int)$this->ReadPropertyInteger('SITE_Max_Grid_Import_W') === 0) {
+            $add('info', 'Die Netzanschlussgrenze steht auf dem vorsichtigen Standard 11 kW. Bei größerem Anschluss im Bereich „Optimierungsparameter“ anpassen.');
+        }
+        if (empty($out) || count(array_filter($out, function ($l) { return $l['level'] === 'warn'; })) === 0) {
+            array_unshift($out, array('level' => 'ok', 'text' => 'Keine Auffälligkeiten in der Konfiguration.'));
+        }
+        return $out;
+    }
+
+    /** Konfigurationsprüfung für Anzeige-Konsumenten (Vertrag `configcheck` 1.0, additiv): ok = keine Warnung. */
+    public function GetConfigCheck()
+    {
+        $f = $this->configCheckLines();
+        $warn = count(array_filter($f, function ($l) { return $l['level'] === 'warn'; }));
+        return array('contractVersion' => '1.0', 'ok' => ($warn === 0), 'warnings' => $warn, 'findings' => $f);
     }
 
     /** PV-Ueberschuss (W) aus den EMS-Werten; ohne Werte 0. */
@@ -8517,7 +8709,7 @@ class EMS extends IPSModule
         }
         $this->WriteAttributeInteger('SolisHoldTries', $this->ReadAttributeInteger('SolisHoldTries') + 1);
         $this->WriteAttributeInteger('SolisHoldTryAt', $now);
-        IPS_RequestAction($iid, 'ctl_storage_mode', $target);
+        $this->ipsWrite($iid, 'ctl_storage_mode', $target);
     }
 
     /**
@@ -8543,7 +8735,7 @@ class EMS extends IPSModule
                     }
                     $this->WriteAttributeInteger('SolisHoldTries', $this->ReadAttributeInteger('SolisHoldTries') + 1);
                     $this->WriteAttributeInteger('SolisHoldTryAt', $now);
-                    IPS_RequestAction($iid, 'svc_discharge_inhibit', true);
+                    $this->ipsWrite($iid, 'svc_discharge_inhibit', true);
                 } elseif ($cur === 17) {
                     $this->WriteAttributeInteger('SolisHoldTries', 0);
                 }
@@ -8552,7 +8744,7 @@ class EMS extends IPSModule
             if ($now - $this->ReadAttributeInteger('SolisHoldChangedAt') < 60) { return; }
             if ($cur > 0 && $cur !== 17) { $this->WriteAttributeInteger('SolisUserStorage', $cur); }
             $this->WriteAttributeInteger('SolisRestoreTarget', -1);
-            IPS_RequestAction($iid, 'svc_discharge_inhibit', true);
+            $this->ipsWrite($iid, 'svc_discharge_inhibit', true);
             $this->WriteAttributeBoolean('SolisHoldActive', true);
             $this->WriteAttributeInteger('SolisHoldChangedAt', $now);
             $this->WriteAttributeInteger('SolisHoldTries', 0);
@@ -8564,10 +8756,10 @@ class EMS extends IPSModule
         $prevId = $this->findChildVariableIdByIdent($iid, 'svc_prev_storage');
         $prev = ($prevId > 0) ? (int)GetValue($prevId) : 0;
         if ($prev > 0) {
-            IPS_RequestAction($iid, 'svc_discharge_inhibit', false); // InverterHub schreibt den gemerkten Wert zurueck
+            $this->ipsWrite($iid, 'svc_discharge_inhibit', false); // InverterHub schreibt den gemerkten Wert zurueck
             $this->WriteAttributeInteger('SolisRestoreTarget', $saved > 0 ? $saved : $prev);
         } elseif ($saved > 0) {
-            IPS_RequestAction($iid, 'ctl_storage_mode', $saved);    // eigener gemerkter Wert (InverterHub hat nichts gemerkt)
+            $this->ipsWrite($iid, 'ctl_storage_mode', $saved);    // eigener gemerkter Wert (InverterHub hat nichts gemerkt)
             $this->WriteAttributeInteger('SolisRestoreTarget', $saved);
         } else {
             $this->emsLog(EMS_LOG_BASIC, 'Solis: Entladesperre soll freigegeben werden, aber kein vorheriger Speicherbetrieb ist gemerkt -- bitte den Speicherbetrieb am Gerät prüfen');
@@ -8621,8 +8813,8 @@ class EMS extends IPSModule
                 $this->emsLog(EMS_LOG_BASIC, sprintf('Solis: der Zwangsmodus wurde vom Gerät zurückgenommen, obwohl alle %d s neu geschrieben wird -- Fernsteuer-Zeitlimit prüfen', $interval));
             }
             if ($need) {
-                IPS_RequestAction($iid, 'ctl_force_w', $w);       // erst die Leistung, dann der Modus
-                IPS_RequestAction($iid, 'ctl_force_mode', 1);
+                $this->ipsWrite($iid, 'ctl_force_w', $w);       // erst die Leistung, dann der Modus
+                $this->ipsWrite($iid, 'ctl_force_mode', 1);
                 $this->WriteAttributeInteger('SolisLastMode', 1);
                 $this->WriteAttributeInteger('SolisLastPowerW', $w);
                 $this->WriteAttributeInteger('SolisLastWriteAt', $now);
@@ -8652,7 +8844,7 @@ class EMS extends IPSModule
             }
             return;
         }
-        IPS_RequestAction($iid, 'ctl_force_mode', 0);
+        $this->ipsWrite($iid, 'ctl_force_mode', 0);
         $this->WriteAttributeInteger('SolisLastWriteAt', $now);
         if ($dev < 0) { // ohne Rueckmeldung nicht wiederholen
             $this->WriteAttributeInteger('SolisLastMode', 0);
@@ -8738,16 +8930,16 @@ class EMS extends IPSModule
                 }
                 $istModus  = ($modeVarId > 0) ? (int)GetValue($modeVarId) : -1;
                 if ($istModus !== (int)$mode) {
-                    IPS_RequestAction($iid, 'ctl_ems_power', 0);
-                    IPS_RequestAction($iid, 'ctl_ems_mode', $mode);
+                    $this->ipsWrite($iid, 'ctl_ems_power', 0);
+                    $this->ipsWrite($iid, 'ctl_ems_mode', $mode);
                     if ((int)$powerW > 0) {
-                        IPS_RequestAction($iid, 'ctl_ems_power', (int)$powerW);
+                        $this->ipsWrite($iid, 'ctl_ems_power', (int)$powerW);
                     }
                 } else {
-                    IPS_RequestAction($iid, 'ctl_ems_mode', $mode);
-                    IPS_RequestAction($iid, 'ctl_ems_power', (int)$powerW);
+                    $this->ipsWrite($iid, 'ctl_ems_mode', $mode);
+                    $this->ipsWrite($iid, 'ctl_ems_power', (int)$powerW);
                 }
-                IPS_RequestAction($iid, 'ctl_ems_enable', (bool)$enable);
+                $this->ipsWrite($iid, 'ctl_ems_enable', (bool)$enable);
                 if ($this->ReadAttributeString('NoControlReason') !== '') { $this->WriteAttributeString('NoControlReason', ''); }
                 return;
             }
@@ -9065,14 +9257,14 @@ class EMS extends IPSModule
             // RequestAction() ist Kernel-reserviert, nie als Prefix_RequestAction()
             // exponiert -- Einstiegspunkt ist IPS_RequestAction() (siehe ChargerHub-Befund
             // 25.07.2026).
-            IPS_RequestAction($instance, 'ctl_curr_limit', $maxCurrentA);
-            IPS_RequestAction($instance, 'ctl_enable', true);
+            $this->ipsWrite($instance, 'ctl_curr_limit', $maxCurrentA);
+            $this->ipsWrite($instance, 'ctl_enable', true);
             $this->WriteAttributeBoolean('WB' . (int)$num . 'LastSentEnable', true);
             $this->WriteAttributeBoolean('WB' . (int)$num . 'EmsLocked', false);
             $this->WriteAttributeInteger('LastWB' . $num . 'Switch', time());
             $this->emsLog(EMS_LOG_BASIC, 'WB' . $num . ' (' . $this->chargerSourceLabel($entry) . ' #' . $instance . ') freigegeben (' . $maxCurrentA . ' A)');
         } elseif (!$enable && $isActive) {
-            IPS_RequestAction($instance, 'ctl_enable', false);
+            $this->ipsWrite($instance, 'ctl_enable', false);
             $this->WriteAttributeBoolean('WB' . (int)$num . 'LastSentEnable', false);
             $this->WriteAttributeBoolean('WB' . (int)$num . 'EmsLocked', true);
             $this->WriteAttributeInteger('LastWB' . $num . 'Switch', time());

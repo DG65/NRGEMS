@@ -34,8 +34,8 @@ Das Modul ist modular aufgebaut: Jeder Geräteblock (Wechselrichter, Batterie, W
 | Siemens PAC2200 | Nein | Nein — Redundanzmessung |
 | go-e Charger V3 (1–n, via NRG-Stack ChargerHub) | Nein | Ja — ChargerHub |
 | Heishamon / Panasonic Aquarea | Nein | Nein — Monitoring |
-| Tibber (TibberV2-Modul) | Empfohlen | Nein — Preisdaten |
-| PV Forecast (pvForecast-Modul) | Nein | Nein — Prognosedaten |
+| Tibber (NRG-Stack TibberGridRewards) oder eine andere Preisquelle (Börsenpreis-Modul, Symcon-Strompreis, eigene Preisvariable) | Empfohlen | Nein — Preisdaten |
+| PV-Prognose und Lastprognose (NRG-Stack Prognose) | Nein | Nein — Prognosedaten |
 
 ---
 
@@ -44,8 +44,9 @@ Das Modul ist modular aufgebaut: Jeder Geräteblock (Wechselrichter, Batterie, W
 - IP-Symcon ab Version 9.0
 - Wechselrichter bereits über den NRG-Stack InverterHub (oder per Modbus-TCP) in IPS eingebunden
 - Für Wallboxsteuerung: [NRG-Stack ChargerHub](https://github.com/DG65/NRGChargerHub) installiert (Migration vom Community-Modul IPSCoyote/GO-eCharger über den [MigrationsHub](https://github.com/DG65/NRGMigrationsHub))
-- Für Preisoptimierung: TibberV2-Modul (da8ter) installiert
-- Für Erzeugungsprognose: pvForecast-Modul installiert
+- Für Preisoptimierung: NRG-Stack TibberGridRewards (Viertelstunden-Preise) oder eine andere Preisquelle (Börsenpreis-Modul, Symcon-Strompreis, eigene Preisvariable). Der aktuelle Preis wird automatisch aus der Preiskurve gelesen; ohne Preisquelle warnt die Konfigurationsprüfung
+- Für Erzeugungs- und Verbrauchsprognose: NRG-Stack Prognose (PV-Prognose und Lastprognose)
+- Sicherheit beim Start: Eine neue Instanz schreibt erst, wenn die Risikobestätigung gesetzt, „EMS aktiv“ eingeschaltet und danach im Bereich „Konfigurationsprüfung“ „Jetzt live schalten“ gewählt wurde (zuerst läuft EMS im Trockenlauf)
 
 ---
 
@@ -234,5 +235,5 @@ im Repo ([LICENSE](LICENSE)). Spenden sind willkommen:
 
 Dieses Modul basiert auf der Arbeit der IP-Symcon Community und nutzt folgende externe Module:
 - [ChargerHub](https://github.com/DG65/NRGChargerHub) (NRG-Stack) — frühere Versionen nutzten das [GO-eCharger Modul](https://github.com/IPSCoyote/GO-eCharger) von IPSCoyote
-- [TibberV2 Modul](https://github.com/da8ter/TibberV2) von da8ter
+- [NRG-Stack TibberGridRewards](https://github.com/DG65/TibberGridRewards)
 - [HeishaMon](https://github.com/heishamon/HeishaMon) Protokoll

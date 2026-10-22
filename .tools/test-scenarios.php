@@ -85,6 +85,7 @@ function IPS_LogMessage($sender, $msg) { $GLOBALS['LOG'][] = $sender . ': ' . $m
 function IPS_ApplyChanges($iid)   {}
 function IPS_SetProperty($iid, $n, $v) { $GLOBALS['PROP'][$iid][$n] = $v; }
 function IPS_RequestAction($iid, $ident, $value) {
+    if (!empty($GLOBALS['IPSWRITE_FAIL'])) { if ($GLOBALS['IPSWRITE_FAIL'] === 'throw') { throw new Exception('Instance does not exist'); } return false; }
     $GLOBALS['ACTIONS'][] = [$iid, $ident, $value];
     $GLOBALS['CTL'][$ident] = $value;
     return true;
@@ -1239,6 +1240,78 @@ attr('SolisHoldActive', true); attr('SolisHoldChangedAt', time() - 3000); attr('
 call($ems, 'KeepAlive');
 check('Regelzyklus laeuft nicht mehr (Stunden): KeepAlive gibt die Entladesperre frei (kein Totmann am Geraet)', in_array('svc_discharge_inhibit=false', $acts(), true), json_encode($acts()));
 attr('SolisRestoreTarget', -1);
+
+echo "\n8k7) Bestandsaufnahme: Preis, Frische, Schreibfehler, Einfuehrung, Konfigurationspruefung\n";
+$ems = freshEms(); prop('TIBBER_Active', true); pricesToday(0.31);
+$pi = call($ems, 'currentPriceEur');
+check('Preis nicht verknuepft, Preiskurve da: aktueller Preis kommt automatisch aus der Kurve', $pi['eur'] === 0.31 && $pi['source'] === 'Preiskurve', json_encode($pi));
+$vpr = vari('Preis', 0, '', 0.45, 2); prop('VAR_TIB_Price', $vpr);
+$pi = call($ems, 'currentPriceEur');
+check('verknuepfte Preisvariable hat Vorrang (0,45)', $pi['eur'] === 0.45 && $pi['source'] === 'Variable', json_encode($pi));
+$ems = freshEms(); prop('TIBBER_Active', true);
+$pi = call($ems, 'currentPriceEur');
+check('weder Variable noch Kurve: Preis unbekannt (null), nicht stillschweigend 0', $pi['eur'] === null && $pi['source'] === '', json_encode($pi));
+// readState: Frische von Netz/PV, Preis unbekannt
+$ems = freshEms(); prop('TIBBER_Active', true); prop('BAT_Active', true);
+$GLOBALS['INSTMOD'][IHUB_IID] = GUID_INVERTERHUB;
+foreach (array_keys($GLOBALS['OBJ']) as $oid) { if (($GLOBALS['OBJ'][$oid]['ParentID'] ?? -1) === IHUB_IID) { unset($GLOBALS['OBJ'][$oid], $GLOBALS['VAR'][$oid], $GLOBALS['VAL'][$oid]); } }
+$GLOBALS['OBJ'][IHUB_IID]['HasChildren'] = true;
+$gId = vari('Netz', IHUB_IID, 'meter_total', 100.0, 2); $pId = vari('PV', IHUB_IID, 'pv_total', 500.0, 2); $sId = vari('SOC', IHUB_IID, 'soc', 50, 1);
+attr('PartnerCache', json_encode(['inverterhub' => [['instanceID' => IHUB_IID, 'controlAuthority' => 'none', 'controllable' => false, 'gridPowerID' => $gId, 'pvPowerID' => $pId, 'socID' => $sId]]]));
+$sx = call($ems, 'readState');
+check('readState frisch: keine veralteten Messwerte, Preis unbekannt wird markiert', $ems->ReadAttributeString('DataStaleText') === '' && !empty($sx['tib_price_unknown']), $ems->ReadAttributeString('DataStaleText'));
+$GLOBALS['VAR'][$gId]['VariableUpdated'] = time() - 1200;
+$sx = call($ems, 'readState');
+check('Netzleistung seit 20 min nicht aktualisiert: wird gemeldet (Attribut), Statuszeile beginnt mit der Warnung', $ems->ReadAttributeString('DataStaleText') === 'Netzleistung' && strpos(call($ems, 'statusText', ['x']), '⚠️ Messwerte veraltet (Netzleistung)') === 0, call($ems, 'statusText', ['x']));
+$GLOBALS['VAR'][$pId]['VariableUpdated'] = time() - 1200;
+call($ems, 'readState');
+check('Netz und PV veraltet: beide genannt', $ems->ReadAttributeString('DataStaleText') === 'Netzleistung, PV-Leistung', $ems->ReadAttributeString('DataStaleText'));
+$GLOBALS['VAR'][$gId]['VariableUpdated'] = time(); $GLOBALS['VAR'][$pId]['VariableUpdated'] = time();
+call($ems, 'readState');
+check('wieder frisch: Warnung weg', $ems->ReadAttributeString('DataStaleText') === '' && call($ems, 'statusText', ['x']) === 'OK: x');
+// Schreibfehler sichtbar
+$ems = freshEms();
+$GLOBALS['IPSWRITE_FAIL'] = true;
+check('fehlgeschlagener Schreibzugriff (false) wird gemeldet: ipsWrite gibt false, Variable EMS_WriteWarn an, Text gemerkt', call($ems, 'ipsWrite', [IHUB_IID, 'ctl_x', 1]) === false && $ems->GetValue('EMS_WriteWarn') === true && strpos($ems->ReadAttributeString('WriteFailText'), 'ctl_x') !== false, $ems->ReadAttributeString('WriteFailText'));
+$GLOBALS['IPSWRITE_FAIL'] = false;
+check('gelingt der Schreibzugriff danach, bleibt die Warnung noch 10 min (nicht sofort weg)', call($ems, 'ipsWrite', [IHUB_IID, 'ctl_x', 1]) === true && $ems->GetValue('EMS_WriteWarn') === true);
+attr('WriteFailAt', time() - 700);
+call($ems, 'ipsWrite', [IHUB_IID, 'ctl_x', 1]);
+check('nach 10 min ohne Fehler: Warnung geht von selbst weg', $ems->GetValue('EMS_WriteWarn') === false && $ems->ReadAttributeInteger('WriteFailAt') === 0);
+$GLOBALS['IPSWRITE_FAIL'] = 'throw';
+check('Ausnahme beim Schreiben (z. B. Instanz fehlt): kein Absturz, wird als Fehlschlag gemeldet', call($ems, 'ipsWrite', [IHUB_IID, 'ctl_y', 2]) === false && strpos($ems->ReadAttributeString('WriteFailText'), 'ctl_y') !== false);
+$GLOBALS['IPSWRITE_FAIL'] = false;
+// Einfuehrungs-Trockenlauf bei neuer Instanz
+$ems = freshEms(); prop('EMS_Active', true);
+$ems->ApplyChanges();
+check('neue Instanz, erste Aktivierung: Einfuehrungs-Trockenlauf an (nichts wird geschrieben)', $ems->ReadAttributeBoolean('DryRunAuto') === true && call($ems, 'isDryRun') === true);
+$ems->ApplyChanges();
+check('Einfuehrungs-Trockenlauf bleibt bis "Jetzt live schalten" (erneutes Uebernehmen aendert nichts)', call($ems, 'isDryRun') === true);
+$msg = $ems->GoLive();
+check('"Jetzt live schalten" beendet den Einfuehrungs-Trockenlauf', call($ems, 'isDryRun') === false && strpos($msg, '✅') === 0, $msg);
+$ems->ApplyChanges();
+check('danach kein zweiter Einfuehrungs-Trockenlauf (EverActive gemerkt)', call($ems, 'isDryRun') === false);
+$ems = freshEms(); prop('EMS_Active', true); attr('LastDecision', time() - 100);
+$ems->ApplyChanges();
+check('bestehende Instanz (hat schon entschieden): kein Einfuehrungs-Trockenlauf, Verhalten unveraendert', call($ems, 'isDryRun') === false);
+$ems = freshEms(); prop('EMS_Active', true); prop('EMS_DryRun', true);
+$ems->ApplyChanges(); $msg = $ems->GoLive();
+check('Trockenlauf im Formular eingeschaltet: "Jetzt live schalten" weist darauf hin, dass er dort auszuschalten ist', strpos($msg, '⚠️') === 0 && call($ems, 'isDryRun') === true, $msg);
+// Konfigurationspruefung
+$ems = freshEms(); prop('TIBBER_Active', true); attr('PriceSourceNote', ''); prop('BAT_Active', true); prop('TIB_Threshold_Charge', 0.07); prop('TIB_Threshold_WB', 0.20);
+$cc = $ems->GetConfigCheck();
+$txt = implode(' | ', array_column($cc['findings'], 'text'));
+check('Konfigurationspruefung nennt: Preis unbekannt, Kapazitaet 10 kWh (Standard), feste Schwellen, Netzanschluss-Standard', $cc['ok'] === false && strpos($txt, 'aktuelle Preis ist unbekannt') !== false && strpos($txt, '10 kWh') !== false && strpos($txt, 'Laden 0.07') !== false && strpos($txt, '11 kW') !== false, $txt);
+$ems = freshEms(); attr('PriceSourceNote', 'Preiskurve'); prop('TIBBER_Active', true); prop('BAT_Active', true); prop('BAT_Capacity_kWh', 40.0); prop('EMS_Max_Power_W', 24000);
+attr('PartnerCache', json_encode(['inverterhub' => [['instanceID' => IHUB_IID, 'controlAuthority' => 'none', 'controllable' => false, 'gridPowerID' => 0, 'pvPowerID' => 0, 'socID' => 0]]]));
+$cc = $ems->GetConfigCheck();
+check('saubere Konfiguration (Kapazitaet gesetzt, Preis aus der Kurve, keine festen Schwellen): keine Warnung, ok', $cc['ok'] === true && $cc['warnings'] === 0, json_encode(array_column($cc['findings'], 'text')));
+attr('WriteFailAt', time() - 60); attr('WriteFailText', 'Instanz #1, ctl_x (abgelehnt)');
+$cc = $ems->GetConfigCheck();
+check('juengster Schreibfehler taucht in der Konfigurationspruefung auf', $cc['ok'] === false && strpos(implode(' ', array_column($cc['findings'], 'text')), 'Schreibzugriff ist fehlgeschlagen') !== false);
+$form = json_decode($ems->GetConfigurationForm(), true);
+$caps = array_column($form['elements'], 'caption');
+check('Formular enthaelt das Panel Konfigurationspruefung (mit Hinweiszahl in der Ueberschrift)', (bool)array_filter($caps, fn($c) => strpos((string)$c, '🩺 Konfigurationsprüfung') === 0), json_encode($caps));
 
 echo "\n8l) Wallbox bei PV-Ueberschuss auch ueber der Preisschwelle\n";
 $ems = freshEms();
