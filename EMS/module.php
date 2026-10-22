@@ -41,7 +41,7 @@ define('EMS_LOG_VERBOSE',     2);
 // Formular-Konvention (siehe EMS/SUITE.md "Einheitliche Formular-Optik"):
 // Was-ist-Neu-Panel ist versionsscharf dismissible, Referenzmuster InverterHub.
 define('EMS_COLOR_AUTO', 0x2E8B3D); // Gruen: Wert wurde automatisch uebernommen (🔗-Zeilen im Formular)
-define('EMS_NEWS_VERSION', '0.80.0');
+define('EMS_NEWS_VERSION', '0.81.0');
 
 // NRG-Stack Partnermodul-GUIDs (fuer automatische Discovery, siehe discoverPartners())
 define('GUID_CHARGERHUB',    '{9256C34E-5CFD-4F37-8BFE-E65390EBB37C}');
@@ -336,6 +336,10 @@ class EMS extends IPSModule
             $this->RegisterPropertyInteger('WB' . $i . '_Max_Power_W',11000);
             $this->RegisterPropertyInteger('WB' . $i . '_Min_Power_W',4140); // kleinste Ladeleistung (W) fuer die PV-Freigabe: 3-phasig 6 A = 4140 (vorsichtig), 1-phasig 1380
             $this->RegisterPropertyInteger('WB' . $i . '_Priority',   $i);
+            $this->RegisterPropertyInteger('WB' . $i . '_ChargeMode', 0);  // Ladeart: 0 preisgesteuert (bisher), 1 manuell, 2 nur PV, 3 PV-Anteil, 4 Hybrid
+            $this->RegisterPropertyInteger('WB' . $i . '_ManualCurrentA', 0); // Ladeart manuell: feste Stromstaerke in A, 0 = Maximalstrom der Wallbox
+            $this->RegisterPropertyInteger('WB' . $i . '_PvSharePct', 50);  // Ladeart PV-Anteil: Anteil des PV-Ueberschusses fuers Auto in Prozent
+            $this->RegisterPropertyInteger('WB' . $i . '_PhaseSetting', 0); // Phasen: 0 nicht aendern, 1 einphasig, 3 dreiphasig (nur wenn die Wallbox umschaltbar ist)
             $this->RegisterPropertyInteger('VAR_WB' . $i . '_Status', 0);
             $this->RegisterPropertyInteger('VAR_WB' . $i . '_Power',  0);
             $this->RegisterPropertyInteger('VAR_WB' . $i . '_Active', 0);
@@ -485,6 +489,12 @@ class EMS extends IPSModule
         $this->RegisterAttributeString('WriteFailText', '');
         $this->RegisterAttributeString('DataStaleText', '');        // veraltete Messwerte (Netz/PV), leer = alles frisch
         $this->RegisterAttributeString('PriceSourceNote', '');      // Herkunft des aktuellen Preises ('' = unbekannt)
+        for ($i = 1; $i <= 2; $i++) {
+            $this->RegisterAttributeInteger('WB' . $i . 'CurrentSentA', -1);    // zuletzt gesendete Stromstaerke (Ladearten), -1 = noch nichts
+            $this->RegisterAttributeInteger('WB' . $i . 'CurrentSentAt', 0);
+            $this->RegisterAttributeInteger('WB' . $i . 'PhaseSentAt', 0);
+            $this->RegisterAttributeString('WB' . $i . 'ChargeText', '');        // Klartext der letzten Ladeart-Entscheidung fuers Panel
+        }
         $this->RegisterAttributeInteger('SolisLastMode', -1);     // zuletzt an den Solis gesendeter Zwangsmodus (0 frei, 1 Laden, 2 Entladen, -1 = unbekannt)
         $this->RegisterAttributeInteger('SolisLastPowerW', 0);
         $this->RegisterAttributeInteger('SolisLastWriteAt', 0);
@@ -756,6 +766,10 @@ class EMS extends IPSModule
                 'caption'  => '🆕 Neu in Version ' . EMS_NEWS_VERSION,
                 'expanded' => true,
                 'items'    => array(
+                    array(
+                        'type'    => 'Label',
+                        'caption' => '• NEU: Wallbox-Ladearten je Wallbox: Manuell (feste Stromstärke), Nur PV, PV-Anteil und Hybrid, mit Stromsollwert statt Ein/Aus und Phasenwahl (Panel „Wallboxen“, je Wallbox „Ladeart“). Standard bleibt Preisgesteuert, bestehende Anlagen ändern sich nicht. Netzbetreiber-Sperre und Batterie-Boost haben Vorrang, Smart Charging bleibt unangetastet.'
+                    ),
                     array(
                         'type'    => 'Label',
                         'caption' => '• NEU: Beim Solis kann EMS jetzt auf Vorgabe entladen (Zwangsentladen, nur ins Haus: Hauslast minus PV minus 150 W Reserve). Speist der Wechselrichter dabei mehr als 200 W ein, senkt EMS die Vorgabe sofort. Heute wirkt das beim Batterie-Boost; der Tagesplan fordert selbst kein Entladen an, die Automatik des Solis deckt das Haus ohnehin aus dem Batteriespeicher.'
@@ -9161,6 +9175,10 @@ class EMS extends IPSModule
             return '⚠️ Wallbox ' . $n . ': „EMS steuert“ gewählt, aber EMS darf diese Wallbox nicht schalten (fremd gesteuert). Es passiert nichts.';
         }
         $tail = ($t !== null) ? ' Tibber meldet Smart Charging für ' . $who . ' als aus' . $old . '.' : ' Smart Charging im Fahrzeug sollte aus sein, sonst regeln zwei Stellen.';
+        if ($override === null && $this->ReadPropertyInteger('WB' . $n . '_ChargeMode') > 0) {
+            $ct = trim($this->ReadAttributeString('WB' . $n . 'ChargeText'));
+            if ($ct !== '') { $tail = ' Ladeart: ' . $ct . '.' . $tail; }
+        }
         if (!$m['manual']) {
             return array('caption' => '🔗 Wallbox ' . $n . ': EMS steuert die Freigabe (automatisch erkannt, Wallbox ist schaltbar).' . $tail, 'color' => EMS_COLOR_AUTO);
         }
@@ -9217,9 +9235,23 @@ class EMS extends IPSModule
             if ($modes[$n] === 'smart') { $this->releaseOwnWallboxLock($n); }
         }
         if (!empty($d['wb_hands_off'])) { return; }
+        // Ladearten (manuell, nur PV, PV-Anteil, Hybrid): Netzbetreiber-Sperre und Batterie-Boost behalten Vorrang, dann gilt die
+        // Ladeart statt der Preisfreigabe. Die geplante Freigabe geht vor dem Netzanschluss-Budget in die Entscheidung ein.
+        $plans = array();
+        if (!in_array((string)($d['source'] ?? ''), array('netzbetreiber', 'nutzer'), true)) {
+            for ($n = 1; $n <= $count; $n++) {
+                if ($modes[$n] !== 'ems' || $this->ReadPropertyInteger('WB' . $n . '_ChargeMode') <= 0) { continue; }
+                $plan = $this->wallboxChargePlanFor($n, $s);
+                if ($plan === null) { continue; }
+                $plans[$n] = $plan;
+                $d['wb' . $n . '_enable'] = $plan['enable'];
+            }
+        }
         $this->enforceGridImportBudget($d, $s);
         for ($n = 1; $n <= $count; $n++) {
-            if ($modes[$n] === 'ems') { $this->controlWallbox($n, $d['wb' . $n . '_enable']); }
+            if ($modes[$n] !== 'ems') { continue; }
+            if (isset($plans[$n]) && !empty($d['wb' . $n . '_enable'])) { $this->applyWallboxChargePlan($n, $plans[$n]); }
+            else { $this->controlWallbox($n, $d['wb' . $n . '_enable']); }
         }
     }
 
@@ -9320,6 +9352,150 @@ class EMS extends IPSModule
             $this->WriteAttributeBoolean('WB' . (int)$num . 'EmsLocked', true);
             $this->WriteAttributeInteger('LastWB' . $num . 'Switch', time());
             $this->emsLog(EMS_LOG_BASIC, 'WB' . $num . ' (' . $this->chargerSourceLabel($entry) . ' #' . $instance . ') gesperrt');
+        }
+    }
+
+    // ----------------------------------------------------------------
+    //  Ladearten (Dietmar 22.10.2026, Wallbox-Modi Stufe 1): Stromsollwert statt Ein/Aus
+    //   1 manuell    feste Stromstaerke (0 = Maximalstrom), immer freigegeben
+    //   2 nur PV     Strom folgt dem PV-Ueberschuss, startet ab Mindeststrom, stoppt darunter (mit Wartezeit)
+    //   3 PV-Anteil  wie nur PV, aber nur ein einstellbarer Anteil des Ueberschusses
+    //   4 Hybrid     Mindeststrom immer, der PV-Ueberschuss kommt obendrauf
+    //  PV-Ueberschuss = PV minus Haus minus die andere Wallbox, unabhaengig von der Batterie (die bekommt, was uebrig bleibt).
+    // ----------------------------------------------------------------
+
+    /**
+     * Reine Rechnung der Ladeart. Eingaben: mode (1 bis 4), surplusW, shareP, manualA, minA, maxA, stepA, phases, volt, on (laedt/ist
+     * freigegeben), sinceSwitchS, cooldownS, minChargeS. Ergebnis: enable, currentA, text. Die Wartezeiten gelten nur fuer das Umschalten
+     * zwischen Ein und Aus; die Stromstaerke darf sich in jedem Zyklus aendern (die Rate begrenzt der Aufrufer).
+     */
+    private function wallboxChargePlan(array $in): array
+    {
+        $mode = (int)$in['mode'];
+        $minA = max(1.0, (float)$in['minA']);
+        $maxA = max($minA, (float)$in['maxA']);
+        $step = ((float)$in['stepA'] > 0) ? (float)$in['stepA'] : 1.0;
+        $ph   = ((int)$in['phases'] === 1) ? 1 : 3;
+        $v    = ((float)$in['volt'] > 0) ? (float)$in['volt'] : 230.0;
+        $on   = !empty($in['on']);
+        $floor = function (float $a) use ($step) { return floor($a / $step + 1e-9) * $step; };
+        $clamp = function (float $a) use ($minA, $maxA, $floor) { return max($minA, min($maxA, $floor($a))); };
+        if ($mode === 1) {
+            $a = ((int)$in['manualA'] > 0) ? $clamp((float)$in['manualA']) : $maxA;
+            return array('enable' => true, 'currentA' => $a, 'text' => sprintf('Manuell: fest %s A', $this->fmtA($a)));
+        }
+        $surplus = max(0.0, (float)$in['surplusW']);
+        if ($mode === 3) { $surplus *= max(0, min(100, (int)$in['shareP'])) / 100.0; }
+        $raw = $surplus / ($v * $ph);
+        if ($mode === 4) {
+            $a = $clamp($raw);
+            return array('enable' => true, 'currentA' => $a, 'text' => sprintf('Hybrid: %s A (Mindeststrom %s A plus PV-Überschuss %.0f W)', $this->fmtA($a), $this->fmtA($minA), (float)$in['surplusW']));
+        }
+        $label = ($mode === 3) ? sprintf('PV-Anteil %d %%', (int)$in['shareP']) : 'Nur PV';
+        $enough = ($raw + 1e-9 >= $minA);
+        $since = (int)$in['sinceSwitchS'];
+        if ($enough) {
+            if (!$on && $since < (int)$in['cooldownS']) {
+                return array('enable' => false, 'currentA' => 0.0, 'text' => sprintf('%s: Überschuss %.0f W reicht, Start in %d s (Wartezeit)', $label, (float)$in['surplusW'], max(0, (int)$in['cooldownS'] - $since)));
+            }
+            $a = $clamp($raw);
+            return array('enable' => true, 'currentA' => $a, 'text' => sprintf('%s: %s A bei %.0f W Überschuss', $label, $this->fmtA($a), (float)$in['surplusW']));
+        }
+        if ($on) {
+            $hold = max((int)$in['cooldownS'], (int)$in['minChargeS']);
+            if ($since < $hold) {
+                return array('enable' => true, 'currentA' => $minA, 'text' => sprintf('%s: Überschuss %.0f W unter dem Mindeststrom, Stopp in %d s (Wartezeit), bis dahin %s A', $label, (float)$in['surplusW'], $hold - $since, $this->fmtA($minA)));
+            }
+        }
+        return array('enable' => false, 'currentA' => 0.0, 'text' => sprintf('%s: wartet auf Überschuss (%.0f W, nötig ab %.0f W)', $label, (float)$in['surplusW'], $minA * $v * $ph));
+    }
+
+    private function fmtA(float $a): string
+    {
+        return (abs($a - round($a)) < 0.05) ? (string)(int)round($a) : number_format($a, 1, ',', '');
+    }
+
+    /** Der Lader-Eintrag, ueber den EMS Wallbox $num schreibt (wie controlWallbox()), sonst null. */
+    private function wallboxWriteEntry(int $num): ?array
+    {
+        $configured = $this->ReadPropertyInteger('WB' . $num . '_Instance');
+        foreach ($this->getWritableChargers() as $c) {
+            if ($configured > 0 && (int)($c['instanceID'] ?? 0) === $configured) { return $c; }
+        }
+        return ($configured <= 0) ? $this->getControlEntry($num) : null;
+    }
+
+    /** Ladeart-Plan fuer Wallbox $n aus den Messwerten; null, wenn keine schreibbare Wallbox oder kein Strom-Sollwert moeglich ist. */
+    private function wallboxChargePlanFor(int $n, array $s): ?array
+    {
+        $entry = $this->wallboxWriteEntry($n);
+        if ($entry === null || (int)($entry['instanceID'] ?? 0) <= 0 || (int)($entry['currentLimitID'] ?? 0) <= 0) {
+            $this->WriteAttributeString('WB' . $n . 'ChargeText', 'Ladeart nicht möglich: die Wallbox meldet keinen schreibbaren Stromsollwert, es gilt die Preissteuerung');
+            return null;
+        }
+        $phSet = $this->ReadPropertyInteger('WB' . $n . '_PhaseSetting');
+        $phases = ($phSet === 1 || $phSet === 3) ? $phSet : ((int)($entry['phases'] ?? 0) === 1 ? 1 : 3);
+        $minA = (float)($entry['minCurrent'] ?? 6);
+        $maxA = (float)($entry['maxCurrent'] ?? 16);
+        if (isset($entry['stationMaxCurrentA']) && (int)$entry['stationMaxCurrentA'] >= 6) { $maxA = min($maxA, (float)$entry['stationMaxCurrentA']); }
+        $cfgW = $this->ReadPropertyInteger('WB' . $n . '_Max_Power_W');
+        if ($cfgW > 0) { $maxA = min($maxA, max($minA, floor($cfgW / (230.0 * $phases)))); }
+        $other = ($n === 1) ? (float)$s['wb2_pow_kw'] : (float)$s['wb1_pow_kw'];
+        $surplus = (float)$s['pv_total_w'] - (float)$s['house_pow_w'] - $other * 1000.0;
+        $idEn = (int)($entry['chargeEnableID'] ?? 0);
+        $on = ($idEn > 0 && IPS_VariableExists($idEn)) ? (bool)GetValue($idEn) : $this->ReadAttributeBoolean('WB' . $n . 'LastSentEnable');
+        $plan = $this->wallboxChargePlan(array(
+            'mode' => $this->ReadPropertyInteger('WB' . $n . '_ChargeMode'), 'surplusW' => $surplus,
+            'shareP' => $this->ReadPropertyInteger('WB' . $n . '_PvSharePct'), 'manualA' => $this->ReadPropertyInteger('WB' . $n . '_ManualCurrentA'),
+            'minA' => $minA, 'maxA' => $maxA, 'stepA' => (float)($entry['currentStepA'] ?? 1.0), 'phases' => $phases, 'volt' => 230.0, 'on' => $on,
+            'sinceSwitchS' => time() - $this->ReadAttributeInteger('LastWB' . $n . 'Switch'),
+            'cooldownS' => $this->ReadPropertyInteger('WB_Cooldown_Sec'), 'minChargeS' => $this->ReadPropertyInteger('WB_Min_Charge_Min') * 60));
+        $plan['entry'] = $entry;
+        $plan['on'] = $on;
+        $this->WriteAttributeString('WB' . $n . 'ChargeText', $plan['text']);
+        return $plan;
+    }
+
+    /**
+     * Ladeart-Plan an die Wallbox schreiben: Phasenwahl (nur Wechsel, mindestens Pause laut Vertrag), Stromstaerke (bei Aenderung, hoechstens alle
+     * 30 s), Freigabe. Start immer erst Strom, dann Freigabe (ChargerHub-Vertrag 1.8); Pausieren nur ueber die Freigabe, nie ueber 0 A.
+     */
+    private function applyWallboxChargePlan(int $n, array $plan): void
+    {
+        $entry = $plan['entry'];
+        $iid = (int)$entry['instanceID'];
+        $now = time();
+        $phSet = $this->ReadPropertyInteger('WB' . $n . '_PhaseSetting');
+        $phId = (int)($entry['phaseModeID'] ?? 0);
+        if (($phSet === 1 || $phSet === 3) && $phId > 0 && IPS_VariableExists($phId)) {
+            $vals = (array)($entry['phaseModeValues'] ?? array());
+            $want = $vals[$phSet === 1 ? 'one' : 'three'] ?? null;
+            $pause = max(120, (int)($entry['phaseSwitchPauseSec'] ?? 0));
+            if ($want !== null && (int)GetValue($phId) !== (int)$want && ($now - $this->ReadAttributeInteger('WB' . $n . 'PhaseSentAt')) >= $pause) {
+                $this->ipsWrite($iid, 'ctl_phase_mode', (int)$want);
+                $this->WriteAttributeInteger('WB' . $n . 'PhaseSentAt', $now);
+                $this->emsLog(EMS_LOG_BASIC, sprintf('WB%d: Phasenwahl auf %s gesetzt', $n, $phSet === 1 ? 'einphasig' : 'dreiphasig'));
+            }
+        }
+        $a = (float)$plan['currentA'];
+        $sentA = $this->ReadAttributeInteger('WB' . $n . 'CurrentSentA');
+        $aKey = (int)round($a * 10);
+        $on = !empty($plan['on']);
+        if ($plan['enable']) {
+            $currentChanged = ($aKey !== $sentA) && (($now - $this->ReadAttributeInteger('WB' . $n . 'CurrentSentAt')) >= 30 || $sentA < 0 || !$on);
+            if ($currentChanged) {
+                $this->ipsWrite($iid, 'ctl_curr_limit', (abs($a - round($a)) < 0.05) ? (int)round($a) : $a);
+                $this->WriteAttributeInteger('WB' . $n . 'CurrentSentA', $aKey);
+                $this->WriteAttributeInteger('WB' . $n . 'CurrentSentAt', $now);
+            }
+            if (!$on) {
+                $this->ipsWrite($iid, 'ctl_enable', true);
+                $this->WriteAttributeBoolean('WB' . $n . 'LastSentEnable', true);
+                $this->WriteAttributeBoolean('WB' . $n . 'EmsLocked', false);
+                $this->WriteAttributeInteger('LastWB' . $n . 'Switch', $now);
+                $this->emsLog(EMS_LOG_BASIC, sprintf('WB%d (%s #%d) freigegeben (%s A) | %s', $n, $this->chargerSourceLabel($entry), $iid, $this->fmtA($a), $plan['text']));
+            }
+            return;
         }
     }
 

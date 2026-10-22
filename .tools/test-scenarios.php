@@ -1374,6 +1374,126 @@ $form = json_decode($ems->GetConfigurationForm(), true);
 $caps = array_column($form['elements'], 'caption');
 check('Formular enthaelt das Panel Konfigurationspruefung (mit Hinweiszahl in der Ueberschrift)', (bool)array_filter($caps, fn($c) => strpos((string)$c, '🩺 Konfigurationsprüfung') === 0), json_encode($caps));
 
+echo "\n8k9) Wallbox-Ladearten (Dietmar 22.10.2026): manuell, nur PV, PV-Anteil, Hybrid\n";
+$base = ['minA' => 6, 'maxA' => 16, 'stepA' => 1.0, 'phases' => 3, 'volt' => 230, 'on' => false, 'sinceSwitchS' => 9999, 'cooldownS' => 120, 'minChargeS' => 300, 'shareP' => 50, 'manualA' => 0, 'surplusW' => 0.0];
+$plan = fn(array $o) => call($ems, 'wallboxChargePlan', [array_merge($base, $o)]);
+$r = $plan(['mode' => 1]);
+check('Manuell ohne Wert: Maximalstrom, freigegeben', $r['enable'] === true && $r['currentA'] == 16.0, json_encode($r));
+$r = $plan(['mode' => 1, 'manualA' => 10]);
+check('Manuell 10 A', $r['enable'] === true && $r['currentA'] == 10.0);
+$r = $plan(['mode' => 1, 'manualA' => 40]);
+check('Manuell 40 A wird auf den Maximalstrom begrenzt', $r['currentA'] == 16.0);
+$r = $plan(['mode' => 1, 'manualA' => 3]);
+check('Manuell 3 A wird auf den Mindeststrom angehoben', $r['currentA'] == 6.0);
+$r = $plan(['mode' => 2, 'surplusW' => 5520.0]);
+check('Nur PV, 3-phasig: 5520 W Ueberschuss = 8 A (5520 / 690)', $r['enable'] === true && $r['currentA'] == 8.0, json_encode($r));
+$r = $plan(['mode' => 2, 'surplusW' => 5520.0, 'phases' => 1]);
+check('Nur PV, 1-phasig: 5520 W = 16 A (auf den Maximalstrom begrenzt)', $r['enable'] === true && $r['currentA'] == 16.0, json_encode($r));
+$r = $plan(['mode' => 2, 'surplusW' => 20000.0]);
+check('Nur PV: sehr viel Ueberschuss -> Maximalstrom', $r['currentA'] == 16.0);
+$r = $plan(['mode' => 2, 'surplusW' => 4000.0]);
+check('Nur PV: 4000 W = 5,8 A unter dem Mindeststrom 6 A: bleibt aus', $r['enable'] === false, json_encode($r));
+$r = $plan(['mode' => 2, 'surplusW' => 4140.0]);
+check('Nur PV: genau 6 A (4140 W) startet', $r['enable'] === true && $r['currentA'] == 6.0, json_encode($r));
+$r = $plan(['mode' => 2, 'surplusW' => 5520.0, 'sinceSwitchS' => 30]);
+check('Nur PV: Start erst nach dem Cooldown (30 s von 120 s), Text nennt die Wartezeit', $r['enable'] === false && strpos($r['text'], 'Start in 90 s') !== false, json_encode($r));
+$r = $plan(['mode' => 2, 'surplusW' => 1000.0, 'on' => true, 'sinceSwitchS' => 100]);
+check('Nur PV: Ueberschuss weg, laeuft seit 100 s (Wartezeit 300 s = Mindestladezeit): weiter mit Mindeststrom statt Stopp', $r['enable'] === true && $r['currentA'] == 6.0 && strpos($r['text'], 'Stopp in 200 s') !== false, json_encode($r));
+$r = $plan(['mode' => 2, 'surplusW' => 1000.0, 'on' => true, 'sinceSwitchS' => 400]);
+check('Nur PV: Ueberschuss weg, Wartezeit um: Stopp', $r['enable'] === false, json_encode($r));
+$r = $plan(['mode' => 3, 'surplusW' => 11040.0, 'shareP' => 50]);
+check('PV-Anteil 50 %: von 11040 W bleiben 5520 W = 8 A', $r['enable'] === true && $r['currentA'] == 8.0, json_encode($r));
+$r = $plan(['mode' => 3, 'surplusW' => 11040.0, 'shareP' => 0]);
+check('PV-Anteil 0 %: nichts fuers Auto', $r['enable'] === false);
+$r = $plan(['mode' => 4, 'surplusW' => 0.0]);
+check('Hybrid ohne Ueberschuss: Mindeststrom 6 A bleibt freigegeben', $r['enable'] === true && $r['currentA'] == 6.0, json_encode($r));
+$r = $plan(['mode' => 4, 'surplusW' => 5520.0]);
+check('Hybrid mit 5520 W Ueberschuss: 8 A', $r['enable'] === true && $r['currentA'] == 8.0, json_encode($r));
+$r = $plan(['mode' => 2, 'surplusW' => 3700.0, 'minA' => 6, 'stepA' => 0.1, 'phases' => 1]);
+check('Schrittweite 0,1 A (Alfen): 3700 W einphasig = 16 A (max), 1500 W = 6,5 A', $plan(['mode' => 2, 'surplusW' => 1500.0, 'stepA' => 0.1, 'phases' => 1])['currentA'] == 6.5, json_encode($plan(['mode' => 2, 'surplusW' => 1500.0, 'stepA' => 0.1, 'phases' => 1])));
+$r = $plan(['mode' => 2, 'surplusW' => -500.0]);
+check('Negativer Ueberschuss rechnet als 0', $r['enable'] === false);
+
+echo "   Ansteuerung\n";
+$ems = freshEms();
+prop('WB_Active', true); prop('WB_Count', 2); prop('WB1_Max_Power_W', 11000); prop('WB_Cooldown_Sec', 120); prop('WB_Min_Charge_Min', 5);
+$cenA = vari('CHUB WB1 Ladefreigabe', 600, 'ctl_enable', false, 0);
+$curA = vari('CHUB WB1 Stromgrenze', 600, 'ctl_curr_limit', 16, 1);
+$phA  = vari('CHUB WB1 Phasenmodus', 600, 'ctl_phase_mode', 2, 1);
+$whA = ['instanceID' => 600, 'source' => 'chargerhub', 'chargeEnableID' => $cenA, 'currentLimitID' => $curA, 'minCurrent' => 6, 'maxCurrent' => 16, 'currentStepA' => 1.0,
+        'phases' => 3, 'phaseModeID' => $phA, 'phaseModeValues' => ['one' => 1, 'three' => 2, 'auto' => 0], 'phaseSwitchPauseSec' => 120,
+        'managedBy' => 'none', 'powerID' => 0, 'plugStateID' => 0];
+attr('PartnerCache', json_encode(['chargerhub' => [$whA]]));
+$wbActs = fn() => array_values(array_filter($GLOBALS['ACTIONS'], fn($a) => in_array($a[1], ['ctl_enable', 'ctl_curr_limit', 'ctl_phase_mode'], true)));
+$sPv = fn(array $o = []) => state(array_merge(['wb_active' => true, 'wb_count' => 1, 'pv_total_w' => 7000.0, 'house_pow_w' => 1480.0], $o)); // Ueberschuss 5520 W
+$reset = function () use ($cenA) { $GLOBALS['VAL'][$cenA] = false; attr('LastWB1Switch', 0); attr('WB1EmsLocked', false); attr('WB1LastSentEnable', false); attr('WB1CurrentSentA', -1); attr('WB1CurrentSentAt', 0); attr('WB1PhaseSentAt', 0); $GLOBALS['ACTIONS'] = []; };
+$d0 = fn() => ['wb1_enable' => false, 'wb2_enable' => false, 'source' => 'tagesplan', 'reason' => ''];
+
+$reset(); prop('WB1_ChargeMode', 0); $d = $d0();
+call($ems, 'applyWallboxControl', [&$d, $sPv()]);
+check('Standard Preisgesteuert: Verhalten wie bisher, wb1_enable=false sperrt (hier schon gesperrt: nichts zu schreiben), keine Ladeart-Schreibzugriffe', $wbActs() === [] && $ems->ReadAttributeString('WB1ChargeText') === '', json_encode($GLOBALS['ACTIONS']));
+$reset(); prop('WB1_ChargeMode', 2); $d = $d0();
+call($ems, 'applyWallboxControl', [&$d, $sPv()]);
+check('Nur PV mit 5520 W Ueberschuss: erst 8 A, dann Freigabe, die Preisentscheidung (gesperrt) wird uebergangen', $wbActs() === [[600, 'ctl_curr_limit', 8], [600, 'ctl_enable', true]] && $d['wb1_enable'] === true, json_encode($GLOBALS['ACTIONS']));
+check('Panel-Text der Ladeart steht in der Statuszeile', strpos(call($ems, 'wallboxModeStatusLine', [1])['caption'], 'Ladeart: Nur PV: 8 A bei 5520 W') !== false, json_encode(call($ems, 'wallboxModeStatusLine', [1])));
+// laeuft, Ueberschuss steigt: nur Strom nachfuehren, hoechstens alle 30 s
+$GLOBALS['VAL'][$cenA] = true; attr('WB1LastSentEnable', true); $GLOBALS['ACTIONS'] = []; $d = $d0();
+call($ems, 'applyWallboxControl', [&$d, $sPv(['pv_total_w' => 8000.0])]);
+check('Strom innerhalb von 30 s nach dem letzten Schreiben nicht neu geschrieben', $wbActs() === [], json_encode($GLOBALS['ACTIONS']));
+attr('WB1CurrentSentAt', time() - 31); $d = $d0();
+call($ems, 'applyWallboxControl', [&$d, $sPv(['pv_total_w' => 8000.0])]);
+check('nach 31 s: neuer Strom 9 A (6520 W), keine erneute Freigabe', $wbActs() === [[600, 'ctl_curr_limit', 9]], json_encode($GLOBALS['ACTIONS']));
+$GLOBALS['ACTIONS'] = []; $d = $d0();
+call($ems, 'applyWallboxControl', [&$d, $sPv(['pv_total_w' => 8000.0])]);
+check('gleicher Strom: nichts geschrieben', $wbActs() === [], json_encode($GLOBALS['ACTIONS']));
+// Andere Wallbox verbraucht: Ueberschuss sinkt
+attr('WB1CurrentSentAt', time() - 31); $GLOBALS['ACTIONS'] = []; $d = $d0();
+call($ems, 'applyWallboxControl', [&$d, $sPv(['pv_total_w' => 8000.0, 'wb2_pow_kw' => 2.76])]);
+check('die zweite Wallbox zaehlt vom Ueberschuss ab (6520 - 2760 = 3760 W = unter 6 A): Mindeststrom bis Stopp-Wartezeit', $wbActs() === [[600, 'ctl_curr_limit', 6]], json_encode($GLOBALS['ACTIONS']));
+// Ueberschuss weg, Wartezeit um: Sperre ueber die alte Schreibstelle
+attr('LastWB1Switch', time() - 1000); $GLOBALS['ACTIONS'] = []; $d = $d0();
+call($ems, 'applyWallboxControl', [&$d, $sPv(['pv_total_w' => 1500.0])]);
+check('Ueberschuss weg und Wartezeit um: ctl_enable=false (kein 0-A-Strom), Sperre gemerkt', $wbActs() === [[600, 'ctl_enable', false]] && $ems->ReadAttributeBoolean('WB1EmsLocked') === true, json_encode($GLOBALS['ACTIONS']));
+// Vorrang: Netzbetreiber und Boost
+$reset(); $d = array_merge($d0(), ['source' => 'netzbetreiber']); $GLOBALS['VAL'][$cenA] = true; attr('WB1LastSentEnable', true);
+call($ems, 'applyWallboxControl', [&$d, $sPv()]);
+check('Netzbetreiber-Sperre (§14a) geht vor der Ladeart: Wallbox wird gesperrt', $wbActs() === [[600, 'ctl_enable', false]], json_encode($GLOBALS['ACTIONS']));
+$reset(); $d = array_merge($d0(), ['source' => 'nutzer', 'wb1_enable' => true]);
+call($ems, 'applyWallboxControl', [&$d, $sPv()]);
+check('Batterie-Boost geht vor der Ladeart: Freigabe wie bisher mit Maximalstrom', $wbActs() === [[600, 'ctl_curr_limit', 16], [600, 'ctl_enable', true]], json_encode($GLOBALS['ACTIONS']));
+// Smart Charging / beobachten: Ladeart wird nicht angefasst
+foreach ([1, 3] as $wm) {
+    $reset(); prop('WB1_Mode', $wm); $d = $d0();
+    call($ems, 'applyWallboxControl', [&$d, $sPv()]);
+    check('Wallbox-Modus ' . $wm . ' (Smart Charging / nur beobachten): Ladeart schreibt nichts', array_filter($wbActs(), fn($a) => $a[1] === 'ctl_curr_limit') === [], json_encode($GLOBALS['ACTIONS']));
+}
+prop('WB1_Mode', 0);
+// Wallbox ohne Stromsollwert: Rueckfall auf Preissteuerung mit Hinweis
+$whNo = $whA; unset($whNo['currentLimitID']);
+attr('PartnerCache', json_encode(['chargerhub' => [$whNo]]));
+$reset(); $d = $d0();
+call($ems, 'applyWallboxControl', [&$d, $sPv()]);
+check('Wallbox ohne Stromsollwert (currentLimitID): kein Ladeart-Schreiben, Hinweis im Text', $wbActs() === [] && strpos($ems->ReadAttributeString('WB1ChargeText'), 'keinen schreibbaren Stromsollwert') !== false, json_encode($GLOBALS['ACTIONS']) . $ems->ReadAttributeString('WB1ChargeText'));
+attr('PartnerCache', json_encode(['chargerhub' => [$whA]]));
+// Phasen
+$reset(); prop('WB1_PhaseSetting', 1); $d = $d0();
+call($ems, 'applyWallboxControl', [&$d, $sPv()]);
+check('Phasenwahl einphasig: ctl_phase_mode=1 (Wert aus phaseModeValues), vor Strom und Freigabe', ($wbActs()[0] ?? null) === [600, 'ctl_phase_mode', 1], json_encode($GLOBALS['ACTIONS']));
+check('einphasig gerechnet: 5520 W / 230 V = 16 A (max)', in_array([600, 'ctl_curr_limit', 16], $wbActs(), true), json_encode($GLOBALS['ACTIONS']));
+$GLOBALS['VAL'][$phA] = 1; $GLOBALS['ACTIONS'] = []; $d = $d0(); attr('WB1CurrentSentAt', time() - 31);
+call($ems, 'applyWallboxControl', [&$d, $sPv()]);
+check('Phasenmodus steht schon richtig: nicht erneut geschrieben', array_filter($wbActs(), fn($a) => $a[1] === 'ctl_phase_mode') === [], json_encode($GLOBALS['ACTIONS']));
+$GLOBALS['VAL'][$phA] = 2; attr('LastWB1Switch', 0); attr('WB1PhaseSentAt', time() - 30); $GLOBALS['ACTIONS'] = []; $d = $d0();
+call($ems, 'applyWallboxControl', [&$d, $sPv()]);
+check('Phasenmodus weicht ab, aber unter 120 s seit dem letzten Wechsel: nicht erneut geschrieben', array_filter($wbActs(), fn($a) => $a[1] === 'ctl_phase_mode') === [], json_encode($GLOBALS['ACTIONS']));
+attr('WB1PhaseSentAt', time() - 121); attr('LastWB1Switch', 0); $GLOBALS['ACTIONS'] = []; $d = $d0();
+call($ems, 'applyWallboxControl', [&$d, $sPv()]);
+check('nach 121 s: Phasenmodus wird erneut geschrieben', array_filter($wbActs(), fn($a) => $a[1] === 'ctl_phase_mode') !== [], json_encode($GLOBALS['ACTIONS']));
+prop('WB1_PhaseSetting', 0); prop('WB1_ChargeMode', 0);
+// Formular
+$f = json_encode(json_decode($ems->GetConfigurationForm(), true), JSON_UNESCAPED_UNICODE);
+check('Formular enthaelt Ladeart, Stromstaerke, PV-Anteil und Phasen fuer beide Wallboxen', strpos($f, '"name":"WB1_ChargeMode"') !== false && strpos($f, '"name":"WB2_ChargeMode"') !== false && strpos($f, '"name":"WB1_PhaseSetting"') !== false && strpos($f, '"name":"WB2_PvSharePct"') !== false);
+
 echo "\n8l) Wallbox bei PV-Ueberschuss auch ueber der Preisschwelle\n";
 $ems = freshEms();
 $sW = state(['tib_active' => true, 'pv_total_w' => 3000.0, 'house_pow_w' => 800.0, 'wb1_pow_kw' => 0.0]);

@@ -1127,6 +1127,72 @@
                     "maximum": 8
                 },
                 {
+                    "type": "Select",
+                    "name": "WB1_ChargeMode",
+                    "caption": "WB1 Ladeart",
+                    "options": [
+                        {
+                            "caption": "Preisgesteuert (bisher: frei oder gesperrt nach Preis und PV)",
+                            "value": 0
+                        },
+                        {
+                            "caption": "Manuell (feste Stromstärke)",
+                            "value": 1
+                        },
+                        {
+                            "caption": "Nur PV (folgt dem PV-Überschuss)",
+                            "value": 2
+                        },
+                        {
+                            "caption": "PV-Anteil (nur ein Teil des Überschusses)",
+                            "value": 3
+                        },
+                        {
+                            "caption": "Hybrid (Mindeststrom immer, Überschuss obendrauf)",
+                            "value": 4
+                        }
+                    ]
+                },
+                {
+                    "type": "NumberSpinner",
+                    "name": "WB1_ManualCurrentA",
+                    "caption": "WB1 Ladeart Manuell: Stromstärke (A, 0 = Maximalstrom der Wallbox)",
+                    "minimum": 0,
+                    "maximum": 80,
+                    "suffix": " A"
+                },
+                {
+                    "type": "NumberSpinner",
+                    "name": "WB1_PvSharePct",
+                    "caption": "WB1 Ladeart PV-Anteil: Anteil des PV-Überschusses fürs Auto",
+                    "minimum": 0,
+                    "maximum": 100,
+                    "suffix": " %"
+                },
+                {
+                    "type": "Select",
+                    "name": "WB1_PhaseSetting",
+                    "caption": "WB1 Phasen (nur wenn die Wallbox umschaltbar ist)",
+                    "options": [
+                        {
+                            "caption": "Nicht ändern",
+                            "value": 0
+                        },
+                        {
+                            "caption": "Einphasig",
+                            "value": 1
+                        },
+                        {
+                            "caption": "Dreiphasig",
+                            "value": 3
+                        }
+                    ]
+                },
+                {
+                    "type": "Label",
+                    "caption": "Ladearten gelten nur, wenn EMS die Wallbox steuert (nicht bei Smart Charging oder Nur beobachten) und die Wallbox einen Stromsollwert annimmt. Netzbetreiber-Sperre (§14a) und Batterie-Boost haben Vorrang. PV-Überschuss = PV minus Haus minus die andere Wallbox, die Batterie bekommt, was übrig bleibt. Gestartet wird ab dem Mindeststrom der Wallbox, Ein/Aus wechselt frühestens nach dem Cooldown, gestoppt wird erst nach Cooldown und Mindestladezeit."
+                },
+                {
                     "type": "SelectVariable",
                     "name": "VAR_WB1_Status",
                     "caption": "WB1 Status"
@@ -1207,6 +1273,88 @@
                     "caption": "WB2 Priorität (1 = höchste)",
                     "minimum": 1,
                     "maximum": 8,
+                    "visible": {
+                        "type": "PropertyCondition",
+                        "property": "WB_Count",
+                        "value": 2
+                    }
+                },
+                {
+                    "type": "Select",
+                    "name": "WB2_ChargeMode",
+                    "caption": "WB2 Ladeart",
+                    "options": [
+                        {
+                            "caption": "Preisgesteuert (bisher: frei oder gesperrt nach Preis und PV)",
+                            "value": 0
+                        },
+                        {
+                            "caption": "Manuell (feste Stromstärke)",
+                            "value": 1
+                        },
+                        {
+                            "caption": "Nur PV (folgt dem PV-Überschuss)",
+                            "value": 2
+                        },
+                        {
+                            "caption": "PV-Anteil (nur ein Teil des Überschusses)",
+                            "value": 3
+                        },
+                        {
+                            "caption": "Hybrid (Mindeststrom immer, Überschuss obendrauf)",
+                            "value": 4
+                        }
+                    ],
+                    "visible": {
+                        "type": "PropertyCondition",
+                        "property": "WB_Count",
+                        "value": 2
+                    }
+                },
+                {
+                    "type": "NumberSpinner",
+                    "name": "WB2_ManualCurrentA",
+                    "caption": "WB2 Ladeart Manuell: Stromstärke (A, 0 = Maximalstrom der Wallbox)",
+                    "minimum": 0,
+                    "maximum": 80,
+                    "suffix": " A",
+                    "visible": {
+                        "type": "PropertyCondition",
+                        "property": "WB_Count",
+                        "value": 2
+                    }
+                },
+                {
+                    "type": "NumberSpinner",
+                    "name": "WB2_PvSharePct",
+                    "caption": "WB2 Ladeart PV-Anteil: Anteil des PV-Überschusses fürs Auto",
+                    "minimum": 0,
+                    "maximum": 100,
+                    "suffix": " %",
+                    "visible": {
+                        "type": "PropertyCondition",
+                        "property": "WB_Count",
+                        "value": 2
+                    }
+                },
+                {
+                    "type": "Select",
+                    "name": "WB2_PhaseSetting",
+                    "caption": "WB2 Phasen (nur wenn die Wallbox umschaltbar ist)",
+                    "options": [
+                        {
+                            "caption": "Nicht ändern",
+                            "value": 0
+                        },
+                        {
+                            "caption": "Einphasig",
+                            "value": 1
+                        },
+                        {
+                            "caption": "Dreiphasig",
+                            "value": 3
+                        }
+                    ],
                     "visible": {
                         "type": "PropertyCondition",
                         "property": "WB_Count",
