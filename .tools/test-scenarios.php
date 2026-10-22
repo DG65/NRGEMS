@@ -1241,6 +1241,67 @@ call($ems, 'KeepAlive');
 check('Regelzyklus laeuft nicht mehr (Stunden): KeepAlive gibt die Entladesperre frei (kein Totmann am Geraet)', in_array('svc_discharge_inhibit=false', $acts(), true), json_encode($acts()));
 attr('SolisRestoreTarget', -1);
 
+echo "\n8k8) Solis: Entladen auf Vorgabe (Zwangsentladen ins Haus, Einspeisewache)\n";
+$vDisMax = vari('Max. Entladeleistung', IHUB_IID, 'bat_discharge_max_w', 16900.0, 2);
+foreach (['SolisHoldActive' => false, 'SolisHoldBlockedUntil' => 0, 'SolisRestoreTarget' => -1, 'SolisLastMode' => 0, 'SolisLastPowerW' => 0, 'SolisLastWriteAt' => 0, 'SolisReleaseTries' => 0] as $k => $v) { attr($k, $v); }
+$GLOBALS['VAL'][$vDev] = 0;
+$ems->SetValue('EMS_PVPower', 1000.0); $ems->SetValue('EMS_HousePower', 4000.0); $ems->SetValue('EMS_WB1Power', 0.0); $ems->SetValue('EMS_WB2Power', 0.0); $ems->SetValue('EMS_GridPower', -2850.0); $ems->SetValue('EMS_BatSOC', 60.0);
+$acts = function () { return array_map(fn($a) => $a[1] . '=' . json_encode($a[2]), $GLOBALS['ACTIONS']); };
+check('Sollleistung: Hauslast 4000 - PV 1000 - Reserve 150 = 2850 W', call($ems, 'solisDischargeW', [IHUB_IID, GW_MODE_DISCHARGE, 0]) === 2850);
+check('Wallbox zaehlt zum Bedarf (+3000 W)', (function () use ($ems) { $ems->SetValue('EMS_WB1Power', 3000.0); $r = call($ems, 'solisDischargeW', [IHUB_IID, GW_MODE_DISCHARGE, 0]); $ems->SetValue('EMS_WB1Power', 0.0); return $r === 5850; })());
+check('Obergrenze aus dem Plan (Modus 3, 2000 W) begrenzt', call($ems, 'solisDischargeW', [IHUB_IID, GW_MODE_DISCHARGE, 2000]) === 2000);
+check('Modus 12 wird wie Entladen behandelt', call($ems, 'solisDischargeW', [IHUB_IID, GW_MODE_BAT_DISCH, 0]) === 2850);
+check('andere Modi (Export 5, Automatik 1, Laden 11): keine Entladung', call($ems, 'solisDischargeW', [IHUB_IID, GW_MODE_AC_EXPORT, 3000]) === 0 && call($ems, 'solisDischargeW', [IHUB_IID, GW_MODE_AUTO, 0]) === 0 && call($ems, 'solisDischargeW', [IHUB_IID, GW_MODE_BAT_CHARGE, 3000]) === 0);
+$ems->SetValue('EMS_HousePower', 20000.0);
+check('Entladegrenze des Wechselrichters (16,9 kW) begrenzt', call($ems, 'solisDischargeW', [IHUB_IID, GW_MODE_DISCHARGE, 0]) === 16900);
+$ems->SetValue('EMS_HousePower', 1100.0);
+check('kein Bedarf (Hauslast 1100 - PV 1000 - Reserve = unter 100 W): 0, keine Einspeisung', call($ems, 'solisDischargeW', [IHUB_IID, GW_MODE_DISCHARGE, 0]) === 0);
+$ems->SetValue('EMS_HousePower', 4000.0);
+// Schreiben
+$GLOBALS['ACTIONS'] = [];
+call($ems, 'setGoodweMode', [GW_MODE_DISCHARGE, 0, true]);
+check('Entladen: erst Leistung 2850 W, dann Zwangsmodus 2', $acts() === ['ctl_force_w=2850', 'ctl_force_mode=2'] && $ems->ReadAttributeInteger('SolisLastMode') === 2, json_encode($acts()));
+$GLOBALS['VAL'][$vDev] = 2; $GLOBALS['ACTIONS'] = [];
+call($ems, 'setGoodweMode', [GW_MODE_DISCHARGE, 0, true]);
+check('gleiche Vorgabe innerhalb von 30 s: nichts neu geschrieben', count($acts()) === 0, json_encode($acts()));
+attr('SolisLastWriteAt', time() - 31);
+call($ems, 'setGoodweMode', [GW_MODE_DISCHARGE, 0, true]);
+check('nach 31 s: neu geschrieben (Entladen faellt frueher zurueck als Laden)', $acts() === ['ctl_force_w=2850', 'ctl_force_mode=2'], json_encode($acts()));
+$ems->SetValue('EMS_HousePower', 3000.0); $GLOBALS['ACTIONS'] = [];
+call($ems, 'setGoodweMode', [GW_MODE_DISCHARGE, 0, true]);
+check('Hauslast sinkt (Vorgabe 1850 W, Aenderung >= 100 W): sofort neu geschrieben', $acts() === ['ctl_force_w=1850', 'ctl_force_mode=2'], json_encode($acts()));
+$GLOBALS['VAL'][$vDev] = 0; attr('SolisLastWriteAt', time() - 20); $GLOBALS['ACTIONS'] = [];
+call($ems, 'setGoodweMode', [GW_MODE_DISCHARGE, 0, true]);
+check('Geraet meldet Zwangsmodus 0 obwohl Entladen gewollt: nach 10 s sofort neu', array_column($GLOBALS['ACTIONS'], 1) === ['ctl_force_w', 'ctl_force_mode'], json_encode($acts()));
+// Einspeisewache
+$GLOBALS['VAL'][$vDev] = 2; attr('SolisLastMode', 2); attr('SolisLastPowerW', 1850); attr('SolisLastWriteAt', time() - 5);
+$ems->SetValue('EMS_GridPower', 600.0); $GLOBALS['ACTIONS'] = [];
+call($ems, 'setGoodweMode', [GW_MODE_DISCHARGE, 0, true]);
+check('Einspeisung 600 W (> 200 W) beim Entladen: Vorgabe sinkt um den eingespeisten Betrag auf 1250 W', $acts() === ['ctl_force_w=1250', 'ctl_force_mode=2'], json_encode($acts()));
+$ems->SetValue('EMS_GridPower', 150.0); attr('SolisLastPowerW', 1850); attr('SolisLastWriteAt', time() - 5); $GLOBALS['ACTIONS'] = [];
+call($ems, 'setGoodweMode', [GW_MODE_DISCHARGE, 0, true]);
+check('Einspeisung 150 W (unter der Schwelle): Vorgabe unveraendert', count($acts()) === 0, json_encode($acts()));
+$ems->SetValue('EMS_GridPower', 2000.0); attr('SolisLastPowerW', 1850); attr('SolisLastWriteAt', time() - 5); $GLOBALS['ACTIONS'] = [];
+call($ems, 'setGoodweMode', [GW_MODE_DISCHARGE, 0, true]);
+check('Einspeisung groesser als die Vorgabe: Zwangsentladen wird freigegeben, kein Schreiben von ctl_force_w', $acts() === ['ctl_force_mode=0'], json_encode($acts()));
+$ems->SetValue('EMS_GridPower', -2850.0);
+// Freigabe nach Entladen
+attr('SolisLastMode', 2); attr('SolisLastPowerW', 1850); attr('SolisReleaseTries', 0); attr('SolisLastWriteAt', time() - 30); $GLOBALS['VAL'][$vDev] = 2; $GLOBALS['ACTIONS'] = [];
+call($ems, 'setGoodweMode', [GW_MODE_AUTO, 0, false]);
+check('Automatik nach selbst gesetztem Zwangsentladen: Freigabe (ctl_force_mode=0)', $acts() === ['ctl_force_mode=0'], json_encode($acts()));
+// Fremder Zwangsmodus wird nie angefasst
+attr('SolisLastMode', 0); attr('SolisLastWriteAt', time() - 3600); $GLOBALS['VAL'][$vDev] = 2; $GLOBALS['ACTIONS'] = [];
+call($ems, 'setGoodweMode', [GW_MODE_AUTO, 0, false]);
+check('fremd gesetzter Zwangsmodus 2: Automatik schreibt nichts', count($acts()) === 0, json_encode($acts()));
+// Pausiert: kein Bedarf -> Automatik mit Grund
+$ems->SetValue('EMS_HousePower', 1100.0); attr('SolisLastMode', 0); $GLOBALS['VAL'][$vDev] = 0; $GLOBALS['ACTIONS'] = [];
+call($ems, 'setGoodweMode', [GW_MODE_DISCHARGE, 0, true]);
+check('Entladen ohne Bedarf: nichts geschrieben, Statuszeile nennt "Entladen auf Vorgabe pausiert"', count($acts()) === 0 && strpos(call($ems, 'statusText', ['x']), 'Entladen auf Vorgabe pausiert') !== false, json_encode($acts()) . call($ems, 'statusText', ['x']));
+// Export (Vorentladen, Modus 5 mit Leistung) bleibt unbeantwortet: wuerde einspeisen
+$ems->SetValue('EMS_HousePower', 4000.0); $GLOBALS['ACTIONS'] = [];
+call($ems, 'setGoodweMode', [GW_MODE_AC_EXPORT, 5000, true]);
+check('Export (Modus 5 mit 5 kW): kein Zwangsentladen, Statuszeile "nicht unterstützt"', count(array_filter($GLOBALS['ACTIONS'], fn($a) => $a[1] === 'ctl_force_mode' && $a[2] === 2)) === 0 && strpos(call($ems, 'statusText', ['x']), 'nicht unterstützt') !== false, json_encode($acts()));
+
 echo "\n8k7) Bestandsaufnahme: Preis, Frische, Schreibfehler, Einfuehrung, Konfigurationspruefung\n";
 $ems = freshEms(); prop('TIBBER_Active', true); pricesToday(0.31);
 $pi = call($ems, 'currentPriceEur');

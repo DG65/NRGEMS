@@ -41,7 +41,7 @@ define('EMS_LOG_VERBOSE',     2);
 // Formular-Konvention (siehe EMS/SUITE.md "Einheitliche Formular-Optik"):
 // Was-ist-Neu-Panel ist versionsscharf dismissible, Referenzmuster InverterHub.
 define('EMS_COLOR_AUTO', 0x2E8B3D); // Gruen: Wert wurde automatisch uebernommen (🔗-Zeilen im Formular)
-define('EMS_NEWS_VERSION', '0.79.0');
+define('EMS_NEWS_VERSION', '0.80.0');
 
 // NRG-Stack Partnermodul-GUIDs (fuer automatische Discovery, siehe discoverPartners())
 define('GUID_CHARGERHUB',    '{9256C34E-5CFD-4F37-8BFE-E65390EBB37C}');
@@ -485,7 +485,7 @@ class EMS extends IPSModule
         $this->RegisterAttributeString('WriteFailText', '');
         $this->RegisterAttributeString('DataStaleText', '');        // veraltete Messwerte (Netz/PV), leer = alles frisch
         $this->RegisterAttributeString('PriceSourceNote', '');      // Herkunft des aktuellen Preises ('' = unbekannt)
-        $this->RegisterAttributeInteger('SolisLastMode', -1);     // zuletzt an den Solis gesendeter Zwangsmodus (-1 = unbekannt)
+        $this->RegisterAttributeInteger('SolisLastMode', -1);     // zuletzt an den Solis gesendeter Zwangsmodus (0 frei, 1 Laden, 2 Entladen, -1 = unbekannt)
         $this->RegisterAttributeInteger('SolisLastPowerW', 0);
         $this->RegisterAttributeInteger('SolisLastWriteAt', 0);
         $this->RegisterAttributeInteger('SolisReleaseTries', 0);
@@ -758,6 +758,10 @@ class EMS extends IPSModule
                 'items'    => array(
                     array(
                         'type'    => 'Label',
+                        'caption' => '• NEU: Beim Solis kann EMS jetzt auf Vorgabe entladen (Zwangsentladen, nur ins Haus: Hauslast minus PV minus 150 W Reserve). Speist der Wechselrichter dabei mehr als 200 W ein, senkt EMS die Vorgabe sofort. Heute wirkt das beim Batterie-Boost; der Tagesplan fordert selbst kein Entladen an, die Automatik des Solis deckt das Haus ohnehin aus dem Batteriespeicher.'
+                    ),
+                    array(
+                        'type'    => 'Label',
                         'caption' => '• NEU: Panel „🩺 Konfigurationsprüfung“ zeigt, was in Ihrer Einrichtung still schiefgehen kann (unbekannter Preis, veraltete Messwerte, fehlgeschlagene Schreibzugriffe, Batteriekapazität auf dem Standardwert, feste Preisschwellen, Netzanschluss-Standard). Der aktuelle Preis kommt jetzt automatisch aus der Preiskurve, auch ohne verknüpfte Preisvariable.'
                     ),
                     array(
@@ -778,7 +782,7 @@ class EMS extends IPSModule
                     ),
                     array(
                         'type'    => 'Label',
-                        'caption' => '• NEU: Solis-Wechselrichter lassen sich jetzt steuern, minimal: Netzladen per Zwangsladen (Leistung begrenzt auf die Ladegrenze des Geräts), sonst Automatik. Der Zwangsmodus wird im Takt des Fernsteuer-Zeitlimits neu geschrieben. Akku halten und Entladen gibt es beim Solis noch nicht, sie laufen als Automatik.'
+                        'caption' => '• NEU: Solis-Wechselrichter lassen sich jetzt steuern, minimal: Netzladen per Zwangsladen (Leistung begrenzt auf die Ladegrenze des Geräts), sonst Automatik. Der Zwangsmodus wird im Takt des Fernsteuer-Zeitlimits neu geschrieben. Akku halten und Entladen kamen mit späteren Versionen dazu.'
                     ),
                     array(
                         'type'    => 'Label',
@@ -8771,6 +8775,33 @@ class EMS extends IPSModule
     }
 
     /**
+     * Solis, Entladen auf Vorgabe (Dietmar 22.10.2026, Pauls Anlage): Sollleistung (W) fuer das Zwangsentladen, 0 = nicht entladen.
+     * Nur fuer Entlademodi (3 "Entladen", 12) und nur ins Haus: Hauslast plus Wallboxen minus PV minus 150 W Reserve, hoechstens die
+     * Vorgabe des Plans (bei Modus 3 eine Obergrenze), die vom InverterHub gemeldete Entladegrenze und 30 kW. Der Solis haelt die
+     * Vorgabe als Sollwert (gemessen ~85 bis 98 %) und speist ins Netz ein, wenn sie die Hauslast uebersteigt; die Ausgangsbegrenzung
+     * des Wechselrichters stoppt das nicht. Deshalb senkt eine Einspeisung ueber 200 W die Vorgabe sofort um den eingespeisten Betrag.
+     */
+    private function solisDischargeW(int $iid, int $mode, int $powerW): int
+    {
+        if ($mode !== GW_MODE_DISCHARGE && $mode !== GW_MODE_BAT_DISCH) { return 0; }
+        try {
+            $demand = (float)$this->GetValue('EMS_HousePower') + (float)$this->GetValue('EMS_WB1Power') + (float)$this->GetValue('EMS_WB2Power');
+            $pv = (float)$this->GetValue('EMS_PVPower');
+            $grid = (float)$this->GetValue('EMS_GridPower'); // + Einspeisung
+        } catch (Throwable $e) { return 0; }
+        $w = $demand - $pv - 150.0;
+        if ($powerW > 0) { $w = min($w, (float)$powerW); }
+        $capId = $this->findChildVariableIdByIdent($iid, 'bat_discharge_max_w');
+        $cap = ($capId > 0) ? (float)GetValue($capId) : 0.0;
+        if ($cap > 0.0) { $w = min($w, $cap); }
+        $w = min($w, 30000.0);
+        if ($grid > 200.0 && $this->ReadAttributeInteger('SolisLastMode') === 2) {
+            $w = min($w, (float)$this->ReadAttributeInteger('SolisLastPowerW') - $grid);
+        }
+        return ($w < 100.0) ? 0 : (int)(round($w / 10.0) * 10);
+    }
+
+    /**
      * Solis (minimale Steuerung, Dietmar 20.10.2026): EMS-Entscheidung auf Zwangsladen/Automatik abbilden. Reine Weitergabe im
      * InverterHub, Dauerhalten und Rueckfall liegen hier: Netzladen (Modus 11 mit Leistung) setzt ctl_force_w und
      * ctl_force_mode=1 und schreibt sie im Wiederholabstand neu; alles andere gibt den Zwangsmodus frei (ctl_force_mode=0,
@@ -8791,8 +8822,13 @@ class EMS extends IPSModule
         $wantHold = (!$wantCharge && $holdCapable && $mode === GW_MODE_AC_EXPORT && $powerW <= 0 && $this->solisHoldAllowed($iid));
         $this->solisHoldHousekeeping($iid);
         $this->solisHoldApply($iid, $wantHold, $now);
-        $unsupported = (!$wantCharge && !$wantHold && $mode !== GW_MODE_AUTO && $mode !== GW_MODE_STOP);
+        $dischW = $wantCharge ? 0 : $this->solisDischargeW($iid, $mode, $powerW);
+        $wantDisch = ($dischW > 0);
+        $unsupported = (!$wantCharge && !$wantHold && !$wantDisch && $mode !== GW_MODE_AUTO && $mode !== GW_MODE_STOP);
         $why = $unsupported ? sprintf('Solis: Modus %d wird nicht unterstützt, der Wechselrichter bleibt in Automatik', $mode) : '';
+        if ($unsupported && ($mode === GW_MODE_DISCHARGE || $mode === GW_MODE_BAT_DISCH)) {
+            $why = 'Solis: Entladen auf Vorgabe pausiert (kein Bedarf über PV und Reserve), der Wechselrichter bleibt in Automatik';
+        }
         if ($unsupported && $mode === GW_MODE_AC_EXPORT && $powerW <= 0 && $holdCapable) {
             $why = 'Solis: Akku halten pausiert (PV-Überschuss, Ladestand über dem Reserve-SOC des Geräts oder Wartezeit), der Wechselrichter bleibt in Automatik';
         }
@@ -8822,13 +8858,28 @@ class EMS extends IPSModule
             }
             return;
         }
-        // Freigeben: NUR einen Zwangsmodus, den EMS selbst gesetzt hat (SolisLastMode = 1). Ein Zwangsmodus von aussen
+        if ($wantDisch) {
+            // Zwangsentladen (Register 43135 = 2): fallt ohne Neuschreiben nach dem Zeitlimit zurueck und reagiert frueher, daher alle
+            // 30 s neu; sonst wie das Laden (erst die Leistung, dann der Modus, sofort neu bei zurueckgelesenem Modus 0)
+            $intD = min($interval, 30);
+            $need = ($lastMode !== 2) || (abs($dischW - $lastPower) >= 100) || (($now - $lastAt) >= $intD) || ($dev === 0 && ($now - $lastAt) >= 10);
+            if ($need) {
+                $this->ipsWrite($iid, 'ctl_force_w', $dischW);
+                $this->ipsWrite($iid, 'ctl_force_mode', 2);
+                $this->WriteAttributeInteger('SolisLastMode', 2);
+                $this->WriteAttributeInteger('SolisLastPowerW', $dischW);
+                $this->WriteAttributeInteger('SolisLastWriteAt', $now);
+                $this->WriteAttributeInteger('SolisReleaseTries', 0);
+            }
+            return;
+        }
+        // Freigeben: NUR einen Zwangsmodus, den EMS selbst gesetzt hat (SolisLastMode = 1 Laden, 2 Entladen). Ein Zwangsmodus von aussen
         // (Messskript, Solis-App/-Portal, Fremdregler) wird nie angefasst, auch nicht im Trockenlauf und nicht bei
         // EMS aus (Befund 21.10.2026: mit EMS im Trockenlauf fiel ein extern gesetztes Zwangsentladen nach 31 bis 122 s
         // zurueck, mit EMS aus erst nach dem Geraete-Zeitlimit). Das Freigeben wird bis zur Bestaetigung hoechstens
         // dreimal im Abstand von 10 s wiederholt (Schreibbefehle gehen am Solis gelegentlich verloren), danach gibt das
         // Geraete-Zeitlimit den Modus ohnehin frei.
-        if ($lastMode !== 1) { return; }
+        if ($lastMode !== 1 && $lastMode !== 2) { return; }
         if ($dev === 0) {
             $this->WriteAttributeInteger('SolisLastMode', 0);
             $this->WriteAttributeInteger('SolisLastPowerW', 0);
