@@ -41,7 +41,7 @@ define('EMS_LOG_VERBOSE',     2);
 // Formular-Konvention (siehe EMS/SUITE.md "Einheitliche Formular-Optik"):
 // Was-ist-Neu-Panel ist versionsscharf dismissible, Referenzmuster InverterHub.
 define('EMS_COLOR_AUTO', 0x2E8B3D); // Gruen: Wert wurde automatisch uebernommen (🔗-Zeilen im Formular)
-define('EMS_NEWS_VERSION', '0.78.1');
+define('EMS_NEWS_VERSION', '0.78.2');
 
 // NRG-Stack Partnermodul-GUIDs (fuer automatische Discovery, siehe discoverPartners())
 define('GUID_CHARGERHUB',    '{9256C34E-5CFD-4F37-8BFE-E65390EBB37C}');
@@ -702,6 +702,10 @@ class EMS extends IPSModule
                 'caption'  => '🆕 Neu in Version ' . EMS_NEWS_VERSION,
                 'expanded' => true,
                 'items'    => array(
+                    array(
+                        'type'    => 'Label',
+                        'caption' => '• GEÄNDERT: „Akku halten“ beim Solis wirkt nur unter dem Reserve-SOC des Geräts (bei Paul 80 %). Darüber, und bei PV-Überschuss, bleibt der Wechselrichter in Automatik; die Statuszeile nennt den Grund.'
+                    ),
                     array(
                         'type'    => 'Label',
                         'caption' => '• GEÄNDERT: Beim Solis nimmt EMS nur noch einen Zwangsmodus zurück, den es selbst gesetzt hat. Ein von außen gesetzter Zwangsmodus (Skript, App, Portal) bleibt in jedem Zustand unangetastet, auch im Trockenlauf.'
@@ -8474,11 +8478,21 @@ class EMS extends IPSModule
      * Darf der Akku jetzt gehalten werden? Nicht bei PV-Ueberschuss (Beginn ab 200 W, Fortsetzen bis 500 W), solange nicht
      * gemessen ist, ob PV bei gesperrtem Entladen weiter in die Batterie laedt. Gesperrt nach wiederholtem Fehlschlag (10 min).
      */
-    private function solisHoldAllowed(): bool
+    private function solisHoldAllowed(int $iid = 0): bool
     {
         if (time() < $this->ReadAttributeInteger('SolisHoldBlockedUntil')) { return false; }
         $limit = $this->ReadAttributeBoolean('SolisHoldActive') ? 500.0 : 200.0;
-        return $this->solisPvSurplusW() <= $limit;
+        if ($this->solisPvSurplusW() > $limit) { return false; }
+        // Speicherbetrieb 17 (Reserve) haelt den Akku NUR unter dem Reserve-SOC des Geraets (Register 43024, InverterHub
+        // `cfg_soc_backup`): darueber entlaedt der Solis ganz normal. Gemessen 22.10.2026: unter dem Reserve-SOC (80 %) mit PV
+        // laedt 17 die Batterie mit der gesamten PV und bezieht das Haus aus dem Netz; ohne Reserve-SOC-Wert nie raten.
+        if ($iid > 0) {
+            $rid = $this->findChildVariableIdByIdent($iid, 'cfg_soc_backup');
+            if ($rid <= 0) { return false; }
+            try { $soc = (float)$this->GetValue('EMS_BatSOC'); } catch (Throwable $e) { return false; }
+            if ($soc >= (float)GetValue($rid) - 1.0) { return false; }
+        }
+        return true;
     }
 
     /**
@@ -8582,13 +8596,13 @@ class EMS extends IPSModule
         // Akku halten (Plan/manuell: Modus 5 mit 0 W): Entladesperre ueber den Speicherbetrieb, nur wenn der InverterHub sie anbietet
         // und kein PV-Ueberschuss da ist (ob PV bei gesperrtem Entladen weiter laedt, ist am Solis noch nicht gemessen)
         $holdCapable = ($this->findChildVariableIdByIdent($iid, 'svc_discharge_inhibit') > 0 && $this->findChildVariableIdByIdent($iid, 'cfg_storage_mode') > 0);
-        $wantHold = (!$wantCharge && $holdCapable && $mode === GW_MODE_AC_EXPORT && $powerW <= 0 && $this->solisHoldAllowed());
+        $wantHold = (!$wantCharge && $holdCapable && $mode === GW_MODE_AC_EXPORT && $powerW <= 0 && $this->solisHoldAllowed($iid));
         $this->solisHoldHousekeeping($iid);
         $this->solisHoldApply($iid, $wantHold, $now);
         $unsupported = (!$wantCharge && !$wantHold && $mode !== GW_MODE_AUTO && $mode !== GW_MODE_STOP);
         $why = $unsupported ? sprintf('Solis: Modus %d wird nicht unterstützt, der Wechselrichter bleibt in Automatik', $mode) : '';
         if ($unsupported && $mode === GW_MODE_AC_EXPORT && $powerW <= 0 && $holdCapable) {
-            $why = 'Solis: Akku halten pausiert (PV-Überschuss oder Wartezeit), der Wechselrichter bleibt in Automatik';
+            $why = 'Solis: Akku halten pausiert (PV-Überschuss, Ladestand über dem Reserve-SOC des Geräts oder Wartezeit), der Wechselrichter bleibt in Automatik';
         }
         if ($this->ReadAttributeString('NoControlReason') !== $why) { $this->WriteAttributeString('NoControlReason', $why); }
 

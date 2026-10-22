@@ -1152,11 +1152,12 @@ check('Wechselrichter ganz ohne Stellglieder: kein Solis', call($ems, 'isSolisDr
 
 echo "\n8k6) Solis: Akku halten ueber die Entladesperre (svc_discharge_inhibit, Speicherbetrieb 17)\n";
 $vInh = vari('Entladesperre', IHUB_IID, 'svc_discharge_inhibit', false, 0);
+$vBk = vari('Reserve-SOC (Einstellung)', IHUB_IID, 'cfg_soc_backup', 80, 1);
 $vSt = vari('Speicherbetrieb (Einstellung)', IHUB_IID, 'cfg_storage_mode', 33, 1);
 $vPrev = vari('Vorheriger Speicherbetrieb', IHUB_IID, 'svc_prev_storage', 0, 1);
 foreach (['SolisHoldActive' => false, 'SolisHoldChangedAt' => 0, 'SolisUserStorage' => -1, 'SolisHoldTries' => 0, 'SolisHoldTryAt' => 0, 'SolisHoldBlockedUntil' => 0, 'SolisRestoreTarget' => -1, 'SolisLastMode' => 0, 'SolisLastWriteAt' => 0] as $k => $v) { attr($k, $v); }
 $GLOBALS['VAL'][$vDev] = 0; // Zwangsmodus am Geraet aus
-$ems->SetValue('EMS_PVPower', 0.0); $ems->SetValue('EMS_HousePower', 5000.0);
+$ems->SetValue('EMS_PVPower', 0.0); $ems->SetValue('EMS_HousePower', 5000.0); $ems->SetValue('EMS_BatSOC', 47.0);
 $acts = function () { return array_map(fn($a) => $a[1] . '=' . json_encode($a[2]), $GLOBALS['ACTIONS']); };
 $GLOBALS['ACTIONS'] = [];
 call($ems, 'setGoodweMode', [GW_MODE_AC_EXPORT, 0, true]);
@@ -1185,6 +1186,23 @@ $GLOBALS['VAL'][$vSt] = 33; $ems->SetValue('EMS_PVPower', 4000.0); $ems->SetValu
 call($ems, 'setGoodweMode', [GW_MODE_AC_EXPORT, 0, true]);
 check('PV-Ueberschuss 3,2 kW: kein Halten (PV soll die Batterie laden duerfen), Statuszeile nennt das Pausieren', count($acts()) === 0 && strpos(call($ems, 'statusText', ['x']), 'pausiert') !== false, json_encode($acts()));
 $ems->SetValue('EMS_PVPower', 0.0); $ems->SetValue('EMS_HousePower', 5000.0);
+// Reserve-SOC des Geraets: ueber dem Reserve-SOC haelt Speicherbetrieb 17 nicht (gemessen 22.10.2026)
+attr('SolisHoldActive', false); attr('SolisHoldChangedAt', 0); $GLOBALS['VAL'][$vSt] = 33; $GLOBALS['ACTIONS'] = [];
+$ems->SetValue('EMS_BatSOC', 95.0);
+call($ems, 'setGoodweMode', [GW_MODE_AC_EXPORT, 0, true]);
+check('Ladestand 95 % ueber dem Reserve-SOC 80 %: kein Halten (17 wuerde nicht halten), Statuszeile nennt den Reserve-SOC', count($acts()) === 0 && strpos(call($ems, 'statusText', ['x']), 'Reserve-SOC') !== false, json_encode($acts()) . call($ems, 'statusText', ['x']));
+$ems->SetValue('EMS_BatSOC', 79.5);
+call($ems, 'setGoodweMode', [GW_MODE_AC_EXPORT, 0, true]);
+check('Ladestand 79,5 % (innerhalb 1 % unter dem Reserve-SOC): kein Halten (Sicherheitsabstand)', count($acts()) === 0, json_encode($acts()));
+$ems->SetValue('EMS_BatSOC', 60.0);
+call($ems, 'setGoodweMode', [GW_MODE_AC_EXPORT, 0, true]);
+check('Ladestand 60 % unter dem Reserve-SOC 80 %: Halten wird gesetzt', in_array('svc_discharge_inhibit=true', $acts(), true), json_encode($acts()));
+$GLOBALS['OBJ'][$vBk]['ObjectIdent'] = 'x_cfg_soc_backup'; attr('SolisHoldActive', false); attr('SolisHoldChangedAt', 0); $GLOBALS['ACTIONS'] = [];
+call($ems, 'setGoodweMode', [GW_MODE_AC_EXPORT, 0, true]);
+check('ohne cfg_soc_backup vom InverterHub (aelterer Stand): nie raten, kein Halten', !in_array('svc_discharge_inhibit=true', $acts(), true), json_encode($acts()));
+$GLOBALS['OBJ'][$vBk]['ObjectIdent'] = 'cfg_soc_backup'; $ems->SetValue('EMS_BatSOC', 47.0);
+attr('SolisHoldActive', false); attr('SolisHoldChangedAt', 0); $GLOBALS['VAL'][$vSt] = 33; $GLOBALS['ACTIONS'] = [];
+
 // Freigeben: Nutzerwert zurueck (InverterHub hat ihn gemerkt)
 attr('SolisHoldActive', true); attr('SolisHoldChangedAt', time() - 120); attr('SolisUserStorage', 33); $GLOBALS['VAL'][$vSt] = 17; $GLOBALS['VAL'][$vPrev] = 33; $GLOBALS['ACTIONS'] = [];
 call($ems, 'setGoodweMode', [GW_MODE_AUTO, 0, false]);
