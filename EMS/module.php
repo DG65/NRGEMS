@@ -41,7 +41,7 @@ define('EMS_LOG_VERBOSE',     2);
 // Formular-Konvention (siehe EMS/SUITE.md "Einheitliche Formular-Optik"):
 // Was-ist-Neu-Panel ist versionsscharf dismissible, Referenzmuster InverterHub.
 define('EMS_COLOR_AUTO', 0x2E8B3D); // Gruen: Wert wurde automatisch uebernommen (🔗-Zeilen im Formular)
-define('EMS_NEWS_VERSION', '0.81.0');
+define('EMS_NEWS_VERSION', '0.82.0');
 
 // NRG-Stack Partnermodul-GUIDs (fuer automatische Discovery, siehe discoverPartners())
 define('GUID_CHARGERHUB',    '{9256C34E-5CFD-4F37-8BFE-E65390EBB37C}');
@@ -766,6 +766,10 @@ class EMS extends IPSModule
                 'caption'  => '🆕 Neu in Version ' . EMS_NEWS_VERSION,
                 'expanded' => true,
                 'items'    => array(
+                    array(
+                        'type'    => 'Label',
+                        'caption' => '• NEU: Bei einer Wallbox, die EMS nur beobachtet, nennt die Statuszeile im Panel „Wallboxen“ jetzt, wer sie laut ChargerHub regelt und warum (nur Anzeige, ab ChargerHub 0.9.126).'
+                    ),
                     array(
                         'type'    => 'Label',
                         'caption' => '• NEU: Wallbox-Ladearten je Wallbox: Manuell (feste Stromstärke), Nur PV, PV-Anteil und Hybrid, mit Stromsollwert statt Ein/Aus und Phasenwahl (Panel „Wallboxen“, je Wallbox „Ladeart“). Standard bleibt Preisgesteuert, bestehende Anlagen ändern sich nicht. Netzbetreiber-Sperre und Batterie-Boost haben Vorrang, Smart Charging bleibt unangetastet.'
@@ -9163,10 +9167,11 @@ class EMS extends IPSModule
             return array('caption' => $text, 'color' => -1);
         }
         if ($m['mode'] === 'observe') {
+            $who = $this->chargerControlInfo($n);
             if (!$m['manual']) {
-                return array('caption' => '🔗 Wallbox ' . $n . ': fremd gesteuert (automatisch erkannt, EMS darf dort nicht schalten). EMS misst nur, die Leistung zählt zum Hausverbrauch.', 'color' => EMS_COLOR_AUTO);
+                return array('caption' => '🔗 Wallbox ' . $n . ': fremd gesteuert (automatisch erkannt, EMS darf dort nicht schalten). EMS misst nur, die Leistung zählt zum Hausverbrauch.' . $who, 'color' => EMS_COLOR_AUTO);
             }
-            return array('caption' => '✏️ Wallbox ' . $n . ': nur beobachten (eigene Wahl). EMS misst die Leistung und schaltet nichts.', 'color' => -1);
+            return array('caption' => '✏️ Wallbox ' . $n . ': nur beobachten (eigene Wahl). EMS misst die Leistung und schaltet nichts.' . $who, 'color' => -1);
         }
         if ($t !== null && $t['smart'] === true) {
             return '⚠️ Wallbox ' . $n . ': „EMS steuert“ gewählt, aber bei Tibber ist Smart Charging für ' . $who . ' an' . $old . '. Dann regeln zwei Stellen dieselbe Wallbox. Stelle Smart Charging im Fahrzeug aus oder wähle hier Smart Charging.';
@@ -9183,6 +9188,23 @@ class EMS extends IPSModule
             return array('caption' => '🔗 Wallbox ' . $n . ': EMS steuert die Freigabe (automatisch erkannt, Wallbox ist schaltbar).' . $tail, 'color' => EMS_COLOR_AUTO);
         }
         return array('caption' => '✏️ Wallbox ' . $n . ': EMS steuert die Freigabe (eigene Wahl).' . $tail, 'color' => -1);
+    }
+
+    /**
+     * Wer regelt diese Wallbox gerade und warum, laut ChargerHub (Vertrag 1.9: controlReason = deutscher Klartext nur zur Anzeige,
+     * controlSince = Unix-Zeit des letzten Besitzerwechsels, 0 = unbekannt). Nur Anzeige fuer Wallboxen, die EMS beobachtet; fehlt das
+     * Feld (aelterer ChargerHub) oder ist es leer, kommt nichts dazu.
+     */
+    private function chargerControlInfo(int $n): string
+    {
+        $entry = $this->getChargerEntry($n);
+        $reason = trim((string)($entry['controlReason'] ?? ''));
+        if ($reason === '') { return ''; }
+        if (mb_strlen($reason) > 160) { $reason = mb_substr($reason, 0, 157) . '...'; }
+        $since = (int)($entry['controlSince'] ?? 0);
+        $when = '';
+        if ($since > 0) { $when = ' (seit ' . (date('Y-m-d', $since) === date('Y-m-d') ? date('H:i', $since) : date('d.m. H:i', $since)) . ')'; }
+        return ' Geregelt wird sie laut ChargerHub so: ' . $reason . $when . '.';
     }
 
     /** Vorschlag, wenn Tibber genau ein Fahrzeug meldet und genau eine Wallbox da ist (nie stilles Uebernehmen). */

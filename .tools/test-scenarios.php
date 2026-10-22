@@ -1494,6 +1494,36 @@ prop('WB1_PhaseSetting', 0); prop('WB1_ChargeMode', 0);
 $f = json_encode(json_decode($ems->GetConfigurationForm(), true), JSON_UNESCAPED_UNICODE);
 check('Formular enthaelt Ladeart, Stromstaerke, PV-Anteil und Phasen fuer beide Wallboxen', strpos($f, '"name":"WB1_ChargeMode"') !== false && strpos($f, '"name":"WB2_ChargeMode"') !== false && strpos($f, '"name":"WB1_PhaseSetting"') !== false && strpos($f, '"name":"WB2_PvSharePct"') !== false);
 
+echo "\n8k10) ChargerHub-Vertrag 1.9: controlReason/controlSince im Panel Wallboxen (nur bei Beobachten)\n";
+$ems = freshEms();
+prop('WB_Active', true); prop('WB_Count', 1);
+$cenX = vari('CHUB WB1 Ladefreigabe', 600, 'ctl_enable', true, 0);
+$whObs = ['instanceID' => 600, 'source' => 'chargerhub', 'chargeEnableID' => $cenX, 'maxCurrent' => 16, 'managedBy' => 'goe-controller', 'powerID' => 0, 'plugStateID' => 0,
+          'controlOwner' => 'goe-controller', 'controlSource' => 'einstellung', 'controlReason' => 'Der go-e Controller regelt das Überschussladen selbst', 'controlSince' => mktime(8, 15, 0)];
+attr('PartnerCache', json_encode(['chargerhub' => [$whObs]]));
+$txt = fn($l) => is_array($l) ? $l['caption'] : $l;
+$l = $txt(call($ems, 'wallboxModeStatusLine', [1]));
+check('beobachtete Wallbox: Grund und Zeit von ChargerHub stehen in der Statuszeile', strpos($l, 'fremd gesteuert') !== false && strpos($l, 'Geregelt wird sie laut ChargerHub so: Der go-e Controller regelt das Überschussladen selbst (seit ') !== false, $l);
+prop('WB1_Mode', 3);
+check('manuell "nur beobachten": ebenfalls', strpos($txt(call($ems, 'wallboxModeStatusLine', [1])), 'laut ChargerHub') !== false);
+prop('WB1_Mode', 0);
+$whOld = $whObs; unset($whOld['controlReason'], $whOld['controlSince'], $whOld['controlOwner'], $whOld['controlSource']);
+attr('PartnerCache', json_encode(['chargerhub' => [$whOld]]));
+check('aelterer ChargerHub (Vertrag unter 1.9, keine Felder): Zeile unveraendert, kein Hinweis', strpos($txt(call($ems, 'wallboxModeStatusLine', [1])), 'laut ChargerHub') === false);
+$whEmpty = $whObs; $whEmpty['controlReason'] = '   ';
+attr('PartnerCache', json_encode(['chargerhub' => [$whEmpty]]));
+check('leerer Grund: kein Hinweis', strpos($txt(call($ems, 'wallboxModeStatusLine', [1])), 'laut ChargerHub') === false);
+$whLong = $whObs; $whLong['controlReason'] = str_repeat('x', 300); $whLong['controlSince'] = 0;
+attr('PartnerCache', json_encode(['chargerhub' => [$whLong]]));
+$l = $txt(call($ems, 'wallboxModeStatusLine', [1]));
+check('langer Grund wird auf 160 Zeichen gekuerzt, ohne Zeit bei controlSince 0', strpos($l, str_repeat('x', 157) . '...') !== false && strpos($l, str_repeat('x', 158)) === false && strpos($l, '(seit') === false, $l);
+$whOld2 = $whObs; $whOld2['controlSince'] = mktime(8, 15, 0) - 86400 * 3;
+attr('PartnerCache', json_encode(['chargerhub' => [$whOld2]]));
+check('Besitzerwechsel an einem frueheren Tag: mit Datum', (bool)preg_match('/\(seit \d\d\.\d\d\. 08:15\)/', $txt(call($ems, 'wallboxModeStatusLine', [1]))), $txt(call($ems, 'wallboxModeStatusLine', [1])));
+$whEms = ['instanceID' => 600, 'source' => 'chargerhub', 'chargeEnableID' => $cenX, 'maxCurrent' => 16, 'managedBy' => 'none', 'powerID' => 0, 'plugStateID' => 0, 'controlReason' => 'EMS steuert', 'controlSince' => time() - 60];
+attr('PartnerCache', json_encode(['chargerhub' => [$whEms]]));
+check('Wallbox, die EMS selbst steuert: kein ChargerHub-Hinweis (nur bei Beobachten)', strpos($txt(call($ems, 'wallboxModeStatusLine', [1])), 'laut ChargerHub') === false, $txt(call($ems, 'wallboxModeStatusLine', [1])));
+
 echo "\n8l) Wallbox bei PV-Ueberschuss auch ueber der Preisschwelle\n";
 $ems = freshEms();
 $sW = state(['tib_active' => true, 'pv_total_w' => 3000.0, 'house_pow_w' => 800.0, 'wb1_pow_kw' => 0.0]);
@@ -2364,7 +2394,7 @@ unset($GLOBALS['INSTMOD'][IHUB_IID]);
 // ===========================================================================
 echo "\n20) Bezugspreis-Historie (EMS_GetPurchasePriceHistory, Ladesitzungskosten)\n";
 $GLOBALS['INSTMOD'][500] = GUID_ARCHIVECONTROL;
-$d0 = strtotime('today');
+$d0 = strtotime('yesterday')  /* gestern: sonst liegen die Slots in der ersten halben Stunde nach Mitternacht in der Zukunft */;
 $ems = freshEms();
 $r = call($ems, 'GetPurchasePriceHistory', [$d0, $d0 + 3600]);
 check('nackt: Tarifart keiner, 4 Slots, alle Preise null', $r['tarifart'] === 'keiner' && count($r['slots']) === 4 && array_filter(array_column($r['slots'], 'priceCt')) === [], json_encode($r['tarifart']));
