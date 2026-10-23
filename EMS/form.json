@@ -1101,7 +1101,8 @@
                 {
                     "type": "SelectInstance",
                     "name": "WB1_Instance",
-                    "caption": "Wallbox 1 — go-e Charger Instanz-ID"
+                    "caption": "Wallbox 1: Instanz (leer = automatisch die 1. von ChargerHub/OCPPHub gefundene Wallbox; sonst Zuordnung oder alte direkte go-e-Charger-Instanz)",
+                    "onChange": "EMS_WallboxLinkChanged($id, 1, $WB1_Instance, $VAR_WB1_Power, $VAR_WB1_Cable, $VAR_WB1_Status, $VAR_WB1_Error);"
                 },
                 {
                     "type": "NumberSpinner",
@@ -1214,32 +1215,36 @@
                 {
                     "type": "SelectVariable",
                     "name": "VAR_WB1_Status",
-                    "caption": "WB1 Status"
+                    "caption": "WB1 Ladestatus als Zahl, Bedeutung je Hersteller (nur Anzeige; nur falls nicht automatisch über ChargerHub)",
+                    "onChange": "EMS_WallboxLinkChanged($id, 1, $WB1_Instance, $VAR_WB1_Power, $VAR_WB1_Cable, $VAR_WB1_Status, $VAR_WB1_Error);"
                 },
                 {
                     "type": "SelectVariable",
                     "name": "VAR_WB1_Power",
-                    "caption": "WB1 Aktuelle Leistung (kW)"
+                    "caption": "WB1 Ladeleistung in kW (nur falls nicht automatisch über ChargerHub)",
+                    "onChange": "EMS_WallboxLinkChanged($id, 1, $WB1_Instance, $VAR_WB1_Power, $VAR_WB1_Cable, $VAR_WB1_Status, $VAR_WB1_Error);"
                 },
                 {
                     "type": "SelectVariable",
                     "name": "VAR_WB1_Active",
-                    "caption": "WB1 Wallbox aktiv (Boolean)"
+                    "caption": "WB1 Wallbox aktiv (Boolean, nur für das alte go-e-Charger-Modul ohne ChargerHub)"
                 },
                 {
                     "type": "SelectVariable",
                     "name": "VAR_WB1_Cable",
-                    "caption": "WB1 Kabel-Leistungsfähigkeit"
+                    "caption": "WB1 Fahrzeug angesteckt (1/0; nur falls nicht automatisch über ChargerHub)",
+                    "onChange": "EMS_WallboxLinkChanged($id, 1, $WB1_Instance, $VAR_WB1_Power, $VAR_WB1_Cable, $VAR_WB1_Status, $VAR_WB1_Error);"
                 },
                 {
                     "type": "SelectVariable",
                     "name": "VAR_WB1_Phases",
-                    "caption": "WB1 Aktuell genutzte Phasen"
+                    "caption": "WB1 Aktuell genutzte Phasen (wird nicht ausgewertet; die Phasen kommen aus ChargerHub)"
                 },
                 {
                     "type": "SelectVariable",
                     "name": "VAR_WB1_Error",
-                    "caption": "WB1 Fehler"
+                    "caption": "WB1 Fehlercode (0 = kein Fehler, alles andere sperrt die Freigabe; nur falls nicht automatisch über ChargerHub)",
+                    "onChange": "EMS_WallboxLinkChanged($id, 1, $WB1_Instance, $VAR_WB1_Power, $VAR_WB1_Cable, $VAR_WB1_Status, $VAR_WB1_Error);"
                 },
                 {
                     "type": "Label",
@@ -1253,7 +1258,8 @@
                 {
                     "type": "SelectInstance",
                     "name": "WB2_Instance",
-                    "caption": "Wallbox 2 — go-e Charger Instanz-ID",
+                    "caption": "Wallbox 2: Instanz (leer = automatisch die 2. von ChargerHub/OCPPHub gefundene Wallbox; sonst Zuordnung oder alte direkte go-e-Charger-Instanz)",
+                    "onChange": "EMS_WallboxLinkChanged($id, 2, $WB2_Instance, $VAR_WB2_Power, $VAR_WB2_Cable, $VAR_WB2_Status, $VAR_WB2_Error);",
                     "visible": {
                         "type": "PropertyCondition",
                         "property": "WB_Count",
@@ -1408,7 +1414,8 @@
                 {
                     "type": "SelectVariable",
                     "name": "VAR_WB2_Status",
-                    "caption": "WB2 Status",
+                    "caption": "WB2 Ladestatus als Zahl, Bedeutung je Hersteller (nur Anzeige; nur falls nicht automatisch über ChargerHub)",
+                    "onChange": "EMS_WallboxLinkChanged($id, 2, $WB2_Instance, $VAR_WB2_Power, $VAR_WB2_Cable, $VAR_WB2_Status, $VAR_WB2_Error);",
                     "visible": {
                         "type": "PropertyCondition",
                         "property": "WB_Count",
@@ -1418,7 +1425,8 @@
                 {
                     "type": "SelectVariable",
                     "name": "VAR_WB2_Power",
-                    "caption": "WB2 Aktuelle Leistung (kW)",
+                    "caption": "WB2 Ladeleistung in kW (nur falls nicht automatisch über ChargerHub)",
+                    "onChange": "EMS_WallboxLinkChanged($id, 2, $WB2_Instance, $VAR_WB2_Power, $VAR_WB2_Cable, $VAR_WB2_Status, $VAR_WB2_Error);",
                     "visible": {
                         "type": "PropertyCondition",
                         "property": "WB_Count",
@@ -1428,7 +1436,7 @@
                 {
                     "type": "SelectVariable",
                     "name": "VAR_WB2_Active",
-                    "caption": "WB2 Wallbox aktiv (Boolean)",
+                    "caption": "WB2 Wallbox aktiv (Boolean, nur für das alte go-e-Charger-Modul ohne ChargerHub)",
                     "visible": {
                         "type": "PropertyCondition",
                         "property": "WB_Count",
@@ -1438,7 +1446,8 @@
                 {
                     "type": "SelectVariable",
                     "name": "VAR_WB2_Cable",
-                    "caption": "WB2 Kabel-Leistungsfähigkeit",
+                    "caption": "WB2 Fahrzeug angesteckt (1/0; nur falls nicht automatisch über ChargerHub)",
+                    "onChange": "EMS_WallboxLinkChanged($id, 2, $WB2_Instance, $VAR_WB2_Power, $VAR_WB2_Cable, $VAR_WB2_Status, $VAR_WB2_Error);",
                     "visible": {
                         "type": "PropertyCondition",
                         "property": "WB_Count",
@@ -1448,7 +1457,7 @@
                 {
                     "type": "SelectVariable",
                     "name": "VAR_WB2_Phases",
-                    "caption": "WB2 Aktuell genutzte Phasen",
+                    "caption": "WB2 Aktuell genutzte Phasen (wird nicht ausgewertet; die Phasen kommen aus ChargerHub)",
                     "visible": {
                         "type": "PropertyCondition",
                         "property": "WB_Count",
@@ -1458,7 +1467,8 @@
                 {
                     "type": "SelectVariable",
                     "name": "VAR_WB2_Error",
-                    "caption": "WB2 Fehler",
+                    "caption": "WB2 Fehlercode (0 = kein Fehler, alles andere sperrt die Freigabe; nur falls nicht automatisch über ChargerHub)",
+                    "onChange": "EMS_WallboxLinkChanged($id, 2, $WB2_Instance, $VAR_WB2_Power, $VAR_WB2_Cable, $VAR_WB2_Status, $VAR_WB2_Error);",
                     "visible": {
                         "type": "PropertyCondition",
                         "property": "WB_Count",
@@ -1550,7 +1560,8 @@
                 {
                     "type": "SelectVariable",
                     "name": "VAR_TIB_Price",
-                    "caption": "Aktueller Strompreis (EUR/kWh, z.B. Tibber CurrentPrice)"
+                    "caption": "Aktueller Strompreis (EUR/kWh, z.B. Tibber CurrentPrice; leer = automatisch aus der Preiskurve)",
+                    "onChange": "EMS_PriceLinkChanged($id, $VAR_TIB_Price);"
                 },
                 {
                     "type": "SelectVariable",

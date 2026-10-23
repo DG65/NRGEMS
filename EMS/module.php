@@ -41,7 +41,7 @@ define('EMS_LOG_VERBOSE',     2);
 // Formular-Konvention (siehe EMS/SUITE.md "Einheitliche Formular-Optik"):
 // Was-ist-Neu-Panel ist versionsscharf dismissible, Referenzmuster InverterHub.
 define('EMS_COLOR_AUTO', 0x2E8B3D); // Gruen: Wert wurde automatisch uebernommen (🔗-Zeilen im Formular)
-define('EMS_NEWS_VERSION', '0.83.0');
+define('EMS_NEWS_VERSION', '0.84.0');
 
 // NRG-Stack Partnermodul-GUIDs (fuer automatische Discovery, siehe discoverPartners())
 define('GUID_CHARGERHUB',    '{9256C34E-5CFD-4F37-8BFE-E65390EBB37C}');
@@ -777,6 +777,10 @@ class EMS extends IPSModule
                 'items'    => array(
                     array(
                         'type'    => 'Label',
+                        'caption' => '• NEU: Wallboxen über ChargerHub verbinden sich jetzt vollständig automatisch, auch Status und Fehler (ein Wallbox-Fehler sperrt die Freigabe). Im Panel „Wallboxen“ steht je Wert, woher er kommt (🔗 automatisch, ✏️ eigene Variable, ⚠️ nicht verbunden), mit aktuellem Wert; leere manuelle Felder werden ausgeblendet.'
+                    ),
+                    array(
+                        'type'    => 'Label',
                         'caption' => '• NEU: Ladeziel mit Frist je Wallbox (Panel „Wallboxen“): z. B. 20 kWh bis 07:00. EMS lädt in den günstigsten Viertelstunden bis zur Frist und überstimmt dabei die Ladeart, danach gilt sie wieder. Reicht die Zeit nicht, lädt EMS sofort und warnt. Standard aus; braucht ChargerHub ab 0.9.128.'
                     ),
                     array(
@@ -1051,6 +1055,47 @@ class EMS extends IPSModule
                         array_splice($element['items'], $idx + 1, 0, array(array_merge($this->statusLabel($spotText), array('name' => 'SpotStatusLabel'))));
                         break 2;
                     }
+                }
+            }
+        }
+        unset($element);
+
+        // 3b6. Wallbox-Quellen (Verbund-Regel: automatische Verbindungen sichtbar): Zeilen unter der Instanz-Auswahl; leere manuelle
+        // Felder, deren Wert ChargerHub/OCPPHub liefert, werden ausgeblendet; die nie ausgewertete Phasen-Variable nur, wenn sie leer ist.
+        // Gleiches fuer den Strompreis unter der Preisvariable.
+        foreach ($form['elements'] as &$element) {
+            if (($element['type'] ?? '') !== 'ExpansionPanel') { continue; }
+            for ($wbn = 2; $wbn >= 1; $wbn--) {
+                $entry = $this->getChargerEntry($wbn);
+                $auto = array('Power' => 'powerID', 'Cable' => 'plugStateID', 'Status' => 'stateID', 'Error' => 'errorCodeID');
+                foreach ($element['items'] as $idx => $item) {
+                    $name = (string)($item['name'] ?? '');
+                    foreach ($auto as $k => $field) {
+                        if ($name === 'VAR_WB' . $wbn . '_' . $k && $this->ReadPropertyInteger($name) <= 0 && (int)($entry[$field] ?? 0) > 0) {
+                            $element['items'][$idx]['visible'] = false;
+                        }
+                    }
+                    if (($name === 'VAR_WB' . $wbn . '_Phases' && $this->ReadPropertyInteger($name) <= 0)
+                        || ($name === 'VAR_WB' . $wbn . '_Active' && $this->ReadPropertyInteger($name) <= 0 && $this->ReadPropertyInteger('WB' . $wbn . '_Instance') <= 0 && !empty($entry))) {
+                        $element['items'][$idx]['visible'] = false;
+                    }
+                }
+                foreach ($element['items'] as $idx => $item) {
+                    if (($item['name'] ?? '') !== 'WB' . $wbn . '_Instance') { continue; }
+                    $labels = array();
+                    foreach ($this->wallboxLinkLines($wbn) as $key => $line) {
+                        $l = array_merge($this->statusLabel($line), array('name' => 'WB' . $wbn . 'Link' . $key));
+                        if (isset($item['visible'])) { $l['visible'] = $item['visible']; }
+                        $labels[] = $l;
+                    }
+                    array_splice($element['items'], $idx + 1, 0, $labels);
+                    break;
+                }
+            }
+            foreach ($element['items'] as $idx => $item) {
+                if (($item['name'] ?? '') === 'VAR_TIB_Price') {
+                    array_splice($element['items'], $idx + 1, 0, array(array_merge($this->statusLabel($this->priceLinkLine()), array('name' => 'PriceLinkStatus'))));
+                    break;
                 }
             }
         }
@@ -2316,6 +2361,126 @@ class EMS extends IPSModule
         }
         $id = (int)($this->getChargerEntry($n)['plugStateID'] ?? 0);
         return ($id > 0 && IPS_VariableExists($id)) ? (int)(bool)GetValue($id) : 0;
+    }
+
+    /** Ladestatus (Zahl, Bedeutung je Hersteller, nur Anzeige) -- manuelle Variable vor ChargerHub-`stateID` (Vertrag 1.11). */
+    private function readChargerStatus(int $n): int
+    {
+        if ($this->ReadPropertyInteger('VAR_WB' . $n . '_Status') > 0) {
+            return (int)$this->readVar('VAR_WB' . $n . '_Status', 0);
+        }
+        $id = (int)($this->getChargerEntry($n)['stateID'] ?? 0);
+        return ($id > 0 && IPS_VariableExists($id)) ? (int)GetValue($id) : 0;
+    }
+
+    /**
+     * Fehlercode der Wallbox (0 = kein Fehler, alles andere sperrt die Freigabe) -- manuelle Variable vor ChargerHub-`errorCodeID`
+     * (Vertrag 1.11, nur DaheimLader/Fox ESS/CHARX). Der Ladestatus wird herstelleruebergreifend NIE als Fehler gedeutet.
+     */
+    private function readChargerError(int $n): int
+    {
+        if ($this->ReadPropertyInteger('VAR_WB' . $n . '_Error') > 0) {
+            return (int)$this->readVar('VAR_WB' . $n . '_Error', 0);
+        }
+        $id = (int)($this->getChargerEntry($n)['errorCodeID'] ?? 0);
+        return ($id > 0 && IPS_VariableExists($id)) ? (int)GetValue($id) : 0;
+    }
+
+    /**
+     * Statuszeilen „woher kommt der Wert“ fuer Wallbox $n (Verbund-Regel: automatische Verbindungen muessen sichtbar sein): Instanz,
+     * Leistung, Angesteckt, Status, Fehler. Je Zeile 🔗 automatisch ueber ChargerHub/OCPPHub, ✏️ eigene Variable, ⚠️ nicht verbunden,
+     * jeweils mit aktuellem Wert. $ov: Auswahl aus dem offenen Formular (Instance, Power, Cable, Status, Error), null = gespeichert.
+     */
+    private function wallboxLinkLines(int $n, ?array $ov = null): array
+    {
+        $get = function (string $k, string $prop) use ($ov) { return ($ov !== null && array_key_exists($k, $ov)) ? (int)$ov[$k] : $this->ReadPropertyInteger($prop); };
+        $entry = $this->getChargerEntry($n);
+        $iid = (int)($entry['instanceID'] ?? 0);
+        $src = (($entry['source'] ?? '') === 'ocpphub') ? 'OCPPHub' : 'ChargerHub';
+        $hub = ($iid > 0) ? sprintf('%s «%s» (#%d)', $src, IPS_ObjectExists($iid) ? IPS_GetName($iid) : '?', $iid) : '';
+        $out = array();
+        $inst = $get('Instance', 'WB' . $n . '_Instance');
+        if ($inst > 0) {
+            $out['Instanz'] = array('caption' => sprintf('✏️ Wallbox %d: eigene Zuordnung Instanz #%d (%s)', $n, $inst, IPS_ObjectExists($inst) ? IPS_GetName($inst) : 'existiert nicht'), 'color' => -1);
+        } elseif ($hub !== '') {
+            $out['Instanz'] = array('caption' => sprintf('🔗 Wallbox %d: automatisch verbunden über %s', $n, $hub), 'color' => EMS_COLOR_AUTO);
+        } else {
+            $out['Instanz'] = array('caption' => sprintf('⚠️ Wallbox %d: keine Wallbox gefunden. Sobald ChargerHub oder OCPPHub eine meldet, verbindet EMS sie selbst.', $n), 'color' => -1);
+        }
+        $fields = array(
+            'Power'  => array('Leistung',   'VAR_WB' . $n . '_Power',  'powerID',     ', EMS rechnet ohne Ladeleistung'),
+            'Cable'  => array('Angesteckt', 'VAR_WB' . $n . '_Cable',  'plugStateID', ', EMS weiß nicht, ob ein Fahrzeug angesteckt ist'),
+            'Status' => array('Status',     'VAR_WB' . $n . '_Status', 'stateID',     ' (nur Anzeige)'),
+            'Error'  => array('Fehler',     'VAR_WB' . $n . '_Error',  'errorCodeID', ', die Freigabe wird nicht auf Fehler geprüft'),
+        );
+        foreach ($fields as $k => $f) {
+            list($label, $prop, $field, $missing) = $f;
+            $man = $get($k, $prop);
+            if ($man > 0) {
+                $out[$label] = IPS_VariableExists($man)
+                    ? array('caption' => sprintf('✏️ %s: eigene Variable #%d (%s), aktuell %s', $label, $man, IPS_GetName($man), $this->wallboxLinkValue($k, GetValue($man), true)), 'color' => -1)
+                    : array('caption' => sprintf('⚠️ %s: die eigene Variable #%d existiert nicht', $label, $man), 'color' => -1);
+                continue;
+            }
+            $vid = (int)($entry[$field] ?? 0);
+            if ($vid > 0 && IPS_VariableExists($vid)) {
+                $out[$label] = array('caption' => sprintf('🔗 %s: automatisch von %s, aktuell %s', $label, $hub, $this->wallboxLinkValue($k, GetValue($vid), false)), 'color' => EMS_COLOR_AUTO);
+            } else {
+                $out[$label] = array('caption' => sprintf('⚠️ %s: nicht verbunden%s', $label, ($hub !== '' ? ' (' . $src . ' meldet diesen Wert für die Wallbox nicht)' : '') . $missing), 'color' => -1);
+            }
+        }
+        return $out;
+    }
+
+    /** Anzeigewert einer Wallbox-Quelle; manuelle Leistung ist in kW, die ChargerHub-Leistung in W. */
+    private function wallboxLinkValue(string $k, $v, bool $manual): string
+    {
+        switch ($k) {
+            case 'Power':  $w = $manual ? (float)$v * 1000.0 : (float)$v; return number_format($w, 0, ',', '.') . ' W';
+            case 'Cable':  return ((int)(bool)$v === 1) ? 'angesteckt' : 'nicht angesteckt';
+            case 'Status': return 'Wert ' . (is_bool($v) ? (int)$v : (string)$v) . ' (Bedeutung je Hersteller)';
+            case 'Error':  return ((int)$v === 0) ? 'kein Fehler' : 'Fehler ' . (int)$v . ', Freigabe gesperrt';
+        }
+        return (string)$v;
+    }
+
+    /** Statuszeile zur Quelle des aktuellen Strompreises ($ov: Auswahl im offenen Formular). */
+    private function priceLinkLine(?int $ov = null): array
+    {
+        $id = ($ov !== null) ? $ov : (int)$this->ReadPropertyInteger('VAR_TIB_Price');
+        $ct = function ($eur) { return number_format((float)$eur * 100, 2, ',', '') . ' ct/kWh'; };
+        if ($id > 0) {
+            return IPS_VariableExists($id)
+                ? array('caption' => sprintf('✏️ Strompreis: eigene Variable #%d (%s), aktuell %s', $id, IPS_GetName($id), $ct(GetValue($id))), 'color' => -1)
+                : array('caption' => sprintf('⚠️ Strompreis: die eigene Variable #%d existiert nicht', $id), 'color' => -1);
+        }
+        $p = null;
+        try {
+            $prices = $this->parsePT15M($this->getPT15MTodayJson());
+            $slot = (int)(((int)date('H') * 60 + (int)date('i')) / 15);
+            $p = $prices[$slot] ?? null;
+        } catch (Throwable $e) { $p = null; }
+        if ($p !== null) {
+            return array('caption' => '🔗 Strompreis: automatisch aus der Viertelstunden-Preiskurve, aktuell ' . $ct($p), 'color' => EMS_COLOR_AUTO);
+        }
+        return array('caption' => '⚠️ Strompreis: keine Quelle gefunden (keine Variable verknüpft, keine Preiskurve). Ohne Preis prüft EMS die Wallbox nicht auf den Preis.', 'color' => -1);
+    }
+
+    /** onChange der Wallbox-Felder: die Quellzeilen folgen der Auswahl im offenen Formular. */
+    public function WallboxLinkChanged(int $num, int $instance, int $power, int $cable, int $status, int $error)
+    {
+        foreach ($this->wallboxLinkLines($num, array('Instance' => $instance, 'Power' => $power, 'Cable' => $cable, 'Status' => $status, 'Error' => $error)) as $key => $line) {
+            $this->UpdateFormField('WB' . $num . 'Link' . $key, 'caption', $line['caption']);
+            $this->UpdateFormField('WB' . $num . 'Link' . $key, 'color', $line['color']);
+        }
+    }
+
+    /** onChange der Preisvariable. */
+    public function PriceLinkChanged(int $varId)
+    {
+        $line = $this->priceLinkLine($varId);
+        $this->UpdateFormField('PriceLinkStatus', 'caption', $line['caption']);
+        $this->UpdateFormField('PriceLinkStatus', 'color', $line['color']);
     }
 
     /** n-ter gueltiger Ladepunkt (1-basiert, siehe getChargerList()) oder leeres Array. */
@@ -6495,13 +6660,13 @@ class EMS extends IPSModule
         $s['tibber_battery'] = $this->detectTibberBatteryControl();
         $this->SetValue('EMS_GridRewards', $s['grid_rewards']);
         $s['wb1_pow_kw']    = $this->readChargerPowerKw(1);
-        $s['wb1_status']    = (int)  $this->readVar('VAR_WB1_Status', 0);
+        $s['wb1_status']    = $this->readChargerStatus(1);
         $s['wb1_cable']     = $this->readChargerCable(1);
-        $s['wb1_error']     = (int)  $this->readVar('VAR_WB1_Error',  0);
+        $s['wb1_error']     = $this->readChargerError(1);
         $s['wb2_pow_kw']    = $this->readChargerPowerKw(2);
-        $s['wb2_status']    = (int)  $this->readVar('VAR_WB2_Status', 0);
+        $s['wb2_status']    = $this->readChargerStatus(2);
         $s['wb2_cable']     = $this->readChargerCable(2);
-        $s['wb2_error']     = (int)  $this->readVar('VAR_WB2_Error',  0);
+        $s['wb2_error']     = $this->readChargerError(2);
 
         // Waermepumpe (nur Monitoring)
         $s['hp_active']     = $this->ReadPropertyBoolean('HP_Active');
