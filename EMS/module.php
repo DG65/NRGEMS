@@ -2599,7 +2599,19 @@ class EMS extends IPSModule
     /** Eintraege ohne duplicateOf (= fuer dieses Geraet zaehlt eine andere Quelle). */
     private function withoutDuplicates(array $list): array
     {
-        return array_values(array_filter($list, function ($e) { return empty($e['duplicateOf']); }));
+        // Eine Dublette zaehlt nur dann nicht, wenn ihr Original (duplicateOf = {source, instanceID}) wirklich gemeldet wird.
+        // Fehlt das Original (z. B. OCPPHub-Splitter ausgeschaltet, Live-Befund 24.10.2026 an Dietmars WB2), waere die Wallbox
+        // sonst ganz verschwunden ("keine Wallbox gefunden"), obwohl ChargerHub sie liefert.
+        $present = array();
+        $p = $this->GetPartners();
+        foreach (array('chargerhub', 'ocpphub') as $src) {
+            foreach ((array)($p[$src] ?? array()) as $e) { $present[$src . ':' . (int)($e['instanceID'] ?? 0)] = true; }
+        }
+        return array_values(array_filter($list, function ($e) use ($present) {
+            $d = $e['duplicateOf'] ?? null;
+            if (empty($d)) { return true; }
+            return !is_array($d) || !isset($present[(string)($d['source'] ?? '') . ':' . (int)($d['instanceID'] ?? 0)]);
+        }));
     }
 
     /**
@@ -9516,8 +9528,13 @@ class EMS extends IPSModule
         $th = $this->priceThresholds()['wb'];
         $price = $this->currentPriceEur()['eur'];
         $pv = $this->ReadPropertyBoolean('WB_PV_Ueberschuss') ? ' oder bei PV-Überschuss' : '';
-        $txt = sprintf('Preisgesteuert: lädt bei Preis unter %s ct%s; jetzt %s%s.', number_format($th * 100, 1, ',', ''), $pv,
-            $enabled ? 'freigegeben' : 'gesperrt', ($price !== null) ? sprintf(' (Preis %s ct)', number_format($price * 100, 1, ',', '')) : '');
+        $pTxt = ($price !== null) ? sprintf(' (Preis %s ct)', number_format($price * 100, 1, ',', '')) : '';
+        if (!$plugged) {
+            $state = ($price !== null && $price < $th) ? 'Preis gerade darunter, lädt sofort nach dem Anstecken' . $pTxt : 'wartet' . $pTxt;
+        } else {
+            $state = ($enabled ? 'jetzt freigegeben' : 'jetzt gesperrt') . $pTxt;
+        }
+        $txt = sprintf('Preisgesteuert: lädt bei Preis unter %s ct%s; %s.', number_format($th * 100, 1, ',', ''), $pv, $state);
         return $head . ($note !== '' ? $note . ' ' : '') . $txt;
     }
 

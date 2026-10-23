@@ -1786,6 +1786,29 @@ prop('EMS_Active', false); $GLOBALS['PLANINFO'] = []; attr('WB1PlanSent', '');
 call($ems, 'Update');
 check('EMS aus: Plantext "EMS ist ausgeschaltet"', strpos(GetValue($vPlan), 'EMS ist ausgeschaltet') === 0, GetValue($vPlan));
 
+echo "\n8k14) Dublette ohne Original zaehlt (Live-Befund 24.10.2026, WB2 verschwand bei ausgeschaltetem OCPPHub)\n";
+$ems = freshEms();
+prop('WB_Active', true); prop('WB_Count', 2);
+$eA = ['instanceID' => 610, 'source' => 'chargerhub', 'managedBy' => 'none', 'maxCurrent' => 16];
+$eB = ['instanceID' => 611, 'source' => 'chargerhub', 'managedBy' => 'other', 'maxCurrent' => 32, 'duplicateOf' => ['source' => 'ocpphub', 'instanceID' => 999]];
+attr('PartnerCache', json_encode(['chargerhub' => [$eA, $eB]]));
+$lst = call($ems, 'getChargerList');
+check('OCPPHub-Original fehlt: die ChargerHub-Dublette zaehlt, Wallbox 2 = #611', count($lst) === 2 && (int)$lst[1]['instanceID'] === 611, json_encode(array_column($lst, 'instanceID')));
+check('Quellzeile Wallbox 2: automatisch verbunden statt "keine Wallbox gefunden"', strpos(call($ems, 'wallboxLinkLines', [2])['Instanz']['caption'], '🔗 Wallbox 2: automatisch verbunden') === 0, call($ems, 'wallboxLinkLines', [2])['Instanz']['caption']);
+attr('PartnerCache', json_encode(['chargerhub' => [$eA, $eB], 'ocpphub' => [['instanceID' => 999, 'source' => 'ocpphub', 'managedBy' => 'none', 'maxCurrent' => 32]]]));
+prop('WB_Quelle', 3);
+$lst = call($ems, 'getChargerList');
+check('Original vorhanden: Dublette zaehlt nicht doppelt (ChargerHub #610 + OCPPHub #999)', count($lst) === 2 && array_column($lst, 'instanceID') === [610, 999], json_encode(array_column($lst, 'instanceID')));
+prop('WB_Quelle', 0);
+// Plantext ohne Fahrzeug: kein Widerspruch "unter Schwelle, aber gesperrt"
+attr('PartnerCache', json_encode(['chargerhub' => [$eA]])); prop('WB_Count', 1);
+$pvv = vari('Preis', 0, 'p', 0.143, 2); prop('VAR_TIB_Price', $pvv); prop('TIB_Threshold_WB', 0.198);
+$txt = call($ems, 'wallboxPlanText', [1, 'ems', ['wb1_enable' => false, 'source' => 'tagesplan'], state(['wb1_cable' => 0]), null]);
+check('ohne Fahrzeug, Preis unter der Schwelle: "lädt sofort nach dem Anstecken" statt "jetzt gesperrt"', strpos($txt, 'Kein Fahrzeug angesteckt.') === 0 && strpos($txt, 'lädt sofort nach dem Anstecken') !== false && strpos($txt, 'gesperrt') === false, $txt);
+$txt = call($ems, 'wallboxPlanText', [1, 'ems', ['wb1_enable' => false, 'source' => 'tagesplan'], state(['wb1_cable' => 1]), null]);
+check('mit Fahrzeug und gesperrt: "jetzt gesperrt"', strpos($txt, 'jetzt gesperrt') !== false, $txt);
+prop('VAR_TIB_Price', 0); prop('TIB_Threshold_WB', 0.0);
+
 echo "\n8l) Wallbox bei PV-Ueberschuss auch ueber der Preisschwelle\n";
 $ems = freshEms();
 $sW = state(['tib_active' => true, 'pv_total_w' => 3000.0, 'house_pow_w' => 800.0, 'wb1_pow_kw' => 0.0]);
@@ -1865,7 +1888,7 @@ $ems = freshEms();
 $d0 = strtotime('today'); $md = [];
 for ($h = 0; $h < 24; $h++) { $md[] = ['start' => $d0 + $h * 3600, 'end' => $d0 + ($h + 1) * 3600, 'price' => 20.0 + $h]; }
 $md2 = []; $d1 = strtotime('tomorrow');
-for ($h = 0; $h < 24; $h++) { $md2[] = ['start' => $d1 + $h * 3600, 'end' => $d1 + ($h + 1) * 3600, 'price' => 50.0 + $h]; }
+for ($h = 0; $h < 24; $h++) { $a1 = mktime($h, 0, 0, (int)date('n', $d1), (int)date('j', $d1), (int)date('Y', $d1)); $md2[] = ['start' => $a1, 'end' => mktime($h + 1, 0, 0, (int)date('n', $d1), (int)date('j', $d1), (int)date('Y', $d1)), 'price' => 50.0 + $h]; } // Wanduhr-Stunden: auch am 23-/25-Stunden-Tag
 $GLOBALS['INSTMOD'][7001] = GUID_POWERPRICE; obj(7001, 1, 'aWATTar', 0);
 $mdVar = vari('Marktdaten', 7001, 'MarketData', json_encode(array_merge($md, $md2)), 3);
 $GLOBALS['TIBBER_CURVE'] = [];
@@ -2746,7 +2769,7 @@ check('GetBatteryCost 1.0: 20 ct, 25 ct, 50 % Netz, eingeschwungen, Datum deutsc
     $r['contractVersion'] === '1.0' && $r['einstandCt'] === 20.0 && $r['einstandMitVerguetungCt'] === 25.0 && $r['netzAnteilPct'] === 50.0
     && $r['eingeschwungen'] === true && $r['seitText'] === '01.09.2026 12:00', json_encode($r));
 $GLOBALS['INSTMOD'][500] = GUID_ARCHIVECONTROL;
-$d0 = strtotime('today');
+$d0 = strtotime('yesterday'); // gestern: kurz nach Mitternacht laegen die Slots sonst in der Zukunft
 $GLOBALS['ARCHIVE'][call($ems, 'GetIDForIdent', ['EMS_BatCostCt'])] = [[$d0 - 3600, 12.0], [$d0 + 1000, 18.5]];
 $r = call($ems, 'GetBatteryCostHistory', [$d0, $d0 + 1800]);
 check('GetBatteryCostHistory: Archivwert je Slot-Mitte (12 → 18,5 ct)', array_column($r['slots'], 'einstandCt') === [12.0, 18.5], json_encode($r['slots']));
