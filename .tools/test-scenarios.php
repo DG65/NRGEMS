@@ -143,12 +143,15 @@ class IPSModule
     protected function RegisterAttributeString($n, $v)  { $this->defs['@' . $n] = $v; }
     protected function RegisterAttributeInteger($n, $v) { $this->defs['@' . $n] = $v; }
     protected function RegisterAttributeBoolean($n, $v) { $this->defs['@' . $n] = $v; }
+    protected function RegisterAttributeFloat($n, $v)   { $this->defs['@' . $n] = $v; }
     public function ReadAttributeString($n)   { return (string)($GLOBALS['ATTR'][$this->InstanceID][$n] ?? $this->defs['@' . $n] ?? ''); }
     public function ReadAttributeInteger($n)  { return (int)($GLOBALS['ATTR'][$this->InstanceID][$n] ?? $this->defs['@' . $n] ?? 0); }
     public function ReadAttributeBoolean($n)  { return (bool)($GLOBALS['ATTR'][$this->InstanceID][$n] ?? $this->defs['@' . $n] ?? false); }
+    public function ReadAttributeFloat($n)    { return (float)($GLOBALS['ATTR'][$this->InstanceID][$n] ?? $this->defs['@' . $n] ?? 0.0); }
     public function WriteAttributeString($n, $v)  { $GLOBALS['ATTR'][$this->InstanceID][$n] = $v; }
     public function WriteAttributeInteger($n, $v) { $GLOBALS['ATTR'][$this->InstanceID][$n] = $v; }
     public function WriteAttributeBoolean($n, $v) { $GLOBALS['ATTR'][$this->InstanceID][$n] = $v; }
+    public function WriteAttributeFloat($n, $v)   { $GLOBALS['ATTR'][$this->InstanceID][$n] = $v; }
     protected function RegisterVariableBoolean($ident, $name, $profile = '', $pos = 0) { return $this->regVar($ident, $name, false, 0); }
     protected function RegisterVariableInteger($ident, $name, $profile = '', $pos = 0) { return $this->regVar($ident, $name, 0, 1); }
     protected function RegisterVariableFloat($ident, $name, $profile = '', $pos = 0)   { return $this->regVar($ident, $name, 0.0, 2); }
@@ -1523,6 +1526,99 @@ check('Besitzerwechsel an einem frueheren Tag: mit Datum', (bool)preg_match('/\(
 $whEms = ['instanceID' => 600, 'source' => 'chargerhub', 'chargeEnableID' => $cenX, 'maxCurrent' => 16, 'managedBy' => 'none', 'powerID' => 0, 'plugStateID' => 0, 'controlReason' => 'EMS steuert', 'controlSince' => time() - 60];
 attr('PartnerCache', json_encode(['chargerhub' => [$whEms]]));
 check('Wallbox, die EMS selbst steuert: kein ChargerHub-Hinweis (nur bei Beobachten)', strpos($txt(call($ems, 'wallboxModeStatusLine', [1])), 'laut ChargerHub') === false, $txt(call($ems, 'wallboxModeStatusLine', [1])));
+
+echo "\n8k11) Wallbox Stufe 2: Ladeziel (kWh) mit Frist, ueberstimmt die Ladeart\n";
+$ems = freshEms();
+$n0 = strtotime('today 22:07'); $dl0 = strtotime('tomorrow 07:00');
+$pm = []; for ($t = $n0 - ($n0 % 900); $t < $dl0; $t += 900) { $pm[$t] = 0.30; }
+$cheap = [strtotime('tomorrow 02:00'), strtotime('tomorrow 02:15'), strtotime('tomorrow 02:30'), strtotime('tomorrow 02:45'), strtotime('tomorrow 03:00')];
+foreach ($cheap as $c) { $pm[$c] = 0.20; }
+$tp = fn(array $o) => call($ems, 'wallboxTargetPlan', [array_merge(['targetKwh' => 10.0, 'chargedKwh' => 0.0, 'now' => $n0, 'deadline' => $dl0, 'prices' => $pm, 'powerKw' => 11.0, 'bufferPct' => 20], $o)]);
+$r = $tp([]);
+check('10 kWh bei 11 kW, 20 % Puffer: 5 Viertelstunden (10/11*1,2*4 = 4,4 -> 5), genau die guenstigen 02:00-03:00', count($r['slots']) === 5 && $r['slots'] === $cheap && $r['state'] === 'wait' && $r['enable'] === false, json_encode([$r['state'], array_map(fn($x) => date('H:i', $x), $r['slots'])]));
+check('Text nennt Ziel, Frist, Fenster und Durchschnittspreis', strpos($r['text'], 'Ziel 10,0 kWh bis 07:00') !== false && strpos($r['text'], 'ab 02:00') !== false && strpos($r['text'], 'Ø 20,0 ct') !== false && strpos($r['text'], 'wartet') !== false, $r['text']);
+$r = $tp(['now' => strtotime('tomorrow 02:10')]);
+check('im geplanten Fenster: laedt jetzt', $r['enable'] === true && $r['state'] === 'charge', json_encode($r));
+$r = $tp(['chargedKwh' => 10.0]);
+check('Ziel erreicht: done, keine Freigabe', $r['state'] === 'done' && $r['enable'] === false);
+$r = $tp(['now' => $dl0 + 60, 'chargedKwh' => 4.0]);
+check('Frist vorbei: expired, nennt die fehlenden 6 kWh', $r['state'] === 'expired' && strpos($r['text'], 'es fehlen 6,0 kWh') !== false, $r['text']);
+$r = $tp(['now' => strtotime('tomorrow 06:30'), 'targetKwh' => 20.0]);
+check('Zeit reicht nicht (20 kWh in 30 min bei 11 kW): laedt sofort und warnt', $r['state'] === 'late' && $r['enable'] === true && strpos($r['text'], 'Frist nicht erreichbar') !== false, $r['text']);
+$r = $tp(['prices' => []]);
+check('ohne Preise: 5 frueheste Viertelstunden, Text "ohne Preise", aktueller Slot dabei -> laedt jetzt', $r['enable'] === true && count($r['slots']) === 5 && strpos($r['text'], 'ohne Preise') !== false, $r['text']);
+$r = $tp(['powerKw' => 0.0]);
+check('Ladeleistung unbekannt (0): ganze Zeit bis zur Frist, laedt sofort', $r['enable'] === true);
+check('naechstes Auftreten der Uhrzeit: 07:00 nach 22:07 = morgen, 23:00 nach 22:07 = heute', call($ems, 'nextClockTs', ['07:00', $n0]) === $dl0 && call($ems, 'nextClockTs', ['23:00', $n0]) === strtotime('today 23:00') && call($ems, 'nextClockTs', ['7 Uhr', $n0]) === null);
+
+echo "   Ansteuerung\n";
+prop('WB_Active', true); prop('WB_Count', 1); prop('WB1_Max_Power_W', 11000); prop('WB_Cooldown_Sec', 120); prop('WB_Min_Charge_Min', 5); prop('WB1_Mode', 0);
+$cenT = vari('CHUB WB1 Ladefreigabe', 600, 'ctl_enable', false, 0);
+$curT = vari('CHUB WB1 Stromgrenze', 600, 'ctl_curr_limit', 16, 1);
+$plT  = vari('CHUB WB1 Stecker', 600, 'plug_state', true, 0);
+$seT  = vari('CHUB WB1 Sitzungsenergie', 600, 'session_energy', 0.0, 2);
+$whT = ['instanceID' => 600, 'source' => 'chargerhub', 'chargeEnableID' => $cenT, 'currentLimitID' => $curT, 'plugStateID' => $plT, 'sessionEnergyID' => $seT,
+        'minCurrent' => 6, 'maxCurrent' => 16, 'currentStepA' => 1.0, 'phases' => 3, 'managedBy' => 'none', 'powerID' => 0];
+attr('PartnerCache', json_encode(['chargerhub' => [$whT]]));
+$GLOBALS['TIBBER_CURVE'] = [];
+$wbActsT = fn() => array_values(array_filter($GLOBALS['ACTIONS'], fn($a) => in_array($a[1], ['ctl_enable', 'ctl_curr_limit'], true)));
+$sT = state(['wb_active' => true, 'wb_count' => 1, 'pv_total_w' => 0.0, 'house_pow_w' => 500.0]);
+$dT = fn() => ['wb1_enable' => false, 'wb2_enable' => false, 'source' => 'tagesplan', 'reason' => ''];
+$rstT = function () use ($cenT) { $GLOBALS['VAL'][$cenT] = false; foreach (['LastWB1Switch' => 0, 'WB1EmsLocked' => false, 'WB1LastSentEnable' => false, 'WB1CurrentSentA' => -1, 'WB1CurrentSentAt' => 0, 'WB1TargetSession' => 0, 'WB1TargetDeadline' => 0, 'WB1TargetDone' => false] as $k => $v) { attr($k, $v); } $GLOBALS['ACTIONS'] = []; };
+$rstT(); prop('WB1_ChargeMode', 0); prop('WB1_TargetKwh', 0.0); $d = $dT();
+call($ems, 'applyWallboxControl', [&$d, $sT]);
+check('Ziel aus, Ladeart preisgesteuert: Verhalten wie bisher (gesperrt bleibt gesperrt, nichts geschrieben)', $wbActsT() === [], json_encode($GLOBALS['ACTIONS']));
+// Ziel mit Frist in 30 min, 20 kWh: reicht nicht -> sofort laden mit Maximalstrom
+$rstT(); prop('WB1_TargetKwh', 20.0); prop('WB1_TargetTime', date('H:i', time() + 1800)); $d = $dT();
+call($ems, 'applyWallboxControl', [&$d, $sT]);
+check('Ziel 20 kWh, Frist in 30 min: sofort Hoechststrom (11 kW dreiphasig = 15 A) und Freigabe, obwohl die Preisentscheidung sperrt', $wbActsT() === [[600, 'ctl_curr_limit', 15], [600, 'ctl_enable', true]], json_encode($GLOBALS['ACTIONS']));
+check('Statuszeile warnt "Frist nicht erreichbar"', strpos($ems->ReadAttributeString('WB1ChargeText'), 'Frist nicht erreichbar') !== false, $ems->ReadAttributeString('WB1ChargeText'));
+check('Frist wird beim Anstecken festgelegt (Sitzung und Frist gemerkt)', $ems->ReadAttributeInteger('WB1TargetSession') > 0 && $ems->ReadAttributeInteger('WB1TargetDeadline') > time());
+// Sitzungsenergie: Bezugspunkt beim Anstecken, Ruecksprung des Zaehlers
+check('Bezugspunkt beim Anstecken gemerkt (Zaehler stand auf 0)', $ems->ReadAttributeFloat('WB1TargetBase') == 0.0);
+attr('WB1TargetBase', 12.0); attr('WB1TargetCarry', 0.0); attr('WB1TargetLast', 12.0);
+check('Zaehler stand beim Anstecken noch auf dem Endwert der letzten Sitzung (12 kWh): 15 kWh = 3 kWh geladen', abs(call($ems, 'wallboxSessionChargedKwh', [1, 15.0]) - 3.0) < 1e-6);
+check('Geraet setzt erst beim Stromfluss zurueck (15 -> 0,5): 3 kWh bleiben, plus 0,5 = 3,5 kWh, nie negativ', abs(call($ems, 'wallboxSessionChargedKwh', [1, 0.5]) - 3.5) < 1e-6 && $ems->ReadAttributeFloat('WB1TargetBase') == 0.0);
+check('danach normal weiter: 2,0 -> 5,0 kWh', abs(call($ems, 'wallboxSessionChargedKwh', [1, 2.0]) - 5.0) < 1e-6);
+check('kleine Schwankung (2,0 -> 1,98) ist kein Ruecksprung', abs(call($ems, 'wallboxSessionChargedKwh', [1, 1.98]) - 4.98) < 1e-6);
+attr('WB1TargetBase', 0.0); attr('WB1TargetCarry', 0.0); attr('WB1TargetLast', 0.0);
+// Ziel erreicht -> Ladeart gilt wieder (hier Nur PV ohne Ueberschuss -> Stopp nach Wartezeit)
+$GLOBALS['VAL'][$cenT] = true; $GLOBALS['VAL'][$seT] = 20.0; attr('LastWB1Switch', time() - 1000); prop('WB1_ChargeMode', 2); $GLOBALS['ACTIONS'] = []; $d = $dT();
+call($ems, 'applyWallboxControl', [&$d, $sT]);
+check('Ziel erreicht: zurueck zur Ladeart (Nur PV ohne Ueberschuss -> gesperrt), Hinweis "erreicht" vor dem Ladeart-Text', $wbActsT() === [[600, 'ctl_enable', false]] && $ems->ReadAttributeBoolean('WB1TargetDone') === true && strpos($ems->ReadAttributeString('WB1ChargeText'), 'erreicht') !== false, json_encode($GLOBALS['ACTIONS']) . $ems->ReadAttributeString('WB1ChargeText'));
+// Abstecken setzt zurueck
+$GLOBALS['VAL'][$plT] = false; $GLOBALS['ACTIONS'] = []; $d = $dT();
+call($ems, 'applyWallboxControl', [&$d, $sT]);
+check('Abstecken: Sitzung, Frist und "erreicht" zurueckgesetzt', $ems->ReadAttributeInteger('WB1TargetSession') === 0 && $ems->ReadAttributeBoolean('WB1TargetDone') === false);
+$GLOBALS['VAL'][$plT] = true; $GLOBALS['VAL'][$seT] = 0.0; prop('WB1_ChargeMode', 0);
+// Vorrang Netzbetreiber
+$rstT(); $GLOBALS['VAL'][$cenT] = true; attr('WB1LastSentEnable', true); $d = array_merge($dT(), ['source' => 'netzbetreiber']);
+call($ems, 'applyWallboxControl', [&$d, $sT]);
+check('§14a geht vor dem Ziel: gesperrt', $wbActsT() === [[600, 'ctl_enable', false]], json_encode($GLOBALS['ACTIONS']));
+// Smart Charging unberuehrt
+$rstT(); prop('WB1_Mode', 1); $d = $dT();
+call($ems, 'applyWallboxControl', [&$d, $sT]);
+check('Smart Charging: Ziel schreibt nichts', array_filter($wbActsT(), fn($a) => $a[1] === 'ctl_curr_limit') === [], json_encode($GLOBALS['ACTIONS']));
+prop('WB1_Mode', 0);
+// Wallbox ohne Sitzungsenergie
+$whN = $whT; unset($whN['sessionEnergyID']); attr('PartnerCache', json_encode(['chargerhub' => [$whN]]));
+$rstT(); $d = $dT();
+call($ems, 'applyWallboxControl', [&$d, $sT]);
+check('Wallbox ohne Sitzungsenergie: Ziel nicht unterstuetzt (Hinweis), kein Schreiben, Preissteuerung bleibt', $wbActsT() === [] && strpos($ems->ReadAttributeString('WB1ChargeText'), 'nicht unterstützt') !== false, $ems->ReadAttributeString('WB1ChargeText'));
+attr('PartnerCache', json_encode(['chargerhub' => [$whT]]));
+// ungueltige Uhrzeit
+$rstT(); prop('WB1_TargetTime', '7 Uhr'); $d = $dT();
+call($ems, 'applyWallboxControl', [&$d, $sT]);
+check('ungueltige Frist: Ziel aus mit Hinweis', $wbActsT() === [] && strpos($ems->ReadAttributeString('WB1ChargeText'), 'keine gültige Uhrzeit') !== false, $ems->ReadAttributeString('WB1ChargeText'));
+// Anstecken, waehrend der Zaehler noch den Endwert der letzten Sitzung zeigt (12 kWh): Ziel 5 kWh ist NICHT schon erreicht
+$rstT(); attr('WB1TargetBase', 0.0); attr('WB1TargetCarry', 0.0); attr('WB1TargetLast', 0.0);
+$GLOBALS['VAL'][$seT] = 12.0; prop('WB1_TargetKwh', 5.0); prop('WB1_TargetTime', date('H:i', time() + 1800)); $d = $dT();
+call($ems, 'applyWallboxControl', [&$d, $sT]);
+check('Zaehler zeigt beim Anstecken noch 12 kWh der Vorsitzung: Ziel 5 kWh gilt als offen (0 geladen), es wird geladen', $ems->ReadAttributeBoolean('WB1TargetDone') === false && in_array([600, 'ctl_enable', true], $wbActsT(), true) && abs($ems->ReadAttributeFloat('WB1TargetBase') - 12.0) < 1e-6, json_encode($GLOBALS['ACTIONS']) . $ems->ReadAttributeString('WB1ChargeText'));
+$GLOBALS['VAL'][$seT] = 0.0;
+prop('WB1_TargetKwh', 0.0); prop('WB1_TargetTime', '07:00');
+$f = json_encode(json_decode($ems->GetConfigurationForm(), true), JSON_UNESCAPED_UNICODE);
+check('Formular: Ladeziel und Frist fuer beide Wallboxen', strpos($f, '"name":"WB1_TargetKwh"') !== false && strpos($f, '"name":"WB2_TargetTime"') !== false);
 
 echo "\n8l) Wallbox bei PV-Ueberschuss auch ueber der Preisschwelle\n";
 $ems = freshEms();

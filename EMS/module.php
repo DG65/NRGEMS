@@ -41,7 +41,7 @@ define('EMS_LOG_VERBOSE',     2);
 // Formular-Konvention (siehe EMS/SUITE.md "Einheitliche Formular-Optik"):
 // Was-ist-Neu-Panel ist versionsscharf dismissible, Referenzmuster InverterHub.
 define('EMS_COLOR_AUTO', 0x2E8B3D); // Gruen: Wert wurde automatisch uebernommen (🔗-Zeilen im Formular)
-define('EMS_NEWS_VERSION', '0.82.0');
+define('EMS_NEWS_VERSION', '0.83.0');
 
 // NRG-Stack Partnermodul-GUIDs (fuer automatische Discovery, siehe discoverPartners())
 define('GUID_CHARGERHUB',    '{9256C34E-5CFD-4F37-8BFE-E65390EBB37C}');
@@ -340,6 +340,8 @@ class EMS extends IPSModule
             $this->RegisterPropertyInteger('WB' . $i . '_ManualCurrentA', 0); // Ladeart manuell: feste Stromstaerke in A, 0 = Maximalstrom der Wallbox
             $this->RegisterPropertyInteger('WB' . $i . '_PvSharePct', 50);  // Ladeart PV-Anteil: Anteil des PV-Ueberschusses fuers Auto in Prozent
             $this->RegisterPropertyInteger('WB' . $i . '_PhaseSetting', 0); // Phasen: 0 nicht aendern, 1 einphasig, 3 dreiphasig (nur wenn die Wallbox umschaltbar ist)
+            $this->RegisterPropertyFloat('WB' . $i . '_TargetKwh', 0.0);    // Ladeziel: Energie seit dem Anstecken in kWh, 0 = aus (Stufe 2)
+            $this->RegisterPropertyString('WB' . $i . '_TargetTime', '07:00'); // Frist fuer das Ladeziel (Uhrzeit, naechstes Auftreten nach dem Anstecken)
             $this->RegisterPropertyInteger('VAR_WB' . $i . '_Status', 0);
             $this->RegisterPropertyInteger('VAR_WB' . $i . '_Power',  0);
             $this->RegisterPropertyInteger('VAR_WB' . $i . '_Active', 0);
@@ -494,6 +496,13 @@ class EMS extends IPSModule
             $this->RegisterAttributeInteger('WB' . $i . 'CurrentSentAt', 0);
             $this->RegisterAttributeInteger('WB' . $i . 'PhaseSentAt', 0);
             $this->RegisterAttributeString('WB' . $i . 'ChargeText', '');        // Klartext der letzten Ladeart-Entscheidung fuers Panel
+            $this->RegisterAttributeInteger('WB' . $i . 'TargetSession', 0);     // Anstecken erkannt (Unix-Zeit), 0 = kein Fahrzeug/keine Sitzung
+            $this->RegisterAttributeInteger('WB' . $i . 'TargetDeadline', 0);    // Frist dieser Sitzung (Unix-Zeit), beim Anstecken festgelegt
+            $this->RegisterAttributeBoolean('WB' . $i . 'TargetDone', false);    // Ziel in dieser Sitzung erreicht (bis zum Abstecken)
+            $this->RegisterAttributeFloat('WB' . $i . 'TargetBase', 0.0);        // Sitzungsenergie der Wallbox beim Anstecken (kWh), Bezugspunkt
+            $this->RegisterAttributeFloat('WB' . $i . 'TargetCarry', 0.0);       // vor einem Ruecksprung des Zaehlers schon geladene kWh
+            $this->RegisterAttributeFloat('WB' . $i . 'TargetLast', 0.0);        // zuletzt gelesener Zaehlerstand (Ruecksprung erkennen)
+            $this->RegisterAttributeString('WB' . $i . 'TargetNote', '');        // Hinweis zum Ziel, wenn die Ladeart wieder gilt (erreicht, Frist vorbei, nicht unterstuetzt)
         }
         $this->RegisterAttributeInteger('SolisLastMode', -1);     // zuletzt an den Solis gesendeter Zwangsmodus (0 frei, 1 Laden, 2 Entladen, -1 = unbekannt)
         $this->RegisterAttributeInteger('SolisLastPowerW', 0);
@@ -766,6 +775,10 @@ class EMS extends IPSModule
                 'caption'  => '🆕 Neu in Version ' . EMS_NEWS_VERSION,
                 'expanded' => true,
                 'items'    => array(
+                    array(
+                        'type'    => 'Label',
+                        'caption' => '• NEU: Ladeziel mit Frist je Wallbox (Panel „Wallboxen“): z. B. 20 kWh bis 07:00. EMS lädt in den günstigsten Viertelstunden bis zur Frist und überstimmt dabei die Ladeart, danach gilt sie wieder. Reicht die Zeit nicht, lädt EMS sofort und warnt. Standard aus; braucht ChargerHub ab 0.9.128.'
+                    ),
                     array(
                         'type'    => 'Label',
                         'caption' => '• NEU: Bei einer Wallbox, die EMS nur beobachtet, nennt die Statuszeile im Panel „Wallboxen“ jetzt, wer sie laut ChargerHub regelt und warum (nur Anzeige, ab ChargerHub 0.9.126).'
@@ -9180,7 +9193,7 @@ class EMS extends IPSModule
             return '⚠️ Wallbox ' . $n . ': „EMS steuert“ gewählt, aber EMS darf diese Wallbox nicht schalten (fremd gesteuert). Es passiert nichts.';
         }
         $tail = ($t !== null) ? ' Tibber meldet Smart Charging für ' . $who . ' als aus' . $old . '.' : ' Smart Charging im Fahrzeug sollte aus sein, sonst regeln zwei Stellen.';
-        if ($override === null && $this->ReadPropertyInteger('WB' . $n . '_ChargeMode') > 0) {
+        if ($override === null && ($this->ReadPropertyInteger('WB' . $n . '_ChargeMode') > 0 || $this->ReadPropertyFloat('WB' . $n . '_TargetKwh') > 0)) {
             $ct = trim($this->ReadAttributeString('WB' . $n . 'ChargeText'));
             if ($ct !== '') { $tail = ' Ladeart: ' . $ct . '.' . $tail; }
         }
@@ -9262,7 +9275,7 @@ class EMS extends IPSModule
         $plans = array();
         if (!in_array((string)($d['source'] ?? ''), array('netzbetreiber', 'nutzer'), true)) {
             for ($n = 1; $n <= $count; $n++) {
-                if ($modes[$n] !== 'ems' || $this->ReadPropertyInteger('WB' . $n . '_ChargeMode') <= 0) { continue; }
+                if ($modes[$n] !== 'ems' || ($this->ReadPropertyInteger('WB' . $n . '_ChargeMode') <= 0 && $this->ReadPropertyFloat('WB' . $n . '_TargetKwh') <= 0)) { continue; }
                 $plan = $this->wallboxChargePlanFor($n, $s);
                 if ($plan === null) { continue; }
                 $plans[$n] = $plan;
@@ -9437,6 +9450,176 @@ class EMS extends IPSModule
         return (abs($a - round($a)) < 0.05) ? (string)(int)round($a) : number_format($a, 1, ',', '');
     }
 
+    // ----------------------------------------------------------------
+    //  Ladeziel mit Frist (Dietmar 23.10.2026, Wallbox Stufe 2): X kWh seit dem Anstecken bis zur Uhrzeit, in den
+    //  guenstigsten Viertelstunden. Ein aktives Ziel ueberstimmt die Ladeart bis zur Frist; danach (oder wenn erreicht)
+    //  gilt wieder die Ladeart. §14a, Batterie-Boost, Smart Charging und "nur beobachten" behalten Vorrang.
+    // ----------------------------------------------------------------
+
+    /**
+     * Reine Rechnung des Ladeziels. Eingaben: targetKwh, chargedKwh, now, deadline (Unix-Zeit), prices (Slotbeginn => EUR/kWh, fehlende
+     * Viertelstunden gelten als teuer), powerKw (erwartete Ladeleistung), bufferPct (Zeitpuffer). Ergebnis: state (done, expired, late,
+     * charge, wait), enable, text, slots (gewaehlte Slotbeginne). Bei zu wenig Zeit wird sofort geladen und gewarnt.
+     */
+    private function wallboxTargetPlan(array $in): array
+    {
+        $target = (float)$in['targetKwh'];
+        $charged = max(0.0, (float)$in['chargedKwh']);
+        $rest = $target - $charged;
+        $now = (int)$in['now'];
+        $dl = (int)$in['deadline'];
+        $hhmm = date('H:i', $dl);
+        $base = sprintf('Ziel %s kWh bis %s: %s kWh geladen', $this->fmtKwh($target), $hhmm, $this->fmtKwh($charged));
+        if ($rest <= 0.05) {
+            return array('state' => 'done', 'enable' => false, 'text' => $base . ', Ziel erreicht', 'slots' => array());
+        }
+        if ($now >= $dl) {
+            return array('state' => 'expired', 'enable' => false, 'text' => sprintf('%s, Frist vorbei, es fehlen %s kWh', $base, $this->fmtKwh($rest)), 'slots' => array());
+        }
+        $cur = $now - ($now % 900);
+        $all = array();
+        for ($t = $cur; $t < $dl; $t += 900) { $all[] = $t; }
+        $kw = max(0.0, (float)$in['powerKw']);
+        $need = ($kw > 0.0) ? (int)ceil($rest / $kw * (1.0 + max(0.0, (float)$in['bufferPct']) / 100.0) * 4.0 - 1e-9) : count($all);
+        $need = max(1, $need);
+        $prices = (array)$in['prices'];
+        if ($need >= count($all)) {
+            $possible = $kw * (count($all) - (($now - $cur) / 900.0)) / 4.0;
+            $late = ($kw <= 0.0) || ($possible + $charged < $target);
+            $txt = $late
+                ? sprintf('%s, Frist nicht erreichbar: bis %s gehen nur etwa %s kWh, lädt sofort', $base, $hhmm, $this->fmtKwh(min($target, $charged + $possible)))
+                : sprintf('%s, noch %s kWh, knapp: lädt sofort durch', $base, $this->fmtKwh($rest));
+            return array('state' => $late ? 'late' : 'charge', 'enable' => true, 'text' => $txt, 'slots' => $all);
+        }
+        $ranked = $all;
+        usort($ranked, function ($a, $b) use ($prices) {
+            $pa = isset($prices[$a]) && $prices[$a] !== null ? (float)$prices[$a] : INF;
+            $pb = isset($prices[$b]) && $prices[$b] !== null ? (float)$prices[$b] : INF;
+            return ($pa === $pb) ? ($a <=> $b) : ($pa <=> $pb);
+        });
+        $pick = array_slice($ranked, 0, $need);
+        sort($pick);
+        $known = array_filter($pick, function ($t) use ($prices) { return isset($prices[$t]) && $prices[$t] !== null; });
+        $avg = count($known) ? array_sum(array_map(function ($t) use ($prices) { return (float)$prices[$t]; }, $known)) / count($known) : null;
+        $on = in_array($cur, $pick, true);
+        $txt = sprintf('%s, noch %s kWh, %d Viertelstunden geplant ab %s%s: %s', $base, $this->fmtKwh($rest), $need, date('H:i', $pick[0]),
+            $avg !== null ? sprintf(', Ø %s ct', number_format($avg * 100, 1, ',', '')) : ' (ohne Preise)', $on ? 'lädt jetzt' : 'wartet aufs nächste Fenster');
+        return array('state' => $on ? 'charge' : 'wait', 'enable' => $on, 'text' => $txt, 'slots' => $pick);
+    }
+
+    private function fmtKwh(float $k): string
+    {
+        return number_format($k, 1, ',', '');
+    }
+
+    /** Naechstes Auftreten der Uhrzeit HH:MM nach $from; null bei ungueltiger Eingabe. */
+    private function nextClockTs(string $hhmm, int $from): ?int
+    {
+        if (!preg_match('/^\s*(\d{1,2}):(\d{2})\s*$/', $hhmm, $m) || (int)$m[1] > 23 || (int)$m[2] > 59) { return null; }
+        $t = mktime((int)$m[1], (int)$m[2], 0, (int)date('n', $from), (int)date('j', $from), (int)date('Y', $from));
+        return ($t <= $from) ? strtotime('+1 day', $t) : $t;
+    }
+
+    /**
+     * In dieser Sitzung geladene kWh, unabhaengig davon, wann die Wallbox ihren Sitzungszaehler zuruecksetzt (bei keinem Geraet gemessen,
+     * ChargerHub 23.10.2026): geladen = Vorrat + (Zaehler - Bezugspunkt beim Anstecken). Springt der Zaehler zurueck (Geraet setzt erst beim
+     * ersten Stromfluss oder nach einer Pause zurueck), wird das bis dahin Geladene in den Vorrat uebernommen und ab 0 weitergezaehlt;
+     * nie eine negative Menge.
+     */
+    private function wallboxSessionChargedKwh(int $n, float $value): float
+    {
+        $base = $this->ReadAttributeFloat('WB' . $n . 'TargetBase');
+        $carry = $this->ReadAttributeFloat('WB' . $n . 'TargetCarry');
+        $last = $this->ReadAttributeFloat('WB' . $n . 'TargetLast');
+        if ($value < $last - 0.05) {
+            $carry += max(0.0, $last - $base);
+            $base = 0.0;
+            $this->WriteAttributeFloat('WB' . $n . 'TargetCarry', $carry);
+            $this->WriteAttributeFloat('WB' . $n . 'TargetBase', 0.0);
+            $this->emsLog(EMS_LOG_VERBOSE, sprintf('WB%d: Sitzungszaehler sprang von %s auf %s kWh zurueck, zaehle ab 0 weiter (bisher %s kWh)', $n, $this->fmtKwh($last), $this->fmtKwh($value), $this->fmtKwh($carry)));
+        }
+        $this->WriteAttributeFloat('WB' . $n . 'TargetLast', $value);
+        return max(0.0, $carry + $value - $base);
+    }
+
+    /** Viertelstundenpreise heute und morgen als Slotbeginn => EUR/kWh (nur bekannte Preise). */
+    private function targetPriceMap(): array
+    {
+        $map = array();
+        $day0 = strtotime('today');
+        foreach (array(0 => $this->getPT15MTodayJson(), 1 => $this->getPT15MTomorrowJson()) as $off => $json) {
+            foreach ($this->parsePT15M($json, $off) as $i => $p) {
+                if ($p === null) { continue; }
+                $map[strtotime('+' . $off . ' day', $day0) + (int)$i * 900] = (float)$p;
+            }
+        }
+        return $map;
+    }
+
+    /**
+     * Ladeziel-Plan fuer Wallbox $n: null, wenn kein Ziel gilt (aus, kein Fahrzeug, erreicht, Frist vorbei, Wallbox meldet keine
+     * Sitzungsenergie). Sitzung = Fahrzeug angesteckt; die Frist wird beim Anstecken auf das naechste Auftreten der Uhrzeit gelegt.
+     */
+    private function wallboxTargetPlanFor(int $n, array $entry, float $maxA, int $phases): ?array
+    {
+        $this->WriteAttributeString('WB' . $n . 'TargetNote', '');
+        $target = (float)$this->ReadPropertyFloat('WB' . $n . '_TargetKwh');
+        $plugId = (int)($entry['plugStateID'] ?? 0);
+        $plugged = ($plugId > 0 && IPS_VariableExists($plugId)) ? (bool)GetValue($plugId) : false;
+        if (!$plugged) {
+            if ($this->ReadAttributeInteger('WB' . $n . 'TargetSession') !== 0) {
+                $this->WriteAttributeInteger('WB' . $n . 'TargetSession', 0);
+                $this->WriteAttributeInteger('WB' . $n . 'TargetDeadline', 0);
+                $this->WriteAttributeBoolean('WB' . $n . 'TargetDone', false);
+            }
+            return null;
+        }
+        if ($target <= 0.0) { return null; }
+        $eId = (int)($entry['sessionEnergyID'] ?? 0);
+        if ($eId <= 0 || !IPS_VariableExists($eId)) {
+            $this->WriteAttributeString('WB' . $n . 'TargetNote', 'Ladeziel nicht unterstützt: die Wallbox meldet keine Energie der Ladesitzung.');
+            return null;
+        }
+        $now = time();
+        if ($this->ReadAttributeInteger('WB' . $n . 'TargetSession') === 0) {
+            $dl = $this->nextClockTs($this->ReadPropertyString('WB' . $n . '_TargetTime'), $now);
+            if ($dl === null) {
+                $this->WriteAttributeString('WB' . $n . 'TargetNote', 'Ladeziel aus: Frist ist keine gültige Uhrzeit (HH:MM).');
+                return null;
+            }
+            $this->WriteAttributeInteger('WB' . $n . 'TargetSession', $now);
+            $this->WriteAttributeInteger('WB' . $n . 'TargetDeadline', $dl);
+            $this->WriteAttributeBoolean('WB' . $n . 'TargetDone', false);
+            $v0 = (float)GetValue($eId);
+            $this->WriteAttributeFloat('WB' . $n . 'TargetBase', $v0);
+            $this->WriteAttributeFloat('WB' . $n . 'TargetCarry', 0.0);
+            $this->WriteAttributeFloat('WB' . $n . 'TargetLast', $v0);
+            $this->emsLog(EMS_LOG_BASIC, sprintf('WB%d: Ladeziel %s kWh bis %s', $n, $this->fmtKwh($target), date('d.m. H:i', $dl)));
+        }
+        if ($this->ReadAttributeBoolean('WB' . $n . 'TargetDone')) {
+            $this->WriteAttributeString('WB' . $n . 'TargetNote', sprintf('Ladeziel %s kWh erreicht.', $this->fmtKwh($target)));
+            return null;
+        }
+        $kw = $maxA * 230.0 * $phases / 1000.0;
+        $cfgW = $this->ReadPropertyInteger('WB' . $n . '_Max_Power_W');
+        if ($cfgW > 0) { $kw = min($kw, $cfgW / 1000.0); }
+        $plan = $this->wallboxTargetPlan(array('targetKwh' => $target, 'chargedKwh' => $this->wallboxSessionChargedKwh($n, (float)GetValue($eId)), 'now' => $now,
+            'deadline' => $this->ReadAttributeInteger('WB' . $n . 'TargetDeadline'), 'prices' => $this->targetPriceMap(), 'powerKw' => $kw, 'bufferPct' => 20));
+        if ($plan['state'] === 'done') {
+            $this->WriteAttributeBoolean('WB' . $n . 'TargetDone', true);
+            $this->emsLog(EMS_LOG_BASIC, sprintf('WB%d: %s', $n, $plan['text']));
+            $this->WriteAttributeString('WB' . $n . 'TargetNote', $plan['text'] . '.');
+            return null;
+        }
+        if ($plan['state'] === 'expired') {
+            $this->WriteAttributeString('WB' . $n . 'TargetNote', '⚠️ ' . $plan['text'] . '.');
+            return null;
+        }
+        if ($plan['state'] === 'late') { $plan['text'] = '⚠️ ' . $plan['text']; }
+        $plan['currentA'] = $maxA;
+        return $plan;
+    }
+
     /** Der Lader-Eintrag, ueber den EMS Wallbox $num schreibt (wie controlWallbox()), sonst null. */
     private function wallboxWriteEntry(int $num): ?array
     {
@@ -9462,6 +9645,18 @@ class EMS extends IPSModule
         if (isset($entry['stationMaxCurrentA']) && (int)$entry['stationMaxCurrentA'] >= 6) { $maxA = min($maxA, (float)$entry['stationMaxCurrentA']); }
         $cfgW = $this->ReadPropertyInteger('WB' . $n . '_Max_Power_W');
         if ($cfgW > 0) { $maxA = min($maxA, max($minA, floor($cfgW / (230.0 * $phases)))); }
+        $target = $this->wallboxTargetPlanFor($n, $entry, $maxA, $phases);
+        if ($target !== null) {
+            $target['entry'] = $entry;
+            $idT = (int)($entry['chargeEnableID'] ?? 0);
+            $target['on'] = ($idT > 0 && IPS_VariableExists($idT)) ? (bool)GetValue($idT) : $this->ReadAttributeBoolean('WB' . $n . 'LastSentEnable');
+            $this->WriteAttributeString('WB' . $n . 'ChargeText', $target['text']);
+            return $target;
+        }
+        if ($this->ReadPropertyInteger('WB' . $n . '_ChargeMode') <= 0) {
+            $this->WriteAttributeString('WB' . $n . 'ChargeText', $this->ReadAttributeString('WB' . $n . 'TargetNote'));
+            return null;
+        }
         $other = ($n === 1) ? (float)$s['wb2_pow_kw'] : (float)$s['wb1_pow_kw'];
         $surplus = (float)$s['pv_total_w'] - (float)$s['house_pow_w'] - $other * 1000.0;
         $idEn = (int)($entry['chargeEnableID'] ?? 0);
@@ -9474,7 +9669,8 @@ class EMS extends IPSModule
             'cooldownS' => $this->ReadPropertyInteger('WB_Cooldown_Sec'), 'minChargeS' => $this->ReadPropertyInteger('WB_Min_Charge_Min') * 60));
         $plan['entry'] = $entry;
         $plan['on'] = $on;
-        $this->WriteAttributeString('WB' . $n . 'ChargeText', $plan['text']);
+        $note = $this->ReadAttributeString('WB' . $n . 'TargetNote');
+        $this->WriteAttributeString('WB' . $n . 'ChargeText', ($note !== '' ? $note . ' ' : '') . $plan['text']);
         return $plan;
     }
 

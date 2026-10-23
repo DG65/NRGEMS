@@ -1189,6 +1189,25 @@
                     ]
                 },
                 {
+                    "type": "NumberSpinner",
+                    "name": "WB1_TargetKwh",
+                    "caption": "WB1 Ladeziel: Energie seit dem Anstecken (kWh, 0 = aus)",
+                    "minimum": 0,
+                    "maximum": 200,
+                    "digits": 1,
+                    "suffix": " kWh"
+                },
+                {
+                    "type": "ValidationTextBox",
+                    "name": "WB1_TargetTime",
+                    "caption": "WB1 Ladeziel: Frist (Uhrzeit HH:MM, nächstes Auftreten nach dem Anstecken)",
+                    "validate": "^([01]?\\d|2[0-3]):[0-5]\\d$"
+                },
+                {
+                    "type": "Label",
+                    "caption": "Ladeziel: Ist ein Ziel gesetzt und ein Fahrzeug angesteckt, lädt EMS die fehlenden kWh in den günstigsten Viertelstunden bis zur Frist (mit 20 % Zeitpuffer) und überstimmt dabei die Ladeart. Ist das Ziel erreicht oder die Frist vorbei, gilt wieder die Ladeart. Reicht die Zeit nicht, lädt EMS sofort und warnt. Braucht eine Wallbox, die die Energie der Ladesitzung meldet (ChargerHub ab 0.9.128). §14a, Batterie-Boost und Smart Charging haben Vorrang."
+                },
+                {
                     "type": "Label",
                     "caption": "Ladearten gelten nur, wenn EMS die Wallbox steuert (nicht bei Smart Charging oder Nur beobachten) und die Wallbox einen Stromsollwert annimmt. Netzbetreiber-Sperre (§14a) und Batterie-Boost haben Vorrang. PV-Überschuss = PV minus Haus minus die andere Wallbox, die Batterie bekommt, was übrig bleibt. Gestartet wird ab dem Mindeststrom der Wallbox, Ein/Aus wechselt frühestens nach dem Cooldown, gestoppt wird erst nach Cooldown und Mindestladezeit."
                 },
@@ -1355,6 +1374,31 @@
                             "value": 3
                         }
                     ],
+                    "visible": {
+                        "type": "PropertyCondition",
+                        "property": "WB_Count",
+                        "value": 2
+                    }
+                },
+                {
+                    "type": "NumberSpinner",
+                    "name": "WB2_TargetKwh",
+                    "caption": "WB2 Ladeziel: Energie seit dem Anstecken (kWh, 0 = aus)",
+                    "minimum": 0,
+                    "maximum": 200,
+                    "digits": 1,
+                    "suffix": " kWh",
+                    "visible": {
+                        "type": "PropertyCondition",
+                        "property": "WB_Count",
+                        "value": 2
+                    }
+                },
+                {
+                    "type": "ValidationTextBox",
+                    "name": "WB2_TargetTime",
+                    "caption": "WB2 Ladeziel: Frist (Uhrzeit HH:MM, nächstes Auftreten nach dem Anstecken)",
+                    "validate": "^([01]?\\d|2[0-3]):[0-5]\\d$",
                     "visible": {
                         "type": "PropertyCondition",
                         "property": "WB_Count",
