@@ -1151,6 +1151,10 @@
                         {
                             "caption": "Hybrid (Mindeststrom immer, Überschuss obendrauf)",
                             "value": 4
+                        },
+                        {
+                            "caption": "Aus (Laden gesperrt)",
+                            "value": 5
                         }
                     ]
                 },
@@ -1203,6 +1207,18 @@
                     "name": "WB1_TargetTime",
                     "caption": "WB1 Ladeziel: Frist (Uhrzeit HH:MM, nächstes Auftreten nach dem Anstecken)",
                     "validate": "^([01]?\\d|2[0-3]):[0-5]\\d$"
+                },
+                {
+                    "type": "NumberSpinner",
+                    "name": "WB1_NowCurrentA",
+                    "caption": "WB1 „Jetzt laden“ (Befehl im WebFront): Stromstärke in A, 0 = Höchststrom der Wallbox",
+                    "minimum": 0,
+                    "maximum": 80,
+                    "suffix": " A"
+                },
+                {
+                    "type": "Label",
+                    "caption": "WebFront/App: Je aktiver Wallbox legt EMS die Variablen „Wallbox n: Plan (was als Nächstes passiert)“, „Ladeart“, „Ladeziel“, „Frist“ und „Befehl“ (Jetzt 1 Stunde laden, Übersteuerung beenden, Ladeziel löschen) an. Ladeart, Ziel und Frist dort ändern diese Einstellungen hier direkt (eine Quelle). Ist dieses Formular dabei offen, vor „Übernehmen“ neu laden, sonst überschreibt es die Änderung aus dem WebFront."
                 },
                 {
                     "type": "Label",
@@ -1328,6 +1344,10 @@
                         {
                             "caption": "Hybrid (Mindeststrom immer, Überschuss obendrauf)",
                             "value": 4
+                        },
+                        {
+                            "caption": "Aus (Laden gesperrt)",
+                            "value": 5
                         }
                     ],
                     "visible": {
@@ -1405,6 +1425,19 @@
                     "name": "WB2_TargetTime",
                     "caption": "WB2 Ladeziel: Frist (Uhrzeit HH:MM, nächstes Auftreten nach dem Anstecken)",
                     "validate": "^([01]?\\d|2[0-3]):[0-5]\\d$",
+                    "visible": {
+                        "type": "PropertyCondition",
+                        "property": "WB_Count",
+                        "value": 2
+                    }
+                },
+                {
+                    "type": "NumberSpinner",
+                    "name": "WB2_NowCurrentA",
+                    "caption": "WB2 „Jetzt laden“ (Befehl im WebFront): Stromstärke in A, 0 = Höchststrom der Wallbox",
+                    "minimum": 0,
+                    "maximum": 80,
+                    "suffix": " A",
                     "visible": {
                         "type": "PropertyCondition",
                         "property": "WB_Count",

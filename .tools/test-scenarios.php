@@ -90,6 +90,9 @@ function IPS_RequestAction($iid, $ident, $value) {
     $GLOBALS['CTL'][$ident] = $value;
     return true;
 }
+foreach (['VARIABLETYPE_BOOLEAN' => 0, 'VARIABLETYPE_INTEGER' => 1, 'VARIABLETYPE_FLOAT' => 2, 'VARIABLETYPE_STRING' => 3,
+          'VARIABLE_PRESENTATION_VALUE_PRESENTATION' => '{3319437D-7CDE-699D-750A-3C6A3841FA75}', 'VARIABLE_PRESENTATION_ENUMERATION' => '{52D9E126-D7D2-2CBB-5E62-4CF7BA7C5D82}',
+          'VARIABLE_PRESENTATION_SLIDER' => '{6B9CAEEC-5958-C223-30F7-BD36569FC57A}', 'VARIABLE_PRESENTATION_VALUE_INPUT' => '{6A8FC8D2-5B39-D4A1-8D1D-F2E4C7F80F04}'] as $k => $v) { if (!defined($k)) { define($k, $v); } }
 function GetValue($id)            { return $GLOBALS['VAL'][$id] ?? 0; }
 function GetValueInteger($id)     { return (int)($GLOBALS['VAL'][$id] ?? 0); }
 function SetValue($id, $v)        { $GLOBALS['VAL'][$id] = $v; return true; }
@@ -113,6 +116,7 @@ function AC_GetLoggedValues($a, $var, $start, $end, $limit) {
 function SBH_GetState($iid)               { return $GLOBALS['SBH_STATE']; }
 function SPOT_GetPriceCurve($iid)         { return $GLOBALS['SPOT_CURVE'] ?? []; }
 function TIBBERGR_GetPriceCurve($iid)     { return $GLOBALS['TIBBER_CURVE']; }
+function CHUB_SetPlanInfo($iid, $text, $until = 0) { $GLOBALS['PLANINFO'][] = [$iid, $text, $until]; return true; }
 function TIBBERGR_GetActiveControls($iid) { return $GLOBALS['ACTIVE_CONTROLS']; }
 $GLOBALS['FLEX_DEVICES'] = [];
 function TIBBERGR_GetFlexDevices($iid)    { return $GLOBALS['FLEX_DEVICES']; }
@@ -164,6 +168,12 @@ class IPSModule
     public function GetValue($ident)      { return GetValue($this->GetIDForIdent($ident)); }
     public function SetValue($ident, $v)  { return SetValue($this->GetIDForIdent($ident), $v); }
     protected function EnableAction($ident) {}
+    protected function MaintainVariable($ident, $name, $type, $pres, $pos, $keep) {
+        $id = IPS_GetObjectIDByIdent($ident, $this->InstanceID);
+        if (!$keep) { if ($id !== false) { unset($GLOBALS['OBJ'][$id], $GLOBALS['VAR'][$id], $GLOBALS['VAL'][$id]); } return; }
+        if ($id === false) { $this->regVar($ident, $name, [0 => false, 1 => 0, 2 => 0.0, 3 => ''][$type], $type); }
+        $GLOBALS['PRES'][$ident] = $pres;
+    }
     protected function RegisterTimer($n, $i, $s) {}
     protected function SetTimerInterval($n, $i) {}
     protected function SetStatus($s) {}
@@ -1687,6 +1697,94 @@ $pv = vari('Tibber Preis', 0, 'tp', 0.3125, 2); obj($pv, 2, 'Tibber Preis', 0);
 $pl = call($ems, 'priceLinkLine', [$pv]);
 check('Preiszeile mit eigener Variable: ✏️ mit Wert in ct', strpos($pl['caption'], '✏️ Strompreis: eigene Variable #' . $pv) === 0 && strpos($pl['caption'], '31,25 ct/kWh') !== false, $pl['caption']);
 check('Formular: Preiszeile unter der Preisvariable', $find($fj, 'PriceLinkStatus') !== null);
+
+echo "\n8k13) Wallbox sehen und steuern (Stufe A/B): Plantext, Jetzt laden, WebFront-Bedienung, CHUB_SetPlanInfo\n";
+$ems = freshEms();
+prop('WB_Active', true); prop('WB_Count', 1); prop('WB1_Max_Power_W', 11000); prop('WB_Cooldown_Sec', 120); prop('WB1_Mode', 0);
+obj(600, 1, 'go-e Garage', 0);
+$cenP = vari('Freigabe', 600, 'ctl_enable', false, 0);
+$curP = vari('Strom', 600, 'ctl_curr_limit', 16, 1);
+$plP  = vari('Stecker', 600, 'plug', true, 0);
+$whP = ['instanceID' => 600, 'source' => 'chargerhub', 'chargeEnableID' => $cenP, 'currentLimitID' => $curP, 'plugStateID' => $plP, 'minCurrent' => 6, 'maxCurrent' => 16, 'currentStepA' => 1.0, 'phases' => 3, 'managedBy' => 'none', 'powerID' => 0];
+attr('PartnerCache', json_encode(['chargerhub' => [$whP]]));
+$sP = state(['wb_active' => true, 'wb_count' => 1, 'wb1_cable' => 1, 'pv_total_w' => 0.0, 'house_pow_w' => 500.0]);
+$dP = fn(array $o = []) => array_merge(['wb1_enable' => false, 'wb2_enable' => false, 'source' => 'tagesplan', 'reason' => ''], $o);
+$actsP = fn() => array_values(array_filter($GLOBALS['ACTIONS'], fn($a) => in_array($a[1], ['ctl_enable', 'ctl_curr_limit'], true)));
+$rstP = function () use ($cenP) { $GLOBALS['VAL'][$cenP] = false; foreach (['LastWB1Switch' => 0, 'WB1EmsLocked' => false, 'WB1LastSentEnable' => false, 'WB1CurrentSentA' => -1, 'WB1CurrentSentAt' => 0, 'WB1NowUntil' => 0, 'WB1PlanSent' => '', 'WB1PlanSentAt' => 0] as $k => $v) { attr($k, $v); } $GLOBALS['ACTIONS'] = []; $GLOBALS['PLANINFO'] = []; };
+call($ems, 'maintainWallboxControlVariables');
+$vPlan = IPS_GetObjectIDByIdent('EMS_WB1_Plan', EMS_IID);
+check('Bedien-Variablen fuer Wallbox 1 angelegt (Plan, Ladeart, Ladeziel, Frist, Befehl), keine fuer Wallbox 2 bei WB_Count 1', $vPlan !== false && IPS_GetObjectIDByIdent('EMS_WB1_Command', EMS_IID) !== false && IPS_GetObjectIDByIdent('EMS_WB2_Plan', EMS_IID) === false);
+check('Ladeziel-Schieberegler: Float-Variable mit Float-Grenzen (Store-Review Punkt 18)', is_float($GLOBALS['PRES']['EMS_WB1_TargetKwh']['MIN']) && is_float($GLOBALS['PRES']['EMS_WB1_TargetKwh']['MAX']) && is_float($GLOBALS['PRES']['EMS_WB1_TargetKwh']['STEP_SIZE']));
+// Plantext preisgesteuert
+$rstP(); prop('WB1_ChargeMode', 0); prop('WB1_TargetKwh', 0.0); $d = $dP();
+call($ems, 'applyWallboxControl', [&$d, $sP]);
+check('Plantext preisgesteuert: Schwelle und "jetzt gesperrt"', strpos(GetValue($vPlan), 'Preisgesteuert: lädt bei Preis unter') === 0 && strpos(GetValue($vPlan), 'jetzt gesperrt') !== false, GetValue($vPlan));
+check('Plan an ChargerHub gemeldet (CHUB_SetPlanInfo), mit Ablaufzeit in der Zukunft', count($GLOBALS['PLANINFO']) === 1 && $GLOBALS['PLANINFO'][0][0] === 600 && $GLOBALS['PLANINFO'][0][1] === GetValue($vPlan) && $GLOBALS['PLANINFO'][0][2] > time(), json_encode($GLOBALS['PLANINFO']));
+$GLOBALS['PLANINFO'] = []; $d = $dP();
+call($ems, 'applyWallboxControl', [&$d, $sP]);
+check('gleicher Plan innerhalb des Intervalls: nicht erneut gemeldet', $GLOBALS['PLANINFO'] === []);
+attr('WB1PlanSentAt', time() - 100); $d = $dP();
+call($ems, 'applyWallboxControl', [&$d, $sP]);
+check('vor Ablauf erneut gemeldet (nach einem Intervall), damit der Text nicht verfaellt', count($GLOBALS['PLANINFO']) === 1);
+// nicht angesteckt
+$rstP(); $d = $dP();
+call($ems, 'applyWallboxControl', [&$d, array_merge($sP, ['wb1_cable' => 0])]);
+check('Plantext ohne Fahrzeug beginnt mit "Kein Fahrzeug angesteckt."', strpos(GetValue($vPlan), 'Kein Fahrzeug angesteckt.') === 0, GetValue($vPlan));
+// Netzbetreiber
+$rstP(); $d = $dP(['source' => 'netzbetreiber']);
+call($ems, 'applyWallboxControl', [&$d, $sP]);
+check('Plantext §14a', strpos(GetValue($vPlan), '§14a') === 0, GetValue($vPlan));
+// Smart Charging bei Grid Rewards (hands off)
+$rstP(); prop('WB1_Mode', 1); $d = $dP(['wb_hands_off' => true]);
+call($ems, 'applyWallboxControl', [&$d, $sP]);
+check('Plantext Smart Charging', strpos(GetValue($vPlan), 'Smart Charging: Tibber steuert') === 0, GetValue($vPlan));
+prop('WB1_Mode', 0);
+// Ladeart Aus
+$r = call($ems, 'wallboxChargePlan', [['mode' => 5, 'surplusW' => 9000.0, 'shareP' => 50, 'manualA' => 0, 'minA' => 6, 'maxA' => 16, 'stepA' => 1.0, 'phases' => 3, 'volt' => 230, 'on' => true, 'sinceSwitchS' => 9999, 'cooldownS' => 120, 'minChargeS' => 300]]);
+check('Ladeart 5 "Aus": gesperrt, auch bei viel PV', $r['enable'] === false && strpos($r['text'], 'Aus') === 0);
+// Jetzt laden
+$rstP(); prop('WB1_NowCurrentA', 10); attr('WB1NowUntil', time() + 3000); $d = $dP();
+call($ems, 'applyWallboxControl', [&$d, $sP]);
+check('Jetzt laden: 10 A und Freigabe, obwohl preisgesteuert gesperrt waere', $actsP() === [[600, 'ctl_curr_limit', 10], [600, 'ctl_enable', true]], json_encode($GLOBALS['ACTIONS']));
+check('Plantext nennt die Uebersteuerung mit Restzeit', strpos(GetValue($vPlan), 'Manuell: Jetzt laden mit 10 A, noch 50 min') === 0, GetValue($vPlan));
+$rstP(); prop('WB1_NowCurrentA', 0); attr('WB1NowUntil', time() + 3000); $d = $dP();
+call($ems, 'applyWallboxControl', [&$d, $sP]);
+check('Jetzt laden ohne Stromvorgabe: Hoechststrom (11 kW dreiphasig = 15 A)', in_array([600, 'ctl_curr_limit', 15], $actsP(), true), json_encode($GLOBALS['ACTIONS']));
+$rstP(); attr('WB1NowUntil', time() - 10); $d = $dP(['source' => 'netzbetreiber']);
+$GLOBALS['VAL'][$cenP] = true; attr('WB1LastSentEnable', true);
+call($ems, 'applyWallboxControl', [&$d, $sP]);
+check('§14a geht auch vor "Jetzt laden" (und abgelaufene Uebersteuerung zaehlt nicht)', $actsP() === [[600, 'ctl_enable', false]], json_encode($GLOBALS['ACTIONS']));
+$rstP(); attr('WB1NowUntil', time() - 10); $d = $dP();
+call($ems, 'applyWallboxControl', [&$d, $sP]);
+check('abgelaufen: zurueck zur Preissteuerung (nichts erzwungen), Merker geloescht', $actsP() === [] && $ems->ReadAttributeInteger('WB1NowUntil') === 0, json_encode($GLOBALS['ACTIONS']));
+// WebFront-Bedienung, eine Quelle
+call($ems, 'RequestAction', ['EMS_WB1_ChargeMode', 4]);
+check('WebFront Ladeart 4: Einstellung WB1_ChargeMode = 4, Variable folgt', $GLOBALS['PROP'][EMS_IID]['WB1_ChargeMode'] === 4 && GetValue(IPS_GetObjectIDByIdent('EMS_WB1_ChargeMode', EMS_IID)) === 4);
+call($ems, 'RequestAction', ['EMS_WB1_ChargeMode', 9]);
+check('ungueltige Ladeart 9: ignoriert', $GLOBALS['PROP'][EMS_IID]['WB1_ChargeMode'] === 4);
+call($ems, 'RequestAction', ['EMS_WB1_TargetKwh', 12.34]);
+check('WebFront Ladeziel 12,34: Einstellung 12,3 kWh', abs($GLOBALS['PROP'][EMS_IID]['WB1_TargetKwh'] - 12.3) < 1e-9);
+call($ems, 'RequestAction', ['EMS_WB1_TargetTime', '06:30']);
+check('WebFront Frist 06:30 uebernommen', $GLOBALS['PROP'][EMS_IID]['WB1_TargetTime'] === '06:30');
+call($ems, 'RequestAction', ['EMS_WB1_TargetTime', 'morgen frueh']);
+check('ungueltige Frist: nicht uebernommen, Variable zeigt wieder die gueltige Frist', $GLOBALS['PROP'][EMS_IID]['WB1_TargetTime'] === '06:30' && GetValue(IPS_GetObjectIDByIdent('EMS_WB1_TargetTime', EMS_IID)) === '06:30');
+SetValue(IPS_GetObjectIDByIdent('EMS_WB1_Command', EMS_IID), 1);
+call($ems, 'RequestAction', ['EMS_WB1_Command', 1]);
+check('Befehl "Jetzt 1 Stunde laden": Uebersteuerung fuer 60 min, Befehl springt auf "Bereit" zurueck', abs($ems->ReadAttributeInteger('WB1NowUntil') - (time() + 3600)) <= 2 && GetValue(IPS_GetObjectIDByIdent('EMS_WB1_Command', EMS_IID)) === 0);
+call($ems, 'RequestAction', ['EMS_WB1_Command', 2]);
+check('Befehl "Uebersteuerung beenden"', $ems->ReadAttributeInteger('WB1NowUntil') === 0);
+call($ems, 'RequestAction', ['EMS_WB1_Command', 3]);
+check('Befehl "Ladeziel loeschen": Einstellung 0 kWh', (float)$GLOBALS['PROP'][EMS_IID]['WB1_TargetKwh'] === 0.0);
+prop('WB1_ChargeMode', 0);
+// ohne CHUB_SetPlanInfo-Partner (OCPPHub-Eintrag): nichts an ChargerHub
+$whO = $whP; $whO['source'] = 'ocpphub'; attr('PartnerCache', json_encode(['ocpphub' => [$whO]])); prop('WB_Quelle', 2);
+$GLOBALS['PLANINFO'] = []; attr('WB1PlanSent', ''); call($ems, 'publishWallboxPlan', [1, 'Test']);
+check('OCPPHub-Ladepunkt: kein CHUB_SetPlanInfo', $GLOBALS['PLANINFO'] === []);
+prop('WB_Quelle', 0); attr('PartnerCache', json_encode(['chargerhub' => [$whP]]));
+// EMS aus
+prop('EMS_Active', false); $GLOBALS['PLANINFO'] = []; attr('WB1PlanSent', '');
+call($ems, 'Update');
+check('EMS aus: Plantext "EMS ist ausgeschaltet"', strpos(GetValue($vPlan), 'EMS ist ausgeschaltet') === 0, GetValue($vPlan));
 
 echo "\n8l) Wallbox bei PV-Ueberschuss auch ueber der Preisschwelle\n";
 $ems = freshEms();

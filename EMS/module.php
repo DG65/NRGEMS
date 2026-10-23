@@ -41,7 +41,7 @@ define('EMS_LOG_VERBOSE',     2);
 // Formular-Konvention (siehe EMS/SUITE.md "Einheitliche Formular-Optik"):
 // Was-ist-Neu-Panel ist versionsscharf dismissible, Referenzmuster InverterHub.
 define('EMS_COLOR_AUTO', 0x2E8B3D); // Gruen: Wert wurde automatisch uebernommen (🔗-Zeilen im Formular)
-define('EMS_NEWS_VERSION', '0.84.0');
+define('EMS_NEWS_VERSION', '0.85.0');
 
 // NRG-Stack Partnermodul-GUIDs (fuer automatische Discovery, siehe discoverPartners())
 define('GUID_CHARGERHUB',    '{9256C34E-5CFD-4F37-8BFE-E65390EBB37C}');
@@ -342,6 +342,7 @@ class EMS extends IPSModule
             $this->RegisterPropertyInteger('WB' . $i . '_PhaseSetting', 0); // Phasen: 0 nicht aendern, 1 einphasig, 3 dreiphasig (nur wenn die Wallbox umschaltbar ist)
             $this->RegisterPropertyFloat('WB' . $i . '_TargetKwh', 0.0);    // Ladeziel: Energie seit dem Anstecken in kWh, 0 = aus (Stufe 2)
             $this->RegisterPropertyString('WB' . $i . '_TargetTime', '07:00'); // Frist fuer das Ladeziel (Uhrzeit, naechstes Auftreten nach dem Anstecken)
+            $this->RegisterPropertyInteger('WB' . $i . '_NowCurrentA', 0);  // "Jetzt laden": Stromstaerke in A, 0 = Hoechststrom der Wallbox
             $this->RegisterPropertyInteger('VAR_WB' . $i . '_Status', 0);
             $this->RegisterPropertyInteger('VAR_WB' . $i . '_Power',  0);
             $this->RegisterPropertyInteger('VAR_WB' . $i . '_Active', 0);
@@ -503,6 +504,9 @@ class EMS extends IPSModule
             $this->RegisterAttributeFloat('WB' . $i . 'TargetCarry', 0.0);       // vor einem Ruecksprung des Zaehlers schon geladene kWh
             $this->RegisterAttributeFloat('WB' . $i . 'TargetLast', 0.0);        // zuletzt gelesener Zaehlerstand (Ruecksprung erkennen)
             $this->RegisterAttributeString('WB' . $i . 'TargetNote', '');        // Hinweis zum Ziel, wenn die Ladeart wieder gilt (erreicht, Frist vorbei, nicht unterstuetzt)
+            $this->RegisterAttributeInteger('WB' . $i . 'NowUntil', 0);          // "Jetzt laden" aktiv bis (Unix-Zeit), 0 = aus
+            $this->RegisterAttributeString('WB' . $i . 'PlanSent', '');          // zuletzt an ChargerHub gemeldeter Plantext
+            $this->RegisterAttributeInteger('WB' . $i . 'PlanSentAt', 0);
         }
         $this->RegisterAttributeInteger('SolisLastMode', -1);     // zuletzt an den Solis gesendeter Zwangsmodus (0 frei, 1 Laden, 2 Entladen, -1 = unbekannt)
         $this->RegisterAttributeInteger('SolisLastPowerW', 0);
@@ -590,6 +594,8 @@ class EMS extends IPSModule
     public function ApplyChanges()
     {
         parent::ApplyChanges();
+
+        try { $this->maintainWallboxControlVariables(); } catch (Throwable $e) { $this->emsLog(EMS_LOG_BASIC, 'Wallbox-Bedienvariablen: ' . $e->getMessage()); }
 
         // Idempotent: legt den sichtbaren Tagesplan-Wochenplan nur an, wenn
         // er noch fehlt (Muster: NRG.*-Variablenprofile).
@@ -775,6 +781,10 @@ class EMS extends IPSModule
                 'caption'  => '🆕 Neu in Version ' . EMS_NEWS_VERSION,
                 'expanded' => true,
                 'items'    => array(
+                    array(
+                        'type'    => 'Label',
+                        'caption' => '• NEU: Je Wallbox zeigt die Variable „Wallbox n: Plan (was als Nächstes passiert)“ im Klartext, was die Wallbox tun wird. Im WebFront und in der App lassen sich Ladeart (neu auch „Aus“), Ladeziel und Frist ändern, dazu „Jetzt 1 Stunde laden“. Änderungen dort ändern die Einstellungen hier direkt.'
+                    ),
                     array(
                         'type'    => 'Label',
                         'caption' => '• NEU: Wallboxen über ChargerHub verbinden sich jetzt vollständig automatisch, auch Status und Fehler (ein Wallbox-Fehler sperrt die Freigabe). Im Panel „Wallboxen“ steht je Wert, woher er kommt (🔗 automatisch, ✏️ eigene Variable, ⚠️ nicht verbunden), mit aktuellem Wert; leere manuelle Felder werden ausgeblendet.'
@@ -1456,6 +1466,11 @@ class EMS extends IPSModule
         }
 
         if (!$this->ReadPropertyBoolean('EMS_Active')) {
+            if ($this->ReadPropertyBoolean('WB_Active')) {
+                for ($n = 1; $n <= min(2, max(1, $this->ReadPropertyInteger('WB_Count'))); $n++) {
+                    try { $this->publishWallboxPlan($n, 'EMS ist ausgeschaltet: die Wallbox wird nicht gesteuert.'); } catch (Throwable $e) {}
+                }
+            }
             // Dietmars Vorgabe 29.08.2026: Ist EMS aus, MUSS ctl_ems_enable
             // einmalig aktiv auf false gesetzt werden -- kein "3rd party
             // EMS"-Anspruch ohne tatsaechlich aktive Steuerung. Bewusst NUR
@@ -4978,6 +4993,10 @@ class EMS extends IPSModule
 
     public function RequestAction($ident, $value)
     {
+        if (preg_match('/^EMS_WB([12])_(ChargeMode|TargetKwh|TargetTime|Command)$/', (string)$ident, $m)) {
+            $this->wallboxControlAction((int)$m[1], $m[2], $value);
+            return;
+        }
         if (in_array($ident, array('INVOICE_Ist_Betrag', 'INVOICE_Ist_MwSt', 'INVOICE_Ist_Gutschrift'), true)) {
             // Direkte WebFront-Eingabe der monatlichen Tibber-Rechnung
             // (Dietmars Vorgabe 25.08.2026: kein PDF-Parsing, Option 3).
@@ -9434,13 +9453,25 @@ class EMS extends IPSModule
             $modes[$n] = $this->wallboxMode($n)['mode'];
             if ($modes[$n] === 'smart') { $this->releaseOwnWallboxLock($n); }
         }
-        if (!empty($d['wb_hands_off'])) { return; }
+        if (!empty($d['wb_hands_off'])) {
+            for ($n = 1; $n <= $count; $n++) {
+                $this->publishWallboxPlan($n, ($modes[$n] === 'smart') ? 'Smart Charging: Tibber steuert die Ladung, EMS greift nicht ein.' : 'Grid Rewards: Tibber steuert die Ladung, EMS greift nicht ein.');
+            }
+            return;
+        }
         // Ladearten (manuell, nur PV, PV-Anteil, Hybrid): Netzbetreiber-Sperre und Batterie-Boost behalten Vorrang, dann gilt die
         // Ladeart statt der Preisfreigabe. Die geplante Freigabe geht vor dem Netzanschluss-Budget in die Entscheidung ein.
         $plans = array();
+        for ($n = 1; $n <= $count; $n++) {
+            $u = $this->ReadAttributeInteger('WB' . $n . 'NowUntil');
+            if ($u > 0 && $u <= time()) {
+                $this->WriteAttributeInteger('WB' . $n . 'NowUntil', 0);
+                $this->emsLog(EMS_LOG_BASIC, sprintf('WB%d: Jetzt laden abgelaufen, es gilt wieder die Ladeart', $n));
+            }
+        }
         if (!in_array((string)($d['source'] ?? ''), array('netzbetreiber', 'nutzer'), true)) {
             for ($n = 1; $n <= $count; $n++) {
-                if ($modes[$n] !== 'ems' || ($this->ReadPropertyInteger('WB' . $n . '_ChargeMode') <= 0 && $this->ReadPropertyFloat('WB' . $n . '_TargetKwh') <= 0)) { continue; }
+                if ($modes[$n] !== 'ems' || ($this->ReadPropertyInteger('WB' . $n . '_ChargeMode') <= 0 && $this->ReadPropertyFloat('WB' . $n . '_TargetKwh') <= 0 && $this->ReadAttributeInteger('WB' . $n . 'NowUntil') <= time())) { continue; }
                 $plan = $this->wallboxChargePlanFor($n, $s);
                 if ($plan === null) { continue; }
                 $plans[$n] = $plan;
@@ -9453,6 +9484,134 @@ class EMS extends IPSModule
             if (isset($plans[$n]) && !empty($d['wb' . $n . '_enable'])) { $this->applyWallboxChargePlan($n, $plans[$n]); }
             else { $this->controlWallbox($n, $d['wb' . $n . '_enable']); }
         }
+        for ($n = 1; $n <= $count; $n++) {
+            $this->publishWallboxPlan($n, $this->wallboxPlanText($n, $modes[$n], $d, $s, $plans[$n] ?? null));
+        }
+    }
+
+    /**
+     * Klartext "was die Wallbox als Naechstes tut" (Stufe A, Dietmar 23.10.2026: "Ich sehe nicht, was die Wallbox tun wird").
+     * Vorrang wie in der Steuerung: Netzbetreiber, Batterie-Boost, Smart Charging, Beobachten, Jetzt laden, Ladeziel, Ladeart, Preis.
+     */
+    private function wallboxPlanText(int $n, string $mode, array $d, array $s, ?array $plan): string
+    {
+        $src = (string)($d['source'] ?? '');
+        $plugged = (int)($s['wb' . $n . '_cable'] ?? 0) > 0;
+        $head = $plugged ? '' : 'Kein Fahrzeug angesteckt. ';
+        if ($mode === 'smart') { return $head . 'Smart Charging: Tibber steuert die Ladung, EMS greift nicht ein.'; }
+        if ($mode === 'observe') {
+            $who = trim($this->chargerControlInfo($n));
+            return $head . 'Nur beobachten: EMS schaltet diese Wallbox nicht.' . ($who !== '' ? ' ' . $who : '');
+        }
+        if ($src === 'netzbetreiber') { return $head . '§14a: Der Netzbetreiber begrenzt gerade, Laden ist gesperrt.'; }
+        if ($src === 'nutzer') { return $head . 'Batterie-Boost: Wallbox freigegeben mit Höchststrom, bis der Boost endet.'; }
+        if ((int)($s['wb' . $n . '_error'] ?? 0) !== 0) { return $head . sprintf('Die Wallbox meldet Fehler %d, Laden ist gesperrt.', (int)$s['wb' . $n . '_error']); }
+        $enabled = !empty($d['wb' . $n . '_enable']);
+        if ($plan !== null) {
+            $t = (string)$plan['text'];
+            if ($plan['enable'] && !$enabled) { $t .= ' (gerade gesperrt durch das Netzanschluss-Budget)'; }
+            return $head . $t . '.';
+        }
+        $note = $this->ReadAttributeString('WB' . $n . 'TargetNote');
+        $th = $this->priceThresholds()['wb'];
+        $price = $this->currentPriceEur()['eur'];
+        $pv = $this->ReadPropertyBoolean('WB_PV_Ueberschuss') ? ' oder bei PV-Überschuss' : '';
+        $txt = sprintf('Preisgesteuert: lädt bei Preis unter %s ct%s; jetzt %s%s.', number_format($th * 100, 1, ',', ''), $pv,
+            $enabled ? 'freigegeben' : 'gesperrt', ($price !== null) ? sprintf(' (Preis %s ct)', number_format($price * 100, 1, ',', '')) : '');
+        return $head . ($note !== '' ? $note . ' ' : '') . $txt;
+    }
+
+    /** Plantext in die EMS-Variable und (bei Aenderung bzw. vor Ablauf) per CHUB_SetPlanInfo an den ChargerHub (Vertrag 1.12). */
+    private function publishWallboxPlan(int $n, string $text): void
+    {
+        $vid = @IPS_GetObjectIDByIdent('EMS_WB' . $n . '_Plan', $this->InstanceID);
+        if ($vid !== false && $vid > 0 && GetValue($vid) !== $text) { SetValue($vid, $text); }
+        if (!function_exists('CHUB_SetPlanInfo')) { return; }
+        $entry = $this->getChargerEntry($n);
+        if (($entry['source'] ?? '') !== 'chargerhub' || (int)($entry['instanceID'] ?? 0) <= 0) { return; }
+        $interval = max(30, (int)$this->ReadPropertyInteger('EMS_Interval'));
+        $now = time();
+        if ($text === $this->ReadAttributeString('WB' . $n . 'PlanSent') && $now - $this->ReadAttributeInteger('WB' . $n . 'PlanSentAt') < $interval) { return; }
+        try { @CHUB_SetPlanInfo((int)$entry['instanceID'], $text, $now + 3 * $interval); } catch (Throwable $e) { return; }
+        $this->WriteAttributeString('WB' . $n . 'PlanSent', $text);
+        $this->WriteAttributeInteger('WB' . $n . 'PlanSentAt', $now);
+    }
+
+    /**
+     * Bedien-Variablen je Wallbox fuers WebFront (Stufe B, eine Quelle: ein Klick aendert die Einstellung selbst): Plan (Anzeige),
+     * Ladeart, Ladeziel, Frist, Befehl (Jetzt 1 Stunde laden, Uebersteuerung beenden, Ladeziel loeschen). Nur fuer aktive Wallboxen.
+     */
+    private function maintainWallboxControlVariables(): void
+    {
+        $opt = function (array $map) { $o = array(); foreach ($map as $v => $c) { $o[] = array('Value' => $v, 'Caption' => $c, 'IconActive' => false, 'IconValue' => '', 'Color' => -1); } return json_encode($o); };
+        $modes = $opt(array(0 => 'Preisgesteuert', 1 => 'Manuell', 2 => 'Nur PV', 3 => 'PV-Anteil', 4 => 'Hybrid', 5 => 'Aus'));
+        $cmds = $opt(array(0 => 'Bereit', 1 => 'Jetzt 1 Stunde laden', 2 => 'Übersteuerung beenden', 3 => 'Ladeziel löschen'));
+        for ($n = 1; $n <= 2; $n++) {
+            $keep = $this->ReadPropertyBoolean('WB_Active') && $n <= max(1, $this->ReadPropertyInteger('WB_Count'));
+            $pos = 300 + $n * 10;
+            $this->MaintainVariable('EMS_WB' . $n . '_Plan', 'Wallbox ' . $n . ': Plan (was als Nächstes passiert)', VARIABLETYPE_STRING, array('PRESENTATION' => VARIABLE_PRESENTATION_VALUE_PRESENTATION), $pos, $keep);
+            $this->MaintainVariable('EMS_WB' . $n . '_ChargeMode', 'Wallbox ' . $n . ': Ladeart', VARIABLETYPE_INTEGER, array('PRESENTATION' => VARIABLE_PRESENTATION_ENUMERATION, 'OPTIONS' => $modes), $pos + 1, $keep);
+            $this->MaintainVariable('EMS_WB' . $n . '_TargetKwh', 'Wallbox ' . $n . ': Ladeziel (kWh, 0 = aus)', VARIABLETYPE_FLOAT, array('PRESENTATION' => VARIABLE_PRESENTATION_SLIDER, 'MIN' => 0.0, 'MAX' => 100.0, 'STEP_SIZE' => 0.5, 'SUFFIX' => ' kWh', 'DIGITS' => 1), $pos + 2, $keep);
+            $this->MaintainVariable('EMS_WB' . $n . '_TargetTime', 'Wallbox ' . $n . ': Frist (HH:MM)', VARIABLETYPE_STRING, array('PRESENTATION' => VARIABLE_PRESENTATION_VALUE_INPUT), $pos + 3, $keep);
+            $this->MaintainVariable('EMS_WB' . $n . '_Command', 'Wallbox ' . $n . ': Befehl', VARIABLETYPE_INTEGER, array('PRESENTATION' => VARIABLE_PRESENTATION_ENUMERATION, 'OPTIONS' => $cmds), $pos + 4, $keep);
+            if (!$keep) { continue; }
+            foreach (array('ChargeMode', 'TargetKwh', 'TargetTime', 'Command') as $k) { $this->EnableAction('EMS_WB' . $n . '_' . $k); }
+            $this->syncWallboxControlVariables($n);
+        }
+    }
+
+    /** Bedien-Variablen auf den Stand der Einstellungen bringen (nur bei Abweichung schreiben). */
+    private function syncWallboxControlVariables(int $n): void
+    {
+        $set = function (string $ident, $v) { $id = @IPS_GetObjectIDByIdent($ident, $this->InstanceID); if ($id !== false && $id > 0 && GetValue($id) !== $v) { SetValue($id, $v); } };
+        $set('EMS_WB' . $n . '_ChargeMode', (int)$this->ReadPropertyInteger('WB' . $n . '_ChargeMode'));
+        $set('EMS_WB' . $n . '_TargetKwh', (float)$this->ReadPropertyFloat('WB' . $n . '_TargetKwh'));
+        $set('EMS_WB' . $n . '_TargetTime', (string)$this->ReadPropertyString('WB' . $n . '_TargetTime'));
+        $set('EMS_WB' . $n . '_Command', 0);
+    }
+
+    /** WebFront-Bedienung: eine Quelle -- Ladeart, Ziel und Frist aendern die Einstellung selbst, der Befehl wirkt sofort. */
+    private function wallboxControlAction(int $n, string $what, $value): void
+    {
+        $prop = 'WB' . $n . '_' . $what;
+        switch ($what) {
+            case 'ChargeMode':
+                $v = (int)$value;
+                if ($v < 0 || $v > 5) { return; }
+                IPS_SetProperty($this->InstanceID, $prop, $v);
+                break;
+            case 'TargetKwh':
+                IPS_SetProperty($this->InstanceID, $prop, max(0.0, min(200.0, round((float)$value, 1))));
+                break;
+            case 'TargetTime':
+                $t = trim((string)$value);
+                if ($this->nextClockTs($t, time()) === null) {
+                    $this->emsLog(EMS_LOG_BASIC, sprintf('WB%d: Frist „%s“ ist keine gültige Uhrzeit (HH:MM), nicht übernommen', $n, $t));
+                    $this->syncWallboxControlVariables($n);
+                    return;
+                }
+                IPS_SetProperty($this->InstanceID, $prop, $t);
+                break;
+            case 'Command':
+                $c = (int)$value;
+                if ($c === 1) {
+                    $this->WriteAttributeInteger('WB' . $n . 'NowUntil', time() + 3600);
+                    $this->emsLog(EMS_LOG_BASIC, sprintf('WB%d: manuell Jetzt laden für 1 Stunde (bis %s)', $n, date('H:i', time() + 3600)));
+                } elseif ($c === 2) {
+                    $this->WriteAttributeInteger('WB' . $n . 'NowUntil', 0);
+                    $this->emsLog(EMS_LOG_BASIC, sprintf('WB%d: Übersteuerung beendet', $n));
+                } elseif ($c === 3) {
+                    IPS_SetProperty($this->InstanceID, 'WB' . $n . '_TargetKwh', 0.0);
+                    IPS_ApplyChanges($this->InstanceID);
+                    $this->emsLog(EMS_LOG_BASIC, sprintf('WB%d: Ladeziel gelöscht', $n));
+                }
+                $this->syncWallboxControlVariables($n);
+                return;
+            default:
+                return;
+        }
+        IPS_ApplyChanges($this->InstanceID);
+        $this->syncWallboxControlVariables($n);
     }
 
     /**
@@ -9580,6 +9739,9 @@ class EMS extends IPSModule
         $on   = !empty($in['on']);
         $floor = function (float $a) use ($step) { return floor($a / $step + 1e-9) * $step; };
         $clamp = function (float $a) use ($minA, $maxA, $floor) { return max($minA, min($maxA, $floor($a))); };
+        if ($mode === 5) {
+            return array('enable' => false, 'currentA' => 0.0, 'text' => 'Aus: Laden gesperrt');
+        }
         if ($mode === 1) {
             $a = ((int)$in['manualA'] > 0) ? $clamp((float)$in['manualA']) : $maxA;
             return array('enable' => true, 'currentA' => $a, 'text' => sprintf('Manuell: fest %s A', $this->fmtA($a)));
@@ -9810,6 +9972,17 @@ class EMS extends IPSModule
         if (isset($entry['stationMaxCurrentA']) && (int)$entry['stationMaxCurrentA'] >= 6) { $maxA = min($maxA, (float)$entry['stationMaxCurrentA']); }
         $cfgW = $this->ReadPropertyInteger('WB' . $n . '_Max_Power_W');
         if ($cfgW > 0) { $maxA = min($maxA, max($minA, floor($cfgW / (230.0 * $phases)))); }
+        $nowUntil = $this->ReadAttributeInteger('WB' . $n . 'NowUntil');
+        if ($nowUntil > time()) {
+            $na = $this->ReadPropertyInteger('WB' . $n . '_NowCurrentA');
+            $a = ($na > 0) ? max($minA, min($maxA, (float)$na)) : $maxA;
+            $idN = (int)($entry['chargeEnableID'] ?? 0);
+            $txt = sprintf('Manuell: Jetzt laden mit %s A, noch %d min (bis %s)', $this->fmtA($a), (int)ceil(($nowUntil - time()) / 60), date('H:i', $nowUntil));
+            $this->WriteAttributeString('WB' . $n . 'ChargeText', $txt);
+            return array('enable' => true, 'currentA' => $a, 'text' => $txt, 'entry' => $entry,
+                'on' => ($idN > 0 && IPS_VariableExists($idN)) ? (bool)GetValue($idN) : $this->ReadAttributeBoolean('WB' . $n . 'LastSentEnable'));
+        }
+        if ($nowUntil > 0) { $this->WriteAttributeInteger('WB' . $n . 'NowUntil', 0); }
         $target = $this->wallboxTargetPlanFor($n, $entry, $maxA, $phases);
         if ($target !== null) {
             $target['entry'] = $entry;
