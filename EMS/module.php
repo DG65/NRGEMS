@@ -4186,7 +4186,10 @@ class EMS extends IPSModule
         // beim urspruenglichen Export-Bug, nur in diesem zweiten Zweig
         // versteckt: die Batterie wurde fuer 18,36ct leergezogen, obwohl
         // abends 40+ct anstanden. Jetzt: dieselbe Reserve gilt hier genauso.
-        if ($ctx['feedTariff'] * $this->convEff() > ($price + 0.001) && $soc > ($ctx['socMin'] + $ctx['socReserve'] + $ctx['hystSoc'] + $priceBonusPct)) {
+        // Vergleich OHNE Wandlungsfaktor (Dietmar 24.10.2026, sein Beispiel 18,01 ct Bezug gegen 18,36 ct Vergütung): Die 5 %
+        // fallen auf BEIDEN Wegen an -- Akku -> Haus und Akku -> Netz laufen durch denselben Wechselrichter. Vorher stand hier
+        // Vergütung x 0,95 = 17,44 ct, und bei 18,01 ct gab der Plan den Akku fuers Haus frei, obwohl Netzstrom billiger war.
+        if ($ctx['feedTariff'] > ($price + 0.001) && $soc > ($ctx['socMin'] + $ctx['socReserve'] + $ctx['hystSoc'] + $priceBonusPct)) {
             // Bezug ist JETZT billiger als die Einspeiseverguetung -- die
             // gespeicherte Energie ist mehr wert, wenn sie exportiert
             // wird, als wenn sie den (billigeren) Netzbezug ersetzt.
@@ -4194,10 +4197,9 @@ class EMS extends IPSModule
             // gedeckt (Dietmars Vorgabe, 19.08.2026 -- typischer
             // Mittags-Fall bei niedrigen Spotpreisen), aber nur oberhalb
             // der Preis-Reserve fuer spaeter kommende teure Stunden.
-            $lossKwh = $loadW / 1000.0 * 0.25;
-            $soc = max(0.0, $soc - ($lossKwh / max(0.001, $ctx['capKwh']) * 100.0));
+            // Halten: das Haus laeuft aus dem Netz, der SOC bleibt (vorher sank er in der Simulation trotzdem um die Hauslast).
             return array('plan' => array('op' => EMS_OP_HOLD, 'gw' => GW_MODE_AC_EXPORT, 'power' => 0,
-                'reason' => sprintf('Bezug %.2fct < Einspeiseverguetung %.2fct abzueglich 5 %% Batterieverlust -- Batterie bleibt geschont, Haus aus dem Netz', $price * 100, $ctx['feedTariff'] * 95),
+                'reason' => sprintf('Bezug %.2fct < Einspeisevergütung %.2fct -- Akku wird geschont, Haus aus dem Netz (die Speicherenergie ist mehr wert)', $price * 100, $ctx['feedTariff'] * 100),
                 'price' => $price, 'soc' => round($soc, 1)), 'soc' => $soc);
         }
 
@@ -4295,7 +4297,7 @@ class EMS extends IPSModule
         // Simulation deshalb auch dann fallen, wenn der Preis unter der Entladeschwelle liegt (Dietmar
         // 19.09.2026: Plan hielt den SOC morgens 06:00-08:15 auf 100 %, obwohl Modus 1 lief).
         $auto = $this->simulateAutomatikSlot($slot, $pvW, $price, $soc, $ctx);
-        $auto['plan']['reason'] = sprintf('Bezug %.2fct guenstiger als Alternative -- ', $price * 100) . $auto['plan']['reason'];
+        $auto['plan']['reason'] = sprintf('Bezug %.2fct: Akku deckt das Haus -- ', $price * 100) . $auto['plan']['reason'];
         return $auto;
     }
 

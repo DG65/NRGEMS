@@ -1869,6 +1869,19 @@ $e = call($ems, 'priceEstimates', [$full, $full, 16]);
 check('alle Preise da: keine Schaetzung', $e['text'] === '' && $e['today'] === false);
 unset($GLOBALS['INSTMOD'][500], $GLOBALS['INSTMOD'][$TIBE]);
 
+echo "\n8k16) Netzbezug unter der Einspeiseverguetung: Akku schonen (Dietmar 24.10.2026, 18,01 ct gegen 18,36 ct)\n";
+$ems = freshEms();
+$fCtx = ['enwgActive' => false, 'enwgStartH' => 0, 'enwgEndH' => 0, 'avgHouseW' => 600.0, 'houseLoadSlots' => [],
+    'fcMinPower' => 100.0, 'socTargetDay' => 86.0, 'hystSoc' => 2.0, 'socMin' => 0.0, 'socReserve' => 10.0,
+    'socTargetNight' => 100.0, 'capKwh' => 40.0, 'chargeKw' => 24.0, 'dischargeKw' => 24.0, 'maxW' => 34500.0,
+    'feedTariff' => 0.1836, 'thCharge' => 0.15, 'thDischarge' => 0.25, 'spread' => 0.03];
+$r = call($ems, 'simulateDaySlot', [24, 0.1801, 0.0, 99.7, [], $fCtx, 0.0]);
+check('Sonntag 06:00, Bezug 18,01 ct < Verguetung 18,36 ct, Akku 99,7 %: Akku halten, Haus aus dem Netz, SOC bleibt', $r['plan']['op'] === EMS_OP_HOLD && abs($r['soc'] - 99.7) < 1e-9 && strpos($r['plan']['reason'], 'Einspeisevergütung 18.36ct') !== false, json_encode($r['plan']));
+$r = call($ems, 'simulateDaySlot', [24, 0.1840, 0.0, 99.7, [], $fCtx, 0.0]);
+check('Bezug 18,40 ct > Verguetung: Akku deckt das Haus (kein Halten)', $r['plan']['op'] !== EMS_OP_HOLD, json_encode($r['plan']));
+$r = call($ems, 'simulateDaySlot', [24, 0.1801, 0.0, 11.0, [], $fCtx, 0.0]);
+check('Akku nahe Reserve (11 %): keine Halteregel noetig, normale Logik', $r['plan']['op'] !== EMS_OP_HOLD || abs($r['soc'] - 11.0) < 1e-9, json_encode($r['plan']));
+
 echo "\n8l) Wallbox bei PV-Ueberschuss auch ueber der Preisschwelle\n";
 $ems = freshEms();
 $sW = state(['tib_active' => true, 'pv_total_w' => 3000.0, 'house_pow_w' => 800.0, 'wb1_pow_kw' => 0.0]);
