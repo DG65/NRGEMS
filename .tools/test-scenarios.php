@@ -1882,6 +1882,29 @@ check('Bezug 18,40 ct > Verguetung: Akku deckt das Haus (kein Halten)', $r['plan
 $r = call($ems, 'simulateDaySlot', [24, 0.1801, 0.0, 11.0, [], $fCtx, 0.0]);
 check('Akku nahe Reserve (11 %): keine Halteregel noetig, normale Logik', $r['plan']['op'] !== EMS_OP_HOLD || abs($r['soc'] - 11.0) < 1e-9, json_encode($r['plan']));
 
+echo "\n8k17) Vorentladen endet am Beginn der billigen Strecke (00:00 statt 01:30), Halten bis 0,01 ct Abstand\n";
+$ems = freshEms();
+prop('ANL_Verguetung_ct', 18.36); prop('PLAN_PreDischarge_MinGain_ct', 3.0); prop('BAT_Price_EUR', 9998); prop('BAT_Cycles', 8000); prop('BAT_Capacity_kWh', 40.0);
+// Abend 19-23 ct bis 23:45, ab 00:00 11,7 ... 11,1 ct, ab 01:30 11,0, ab 02:00 10,5 (Dietmars Kurve 24./25.10.2026)
+$p192 = array_fill(0, 192, null);
+for ($i = 84; $i < 96; $i++) { $p192[$i] = 0.21; } $p192[95] = 0.191;
+foreach ([0.117, 0.116, 0.112, 0.111, 0.114, 0.111] as $k => $v) { $p192[96 + $k] = $v; }
+$p192[102] = 0.110; $p192[103] = 0.109; for ($i = 104; $i < 120; $i++) { $p192[$i] = 0.105; }
+$end = call($ems, 'preDischargeEnd', [$p192, 87, 0.1836]);
+check('Vorentladen um 21:45: Ende 00:00 (Slot 96), nicht 01:30 (Slot 102)', $end === 96, json_encode($end));
+check('um 00:00 selbst: kein Vorentladen mehr (schon in der billigen Strecke)', call($ems, 'preDischargeEnd', [$p192, 96, 0.1836]) === null);
+check('um 23:45: Ende 00:00, also nur noch dieser Slot', call($ems, 'preDischargeEnd', [$p192, 95, 0.1836]) === 96);
+$p2 = $p192; $p2[98] = 0.20;
+check('liegt dazwischen ein Slot ueber der Verguetung (00:30 = 20 ct), endet es erst nach ihm (00:45)', call($ems, 'preDischargeEnd', [$p2, 87, 0.1836]) === 99, json_encode(call($ems, 'preDischargeEnd', [$p2, 87, 0.1836])));
+$fCtx2 = ['enwgActive' => false, 'enwgStartH' => 0, 'enwgEndH' => 0, 'avgHouseW' => 600.0, 'houseLoadSlots' => [],
+    'fcMinPower' => 100.0, 'socTargetDay' => 86.0, 'hystSoc' => 2.0, 'socMin' => 0.0, 'socReserve' => 10.0,
+    'socTargetNight' => 100.0, 'capKwh' => 40.0, 'chargeKw' => 24.0, 'dischargeKw' => 24.0, 'maxW' => 34500.0,
+    'feedTariff' => 0.1836, 'thCharge' => 0.15, 'thDischarge' => 0.25, 'spread' => 0.03];
+$r = call($ems, 'simulateDaySlot', [64, 0.1833, 0.0, 100.0, [], $fCtx2, 0.0]);
+check('16:00 mit 18,33 ct (0,03 ct unter der Verguetung): Akku halten', $r['plan']['op'] === EMS_OP_HOLD, json_encode($r['plan']));
+$r = call($ems, 'simulateDaySlot', [64, 0.1836, 0.0, 100.0, [], $fCtx2, 0.0]);
+check('Preis gleich der Verguetung: kein Halten', $r['plan']['op'] !== EMS_OP_HOLD);
+
 echo "\n8l) Wallbox bei PV-Ueberschuss auch ueber der Preisschwelle\n";
 $ems = freshEms();
 $sW = state(['tib_active' => true, 'pv_total_w' => 3000.0, 'house_pow_w' => 800.0, 'wb1_pow_kw' => 0.0]);

@@ -4189,7 +4189,7 @@ class EMS extends IPSModule
         // Vergleich OHNE Wandlungsfaktor (Dietmar 24.10.2026, sein Beispiel 18,01 ct Bezug gegen 18,36 ct Vergütung): Die 5 %
         // fallen auf BEIDEN Wegen an -- Akku -> Haus und Akku -> Netz laufen durch denselben Wechselrichter. Vorher stand hier
         // Vergütung x 0,95 = 17,44 ct, und bei 18,01 ct gab der Plan den Akku fuers Haus frei, obwohl Netzstrom billiger war.
-        if ($ctx['feedTariff'] > ($price + 0.001) && $soc > ($ctx['socMin'] + $ctx['socReserve'] + $ctx['hystSoc'] + $priceBonusPct)) {
+        if ($ctx['feedTariff'] > ($price + 0.0001) && $soc > ($ctx['socMin'] + $ctx['socReserve'] + $ctx['hystSoc'] + $priceBonusPct)) {
             // Bezug ist JETZT billiger als die Einspeiseverguetung -- die
             // gespeicherte Energie ist mehr wert, wenn sie exportiert
             // wird, als wenn sie den (billigeren) Netzbezug ersetzt.
@@ -5861,7 +5861,14 @@ class EMS extends IPSModule
         // Ist die laufende Viertelstunde selbst schon guenstig, ist das Fenster erreicht: nicht weiter entladen.
         if (isset($price192[$nowSlot]) && $price192[$nowSlot] !== null && $price192[$nowSlot] < $maxBuy) { return null; }
         for ($j = $nowSlot + 1; $j <= $nowSlot + 40 && $j < 192; $j++) {
-            if (isset($price192[$j]) && $price192[$j] !== null && $price192[$j] < $maxBuy) { return $j; }
+            if (isset($price192[$j]) && $price192[$j] !== null && $price192[$j] < $maxBuy) {
+                // Ende vorziehen auf den Beginn der zusammenhaengenden Strecke davor, in der Netzstrom schon billiger ist als die
+                // Verguetung (Dietmar 24.10.2026: Vorentladen bis 00:00 statt 01:30). Dort deckt sonst noch der Akku das Haus,
+                // obwohl Netzstrom (z. B. 11,7 ct ab Mitternacht) billiger ist als die gespeicherte Energie (18,36 ct beim Verkauf).
+                $e = $j;
+                while ($e - 1 >= $nowSlot && isset($price192[$e - 1]) && $price192[$e - 1] !== null && $price192[$e - 1] < $feed) { $e--; }
+                return ($e <= $nowSlot) ? null : $e; // schon in der billigen Strecke: nicht weiter entladen
+            }
         }
         return null;
     }

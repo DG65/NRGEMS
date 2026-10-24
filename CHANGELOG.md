@@ -2,6 +2,9 @@
 
 Ältere Versionen: [CHANGELOG-Archiv.md](CHANGELOG-Archiv.md)
 
+## 0.86.2 (2026-10-24)
+- **Vorentladen endet am Beginn der billigen Strecke, Halten bis 0,01 ct Abstand (Dietmar 24.10.2026):** Das Vorentladen lief bis zum ersten Slot unter der Rückkauf-Grenze (bei Dietmar 01:30, 11,0 ct), obwohl Netzstrom schon ab 00:00 (11,7 ct) billiger war als die Vergütung und der Akku dort noch das Haus deckte. Jetzt endet es am Beginn der zusammenhängenden Strecke vor dem Rückkauf, in der Netzstrom billiger ist als die Vergütung (hier 00:00); innerhalb dieser Strecke wird nicht mehr vorentladen, die Energie geht entsprechend früher ins Netz. Die Regel „Bezug unter Vergütung → Akku halten“ verlangte 0,1 ct Abstand; bei 18,33 ct gegen 18,36 ct (Sonntag 16:00–16:30) gab sie deshalb den Akku frei. Abstand jetzt 0,01 ct. Sechs neue Prüfungen, drei Mutationen nachweislich rot.
+
 ## 0.86.1 (2026-10-24)
 - **Netzbezug unter der Einspeisevergütung schont den Akku jetzt wirklich (Dietmar 24.10.2026: „Netzstrom für 18 ct ist günstiger als der Strom aus dem Speicher“):** Die Regel „Bezug < Einspeisevergütung → Akku schonen, Haus aus dem Netz“ verglich mit Vergütung × 0,95 (18,36 ct → 17,44 ct). Bei 18,01 ct Bezug (Sonntag 25.10. 06:00–16:00) gab der Plan deshalb den Akku fürs Haus frei. Falsch: Die Wandlungsverluste fallen auf beiden Wegen an (Akku → Haus und Akku → Netz laufen durch denselben Wechselrichter), sie heben sich auf. Jetzt wird direkt verglichen: 18,01 ct < 18,36 ct → Akku halten, Haus aus dem Netz. Außerdem sank in diesem Zweig der simulierte SOC trotz Halten um die Hauslast; beim Halten bleibt er jetzt stehen. Der irreführende Plantext „Bezug … günstiger als Alternative – Automatik: Hauslast aus Batterie“ heißt jetzt „Bezug …: Akku deckt das Haus“. Unverändert: die Netzlade-Grenze (Einkauf × Wandlung gegen Vergütung, dort zählt der Verlust nur einmal) und das Nachtfenster. Drei neue Prüfungen, zwei Mutationen nachweislich rot.
 
