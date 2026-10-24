@@ -3289,6 +3289,17 @@ check('Bedarf: Einkauf liegt vor dem Engpass (Slot >= jetzt)', $firstBuy >= 60);
 // 3) Gegenprobe: gleiche Last, Akku schon 100 % und morgen frueh genug PV -> deutlich weniger/kein Einkauf
 $abFull = call($ems, 'bedarfInsuranceSlots', [$p192, $pv, $ld, 60, 100.0, $ctxA]);
 check('Bedarf: voller Akku braucht weniger Einkauf als ein halber', count($abFull) <= count($ab), count($abFull) . ' vs ' . count($ab));
+// 3b) Live-Befund 24.10.2026: Akku um Mitternacht fast leer, Nacht 00:00-01:45 11-11,7 ct, ab 02:00 10,5 ct -> gekauft wird ab 02:00, nicht ab 00:00
+$pN = array_fill(0, 192, 0.18); foreach (range(88, 95) as $i) { $pN[$i] = 0.20; }
+foreach ([0.117, 0.116, 0.112, 0.111, 0.114, 0.111, 0.110, 0.109] as $k => $v) { $pN[96 + $k] = $v; }
+for ($i = 104; $i < 120; $i++) { $pN[$i] = 0.105; } for ($i = 162; $i < 180; $i++) { $pN[$i] = 0.29; }
+$pvN = array_fill(0, 192, 0.0); for ($i = 132; $i < 160; $i++) { $pvN[$i] = 2500.0; }
+$ldN = array_fill(0, 192, 900.0);
+$abN = call($ems, 'bedarfInsuranceSlots', [$pN, $pvN, $ldN, 92, 15.0, $ctxA]);
+check('Bedarf, Akku fast leer vor einer guenstigen Nacht: kein Einkauf von 00:00-01:45 zu 11-11,7 ct (das Nachtfenster laedt ab 02:00 fuer 10,5 ct)', empty(array_filter(array_keys($abN), fn($i) => $pN[$i] > 0.106)), json_encode(array_map(fn($i) => [$i, $pN[$i]], array_keys($abN))));
+$pvZ = array_fill(0, 192, 0.0);
+$abH = call($ems, 'bedarfInsuranceSlots', [$pN, $pvZ, $ldN, 92, 50.0, $ctxA]);
+check('Bedarf: Akku 50 %, Nacht und Tag billiger als die gespeicherte Energie (gehalten), Abend 4 kWh: kein Einkauf noetig', $abH === [], json_encode($abH));
 // 4) Ohne Preisvorteil (Abendpreis = Einkauf) nichts
 check('Bedarf: ohne Preisvorteil kein Einkauf', call($ems, 'bedarfInsuranceSlots', [array_fill(0, 192, 0.30), $pv, $ld, 60, 40.0, $ctxA]) === []);
 // 5) Schalter aus

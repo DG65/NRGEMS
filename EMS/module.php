@@ -3398,9 +3398,12 @@ class EMS extends IPSModule
             $run = 0;
         }
 
-        $traj = function (array $buy) use ($pvLow, $loadAt, $fromSlot, $end, $soc, $ctx, $base, $minSoc, $anchor) {
+        $traj = function (array $buy) use ($pvLow, $loadAt, $fromSlot, $end, $soc, $ctx, $base, $minSoc, $anchor, $prices, $limit) {
             $s = $soc; $min = 100.0; $short = null; $hard = null; $after = array(); $area = 0.0;
             for ($i = $fromSlot; $i < $end; $i++) {
+                // gehalten wie im Plan: unter der Lohnschwelle (Nachtfenster/Restwert) oder Bezug unter der Einspeiseverguetung
+                $held = (isset($prices[$i]) && $prices[$i] !== null
+                    && ((float)$prices[$i] < $limit || (float)$prices[$i] + 0.0001 < (float)($ctx['feedTariff'] ?? 0.0)));
                 if (isset($buy[$i])) {
                     $head = max(0.0, (100.0 - $s) / 100.0 * $ctx['capKwh']);
                     $gain = min($head, min($this->ctxChargeKw($ctx, $s), $ctx['maxW'] / 1000.0) * 0.25);
@@ -3410,12 +3413,17 @@ class EMS extends IPSModule
                     if ($sur > 0.0 && $s < 99.5) {
                         $gain = min($sur, $this->ctxChargeKw($ctx, $s) * 1000.0) / 1000.0 * 0.25;
                         $s = min(100.0, $s + $gain / max(0.001, $ctx['capKwh']) * 100.0);
-                    } elseif ($sur < 0.0) {
+                    } elseif ($sur < 0.0 && !$held) {
+                        // Nur wenn der Akku das Haus wirklich versorgt: Ist Netzstrom billiger als die gespeicherte Energie
+                        // (unter der Lohnschwelle), haelt EMS den Akku und das Haus laeuft aus dem Netz (Nachtfenster, Restwert,
+                        // Bereitschaft). Vorher sah die Absicherung dort einen Engpass und kaufte die Viertelstunden davor --
+                        // Live-Befund 24.10.2026: Netzladen ab 00:00 fuer 11,7 ct statt ab 02:00 fuer 10,5 ct.
                         $loss = min(-$sur, $ctx['dischargeKw'] * 1000.0) / 1000.0 * 0.25;
                         $s = max(0.0, $s - $loss / max(0.001, $ctx['capKwh']) * 100.0);
                     }
                 }
                 $after[$i] = $s;
+                if ($held && $i !== $anchor) { continue; } // gehaltener Akku versorgt nichts: unter der Reserve ist dort kein Engpass
                 $thr = ($i === $anchor) ? max($base, $minSoc) : $base;
                 $gap = $s - $thr;
                 if ($gap < 0.0) { $area -= $gap; }
