@@ -2,6 +2,9 @@
 
 Ältere Versionen: [CHANGELOG-Archiv.md](CHANGELOG-Archiv.md)
 
+## 0.86.3 (2026-10-24)
+- **Vorentladen-Text nennt den echten Rückkaufpreis (Dietmar 24.10.2026):** Seit 0.86.2 endet das Vorentladen am Beginn der billigen Strecke (z. B. 00:00), der Text „Wiederkauf … ct“ zeigte deshalb den Preis dieses Slots (11,7 ct) statt des Preises, zu dem nachgekauft wird (10,5 ct ab 02:00). Jetzt steht dort der günstigste bekannte Preis der sechs Stunden ab dem Ende des Vorentladens, im Tagesplan und in der Statuszeile. Nur Anzeige, die Rechnung ist unverändert. Eine Prüfung, eine Mutation nachweislich rot.
+
 ## 0.86.2 (2026-10-24)
 - **Vorentladen endet am Beginn der billigen Strecke, Halten bis 0,01 ct Abstand (Dietmar 24.10.2026):** Das Vorentladen lief bis zum ersten Slot unter der Rückkauf-Grenze (bei Dietmar 01:30, 11,0 ct), obwohl Netzstrom schon ab 00:00 (11,7 ct) billiger war als die Vergütung und der Akku dort noch das Haus deckte. Jetzt endet es am Beginn der zusammenhängenden Strecke vor dem Rückkauf, in der Netzstrom billiger ist als die Vergütung (hier 00:00); innerhalb dieser Strecke wird nicht mehr vorentladen, die Energie geht entsprechend früher ins Netz. Die Regel „Bezug unter Vergütung → Akku halten“ verlangte 0,1 ct Abstand; bei 18,33 ct gegen 18,36 ct (Sonntag 16:00–16:30) gab sie deshalb den Akku frei. Abstand jetzt 0,01 ct. Sechs neue Prüfungen, drei Mutationen nachweislich rot.
 

@@ -1896,6 +1896,7 @@ check('um 00:00 selbst: kein Vorentladen mehr (schon in der billigen Strecke)', 
 check('um 23:45: Ende 00:00, also nur noch dieser Slot', call($ems, 'preDischargeEnd', [$p192, 95, 0.1836]) === 96);
 $p2 = $p192; $p2[98] = 0.20;
 check('liegt dazwischen ein Slot ueber der Verguetung (00:30 = 20 ct), endet es erst nach ihm (00:45)', call($ems, 'preDischargeEnd', [$p2, 87, 0.1836]) === 99, json_encode(call($ems, 'preDischargeEnd', [$p2, 87, 0.1836])));
+check('Wiederkauf-Text: guenstigster Preis der naechsten 6 h ab dem Ende (10,5 ct um 02:00), nicht der Preis um 00:00 (11,7 ct)', abs(call($ems, 'preDischargeRebuyPrice', [$p192, 96]) - 0.105) < 1e-9);
 $fCtx2 = ['enwgActive' => false, 'enwgStartH' => 0, 'enwgEndH' => 0, 'avgHouseW' => 600.0, 'houseLoadSlots' => [],
     'fcMinPower' => 100.0, 'socTargetDay' => 86.0, 'hystSoc' => 2.0, 'socMin' => 0.0, 'socReserve' => 10.0,
     'socTargetNight' => 100.0, 'capKwh' => 40.0, 'chargeKw' => 24.0, 'dischargeKw' => 24.0, 'maxW' => 34500.0,

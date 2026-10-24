@@ -5393,7 +5393,7 @@ class EMS extends IPSModule
                 $sum = 0.0; $cnt = 0;
                 for ($k = $nowSlot; $k < $pdEnd; $k++) { if ($p192[$k] !== null) { $sum += max(0.01, (float)$p192[$k]); $cnt++; } }
                 if ($cnt > 0 && $sum > 0) {
-                    $pd = array('end' => $pdEnd, 'endPrice' => (float)$p192[$pdEnd], 'sum' => $sum, 'avg' => $sum / $cnt, 'floor' => $socMin);
+                    $pd = array('end' => $pdEnd, 'endPrice' => $this->preDischargeRebuyPrice($p192, $pdEnd), 'sum' => $sum, 'avg' => $sum / $cnt, 'floor' => $socMin);
                 }
             }
         }
@@ -5833,7 +5833,7 @@ class EMS extends IPSModule
             'wb1_enable' => false,
             'wb2_enable' => false,
             'reason'     => sprintf('Vorentladen bis %02d:%02d (Wiederkauf %.1fct, Vergütung %.1fct): SOC %.0f%% -> %.0f%%, Anteil %.0f%% dieser Viertelstunde (%.1fct), Einspeisung %.1f kW',
-                intdiv($end % 96, 4), ($end % 4) * 15, $price[$end] * 100, $feed * 100, $soc, $floor, $wNow / $sum * 100, $wNow * 100, $exportW / 1000.0),
+                intdiv($end % 96, 4), ($end % 4) * 15, $this->preDischargeRebuyPrice($price, $end) * 100, $feed * 100, $soc, $floor, $wNow / $sum * 100, $wNow * 100, $exportW / 1000.0),
             'source'     => 'vorentladen',
         );
     }
@@ -5848,6 +5848,19 @@ class EMS extends IPSModule
         $den = $wNow * $f + max(0.0, $sumFuture);
         if ($den <= 0 || $f <= 0) { return 0.0; }
         return $eKwh * 1000.0 * ($wNow / $den) / 0.25;
+    }
+
+    /**
+     * Preis, zu dem nach dem Vorentladen zurueckgekauft wird: der guenstigste bekannte Preis der naechsten 6 Stunden ab dem
+     * Ende des Vorentladens (Dietmar 24.10.2026: der Text zeigte den Preis um 00:00, gekauft wird aber erst ab 02:00 billiger).
+     */
+    private function preDischargeRebuyPrice(array $price192, int $end): float
+    {
+        $min = null;
+        for ($k = $end; $k < $end + 24 && $k < 192; $k++) {
+            if (isset($price192[$k]) && $price192[$k] !== null && ($min === null || (float)$price192[$k] < $min)) { $min = (float)$price192[$k]; }
+        }
+        return ($min !== null) ? $min : (float)($price192[$end] ?? 0.0);
     }
 
     /**
