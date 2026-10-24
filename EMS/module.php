@@ -31,7 +31,7 @@ define('EMS_OP_STANDBY',      4);
 define('EMS_OP_EXPORT',       5);
 define('EMS_OP_BACKUP',       6);
 define('EMS_OP_GRIDREWARDS',  7);
-define('EMS_OP_HOLD',          8); // Akku halten: AC-Export mit 0 W, Haus aus dem Netz (nichts wird eingespeist)
+define('EMS_OP_HOLD',          8); // Akku halten: GoodWe-Modus 8 (Batterie-Bereitschaft) -- Akku ruht, PV ins Haus/Netz, Rest aus dem Netz
 
 // Logging-Level
 define('EMS_LOG_OFF',         0);
@@ -41,7 +41,7 @@ define('EMS_LOG_VERBOSE',     2);
 // Formular-Konvention (siehe EMS/SUITE.md "Einheitliche Formular-Optik"):
 // Was-ist-Neu-Panel ist versionsscharf dismissible, Referenzmuster InverterHub.
 define('EMS_COLOR_AUTO', 0x2E8B3D); // Gruen: Wert wurde automatisch uebernommen (🔗-Zeilen im Formular)
-define('EMS_NEWS_VERSION', '0.86.0');
+define('EMS_NEWS_VERSION', '0.87.0');
 
 // NRG-Stack Partnermodul-GUIDs (fuer automatische Discovery, siehe discoverPartners())
 define('GUID_CHARGERHUB',    '{9256C34E-5CFD-4F37-8BFE-E65390EBB37C}');
@@ -783,6 +783,10 @@ class EMS extends IPSModule
                 'caption'  => '🆕 Neu in Version ' . EMS_NEWS_VERSION,
                 'expanded' => true,
                 'items'    => array(
+                    array(
+                        'type'    => 'Label',
+                        'caption' => '• GEÄNDERT: „Akku halten“ nutzt jetzt die Batterie-Bereitschaft des Wechselrichters (GoodWe-Modus 8): Der Akku ruht, die PV versorgt das Haus und speist ein, Lücken kommen aus dem Netz. Kostet Netzstrom weniger als die Einspeisevergütung, hält EMS den Akku auch bei vollem Akku und PV-Überschuss.'
+                    ),
                     array(
                         'type'    => 'Label',
                         'caption' => '• NEU: Zeitvariable Netzentgelte (z. B. §14a Modul 3) lassen sich im Bereich „Tibber & Tarif“ als Stufen eintragen, für Preisquellen ohne Netzentgelt (Symcon-Strompreis, eigene Preise). Bei Tibber sind sie schon im Preis. Fehlen Preise (Quelle ausgefallen), plant EMS mit dem Vortag bzw. dem heutigen Verlauf weiter, aber ohne Vorentladen ins Netz.'
@@ -3348,7 +3352,7 @@ class EMS extends IPSModule
                 'reason' => 'Manueller Eintrag: Netz laden', 'price' => $price, 'soc' => round($socNew, 1)), 'soc' => $socNew);
         }
         if ($entry['op'] === EMS_OP_HOLD) {
-            return array('plan' => array('op' => EMS_OP_HOLD, 'gw' => GW_MODE_AC_EXPORT, 'power' => 0, 'man' => 1,
+            return array('plan' => array('op' => EMS_OP_HOLD, 'gw' => GW_MODE_STANDBY, 'power' => 0, 'man' => 1,
                 'reason' => 'Manueller Eintrag: Akku halten (Haus aus dem Netz)', 'price' => $price, 'soc' => round($soc, 1)), 'soc' => $soc);
         }
         $auto = $this->simulateAutomatikSlot($slot, $pvW, $price, $soc, $ctx);
@@ -3829,7 +3833,7 @@ class EMS extends IPSModule
         $reason = ($nw['n'] > 0 || $soc < $ctx['socTargetNight'])
             ? sprintf('Nachtfenster bis %s: Haus aus dem Netz, %s -- Akku wird nicht entladen', $endLabel, $why)
             : sprintf('Nachtfenster bis %s: Haus aus dem Netz, %s -- Akku voll (Ziel %.0f%% erreicht)', $endLabel, $why, $ctx['socTargetNight']);
-        return array('plan' => array('op' => EMS_OP_HOLD, 'gw' => GW_MODE_AC_EXPORT, 'power' => 0, 'nw' => 1,
+        return array('plan' => array('op' => EMS_OP_HOLD, 'gw' => GW_MODE_STANDBY, 'power' => 0, 'nw' => 1,
             'reason' => $reason, 'price' => $price, 'soc' => round($soc, 1)), 'soc' => $soc);
     }
 
@@ -4156,6 +4160,14 @@ class EMS extends IPSModule
             // Verbund-Regel: Was die Automatik von selbst leistet, wird nie per Sollwert-Modus erzwungen
             // (Modus 5 mit enable=true haette den WR in "3rd party EMS" versetzt und bei ungenauer Prognose
             // staerker geregelt als noetig; Dietmar 19.09.2026). Der Plan zeigt es deshalb als Automatik.
+            // Bezug unter der Verguetung (Dietmar 24.10.2026): Batterie-Bereitschaft (Modus 8) statt Automatik. Die PV geht ins Haus
+            // und ins Netz wie bei der Automatik, aber faellt sie unter den Hausverbrauch (Wolke), kommt die Luecke aus dem Netz statt
+            // aus dem Akku -- die Speicherenergie ist mehr wert als der Netzstrom.
+            if ($price !== null && $ctx['feedTariff'] > ((float)$price + 0.0001)) {
+                return array('plan' => array('op' => EMS_OP_HOLD, 'gw' => GW_MODE_STANDBY, 'power' => 0,
+                    'reason' => sprintf('Akku am Ziel (SOC=%.0f%%), Bezug %.2fct < Einspeisevergütung %.2fct -- Bereitschaft: PV-Überschuss (Ernte %.0fW) ins Netz, Lücken aus dem Netz%s', $soc, $price * 100, $ctx['feedTariff'] * 100, $pvW, $capped),
+                    'price' => $price, 'soc' => round($soc, 1)), 'soc' => $soc);
+            }
             return array('plan' => array('op' => EMS_OP_AUTO, 'gw' => GW_MODE_AUTO, 'power' => 0,
                 'reason' => sprintf('Automatik: Akku am Ziel (SOC=%.0f%%), PV-Überschuss (Ernte %.0fW) wird von der WR-Automatik eingespeist%s', $soc, $pvW, $capped),
                 'price' => $price, 'soc' => round($soc, 1)), 'soc' => $soc);
@@ -4198,7 +4210,7 @@ class EMS extends IPSModule
             // Mittags-Fall bei niedrigen Spotpreisen), aber nur oberhalb
             // der Preis-Reserve fuer spaeter kommende teure Stunden.
             // Halten: das Haus laeuft aus dem Netz, der SOC bleibt (vorher sank er in der Simulation trotzdem um die Hauslast).
-            return array('plan' => array('op' => EMS_OP_HOLD, 'gw' => GW_MODE_AC_EXPORT, 'power' => 0,
+            return array('plan' => array('op' => EMS_OP_HOLD, 'gw' => GW_MODE_STANDBY, 'power' => 0,
                 'reason' => sprintf('Bezug %.2fct < Einspeisevergütung %.2fct -- Akku wird geschont, Haus aus dem Netz (die Speicherenergie ist mehr wert)', $price * 100, $ctx['feedTariff'] * 100),
                 'price' => $price, 'soc' => round($soc, 1)), 'soc' => $soc);
         }
@@ -4209,7 +4221,7 @@ class EMS extends IPSModule
         if (!empty($ctx['restwert']) && $loadW > 0.0 && $soc > ($ctx['socMin'] + $ctx['socReserve'] + $ctx['hystSoc'])) {
             $rw = $this->restwertValue($ctx, (int)$slot, (float)$soc);
             if ($rw['usable'] > 0.05 && $rw['value'] > $price + ($ctx['spread'] ?? 0.0) + 0.001 && $rw['covered'] >= $rw['usable']) {
-                return array('plan' => array('op' => EMS_OP_HOLD, 'gw' => GW_MODE_AC_EXPORT, 'power' => 0, 'rw' => round($rw['value'] * 100, 2),
+                return array('plan' => array('op' => EMS_OP_HOLD, 'gw' => GW_MODE_STANDBY, 'power' => 0, 'rw' => round($rw['value'] * 100, 2),
                     'reason' => sprintf('Restwert: die gespeicherte Energie deckt später Viertelstunden bis %.2fct, Bezug jetzt nur %.2fct -- Akku wird geschont, Haus aus dem Netz', $rw['value'] * 100, $price * 100),
                     'price' => $price, 'soc' => round($soc, 1)), 'soc' => $soc);
             }
@@ -9168,7 +9180,8 @@ class EMS extends IPSModule
         // Akku halten (Plan/manuell: Modus 5 mit 0 W): Entladesperre ueber den Speicherbetrieb, nur wenn der InverterHub sie anbietet
         // und kein PV-Ueberschuss da ist (ob PV bei gesperrtem Entladen weiter laedt, ist am Solis noch nicht gemessen)
         $holdCapable = ($this->findChildVariableIdByIdent($iid, 'svc_discharge_inhibit') > 0 && $this->findChildVariableIdByIdent($iid, 'cfg_storage_mode') > 0);
-        $wantHold = (!$wantCharge && $holdCapable && $mode === GW_MODE_AC_EXPORT && $powerW <= 0 && $this->solisHoldAllowed($iid));
+        $isHold = (($mode === GW_MODE_AC_EXPORT || $mode === GW_MODE_STANDBY) && $powerW <= 0);
+        $wantHold = (!$wantCharge && $holdCapable && $isHold && $this->solisHoldAllowed($iid));
         $this->solisHoldHousekeeping($iid);
         $this->solisHoldApply($iid, $wantHold, $now);
         $dischW = $wantCharge ? 0 : $this->solisDischargeW($iid, $mode, $powerW);
@@ -9178,7 +9191,7 @@ class EMS extends IPSModule
         if ($unsupported && ($mode === GW_MODE_DISCHARGE || $mode === GW_MODE_BAT_DISCH)) {
             $why = 'Solis: Entladen auf Vorgabe pausiert (kein Bedarf über PV und Reserve), der Wechselrichter bleibt in Automatik';
         }
-        if ($unsupported && $mode === GW_MODE_AC_EXPORT && $powerW <= 0 && $holdCapable) {
+        if ($unsupported && $isHold && $holdCapable) {
             $why = 'Solis: Akku halten pausiert (PV-Überschuss, Ladestand über dem Reserve-SOC des Geräts oder Wartezeit), der Wechselrichter bleibt in Automatik';
         }
         if ($this->ReadAttributeString('NoControlReason') !== $why) { $this->WriteAttributeString('NoControlReason', $why); }

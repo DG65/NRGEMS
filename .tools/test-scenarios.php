@@ -854,7 +854,7 @@ $nwU = call($ems, 'nightWindowPlan', [$tagU, 0, 0.0, $ctxU]);
 check('Nutzer ohne Verguetung laedt trotzdem in den 12-ct-Slots nach (kein Sperren wegen Verguetung 0)', $nwU !== null && count($nwU['charge']) > 0 && max(array_keys($nwU['charge'])) < 24, json_encode($nwU));
 $slU = null; for ($i = 0; $i < $nwU['end']; $i++) { if (!isset($nwU['charge'][$i])) { $slU = $i; break; } }
 check('Referenz Ersatzpreis: es gibt einen Nicht-Ladeslot im Fenster (Testvoraussetzung)', $slU !== null, json_encode($nwU));
-check('Referenz Ersatzpreis (Nutzer ohne Verguetung): uebriger Slot im Fenster (12 ct < 36 ct x 0,95 - 3 ct = 31,2 ct) -> Akku halten, Haus aus dem Netz, Begruendung nennt den Ersatzpreis', ($hU = call($ems, 'nightWindowSlot', [$slU, 0.12, 60.0, $nwU, $ctxU])) !== null && $hU['plan']['op'] === EMS_OP_HOLD && $hU['plan']['gw'] === GW_MODE_AC_EXPORT && strpos($hU['plan']['reason'], 'Ersatzpreis') !== false, json_encode($hU['plan'] ?? null));
+check('Referenz Ersatzpreis (Nutzer ohne Verguetung): uebriger Slot im Fenster (12 ct < 36 ct x 0,95 - 3 ct = 31,2 ct) -> Akku halten, Haus aus dem Netz, Begruendung nennt den Ersatzpreis', ($hU = call($ems, 'nightWindowSlot', [$slU, 0.12, 60.0, $nwU, $ctxU])) !== null && $hU['plan']['op'] === EMS_OP_HOLD && $hU['plan']['gw'] === GW_MODE_STANDBY && strpos($hU['plan']['reason'], 'Ersatzpreis') !== false, json_encode($hU['plan'] ?? null));
 check('Referenz Ersatzpreis: Grenze 31,2 ct (31 ct noch halten, 32 ct schon Akku)', call($ems, 'nightWindowSlot', [$slU, 0.31, 60.0, $nwU, $ctxU]) !== null && call($ems, 'nightWindowSlot', [$slU, 0.32, 60.0, $nwU, $ctxU]) === null);
 check('Referenz Ersatzpreis ohne Preisvergleichswert: kein Halten', call($ems, 'nightWindowSlot', [$slU, 0.12, 60.0, $nwU, array_merge($ctxU, ['replacePrice' => null])]) === null);
 check('Referenz Ersatzpreis: Halten unabhaengig von der Einspeiseverguetung (Verguetung 18,36 ct, Preis 30 ct, Ersatz 50 ct -> halten)', ($hV = call($ems, 'nightWindowSlot', [$slU, 0.30, 60.0, $nwU, array_merge($ctxU, ['feedTariff' => 0.1836, 'replacePrice' => 0.50])])) !== null && $hV['plan']['op'] === EMS_OP_HOLD, json_encode($hV['plan'] ?? null));
@@ -1176,6 +1176,11 @@ $acts = function () { return array_map(fn($a) => $a[1] . '=' . json_encode($a[2]
 $GLOBALS['ACTIONS'] = [];
 call($ems, 'setGoodweMode', [GW_MODE_AC_EXPORT, 0, true]);
 check('Akku halten (Modus 5, 0 W) ohne PV: Entladesperre wird gesetzt, Nutzerwert 33 gemerkt', in_array('svc_discharge_inhibit=true', $acts(), true) && $ems->ReadAttributeInteger('SolisUserStorage') === 33 && $ems->ReadAttributeBoolean('SolisHoldActive') === true, json_encode($acts()));
+$snap = [$ems->ReadAttributeBoolean('SolisHoldActive'), $ems->ReadAttributeInteger('SolisUserStorage'), $ems->ReadAttributeInteger('SolisHoldChangedAt'), $ems->ReadAttributeInteger('SolisHoldTryAt')];
+attr('SolisHoldActive', false); attr('SolisHoldChangedAt', 0); attr('SolisUserStorage', -1); $GLOBALS['ACTIONS'] = [];
+call($ems, 'setGoodweMode', [GW_MODE_STANDBY, 0, true]);
+check('Akku halten als Modus 8 (Bereitschaft, EMS 0.87.0): beim Solis ebenfalls Entladesperre', in_array('svc_discharge_inhibit=true', $acts(), true), json_encode($acts()));
+attr('SolisHoldActive', $snap[0]); attr('SolisUserStorage', $snap[1]); attr('SolisHoldChangedAt', $snap[2]); attr('SolisHoldTryAt', $snap[3]);
 check('Halten erlaubt: Statuszeile ohne "Nur beobachtend"', call($ems, 'statusText', ['x']) === 'OK: x', call($ems, 'statusText', ['x']));
 $GLOBALS['ACTIONS'] = [];
 call($ems, 'setGoodweMode', [GW_MODE_AC_EXPORT, 0, true]);
@@ -1903,6 +1908,12 @@ $fCtx2 = ['enwgActive' => false, 'enwgStartH' => 0, 'enwgEndH' => 0, 'avgHouseW'
     'feedTariff' => 0.1836, 'thCharge' => 0.15, 'thDischarge' => 0.25, 'spread' => 0.03];
 $r = call($ems, 'simulateDaySlot', [64, 0.1833, 0.0, 100.0, [], $fCtx2, 0.0]);
 check('16:00 mit 18,33 ct (0,03 ct unter der Verguetung): Akku halten', $r['plan']['op'] === EMS_OP_HOLD, json_encode($r['plan']));
+$r = call($ems, 'simulateDaySlot', [60, 0.1801, 2500.0, 100.0, [], $fCtx2, 0.0]);
+check('15:00 Akku voll, PV-Ueberschuss, 18,01 ct < Verguetung: Bereitschaft (Modus 8) statt Automatik', $r['plan']['op'] === EMS_OP_HOLD && $r['plan']['gw'] === GW_MODE_STANDBY && strpos($r['plan']['reason'], 'Bereitschaft') !== false, json_encode($r['plan']));
+$r = call($ems, 'simulateDaySlot', [60, 0.2500, 2500.0, 100.0, [], $fCtx2, 0.0]);
+check('Akku voll, PV-Ueberschuss, 25 ct > Verguetung: Automatik wie bisher', $r['plan']['op'] === EMS_OP_AUTO, json_encode($r['plan']));
+$r = call($ems, 'simulateDaySlot', [24, 0.1801, 0.0, 99.7, [], $fCtx2, 0.0]);
+check('Halten setzt Modus 8 (Batterie-Bereitschaft), nicht AC-Export', $r['plan']['gw'] === GW_MODE_STANDBY && (int)$r['plan']['power'] === 0, json_encode($r['plan']));
 $r = call($ems, 'simulateDaySlot', [64, 0.1836, 0.0, 100.0, [], $fCtx2, 0.0]);
 check('Preis gleich der Verguetung: kein Halten', $r['plan']['op'] !== EMS_OP_HOLD);
 
@@ -2999,7 +3010,7 @@ $ctxH = ['negativpreisPflicht' => false, 'capKwh' => 40.0, 'chargeKw' => 10.0, '
     'thCharge' => 0.10, 'thDischarge' => 0.25, 'socTargetDay' => 38.0, 'hystSoc' => 3.0, 'socMin' => 0.0, 'socReserve' => 10.0, 'socTargetNight' => 30.0,
     'avgHouseW' => 400.0, 'houseLoadSlots' => [], 'fcMinPower' => 300.0, 'enwgActive' => false, 'enwgStartH' => 0, 'enwgEndH' => 0];
 $h = call($ems, 'simulateDaySlot', [12, 0.14, 0.0, 40.0, [], $ctxH, 0.0]);
-check('Bezug 14 ct < Verguetung 18,36 ct, kein PV: op = Akku halten (8), 0 W, gw AC-Export', $h['plan']['op'] === EMS_OP_HOLD && EMS_OP_HOLD === 8 && (int)$h['plan']['power'] === 0 && $h['plan']['gw'] === GW_MODE_AC_EXPORT, json_encode($h['plan']));
+check('Bezug 14 ct < Verguetung 18,36 ct, kein PV: op = Akku halten (8), 0 W, gw Modus 8 Bereitschaft', $h['plan']['op'] === EMS_OP_HOLD && EMS_OP_HOLD === 8 && (int)$h['plan']['power'] === 0 && $h['plan']['gw'] === GW_MODE_STANDBY, json_encode($h['plan']));
 check('Begruendung sagt nicht mehr "exportiert"', strpos($h['plan']['reason'], 'exportiert') === false && strpos($h['plan']['reason'], 'geschont') !== false, $h['plan']['reason']);
 $e = call($ems, 'simulateDaySlot', [50, 0.30, 8000.0, 38.4, [], $ctxH, 0.0]);
 check('PV-Einspeisung bei vollem Akku: Automatik (op 0, Modus 1, 0 W) -- die WR-Automatik speist selbst ein, kein erzwungener Modus 5', $e['plan']['op'] === EMS_OP_AUTO && $e['plan']['gw'] === GW_MODE_AUTO && (int)$e['plan']['power'] === 0 && strpos($e['plan']['reason'], 'eingespeist') !== false, json_encode($e['plan']));
@@ -3073,7 +3084,7 @@ $cL = call($ems, 'nightWindowSlot', [11, 0.17, 97.5, $nwE, $ctxN]);
 check('Letzter Ladeslot: Sollleistung nur fuer die fehlende Energie (1 kWh -> 4 kW)', $cL['plan']['gw'] === GW_MODE_BAT_CHARGE && $cL['plan']['power'] === 4000, json_encode($cL['plan']));
 check('Ladeslot erhoeht den SOC (80 % + 2,5 kWh = 86,25 %)', abs($c['soc'] - 86.25) < 0.01, (string)$c['soc']);
 $h = call($ems, 'nightWindowSlot', [3, 0.17, 60.0, $nw, $ctxN]);
-check('uebriger Slot im Fenster, Preis 17 ct < 17,44 ct: Akku halten (op 8, AC-Export 0 W), Haus aus dem Netz, SOC unveraendert', $h['plan']['op'] === EMS_OP_HOLD && $h['plan']['gw'] === GW_MODE_AC_EXPORT && (int)$h['plan']['power'] === 0 && $h['soc'] === 60.0 && !empty($h['plan']['nw']), json_encode($h['plan']));
+check('uebriger Slot im Fenster, Preis 17 ct < 17,44 ct: Akku halten (op 8, Bereitschaft Modus 8), Haus aus dem Netz, SOC unveraendert', $h['plan']['op'] === EMS_OP_HOLD && $h['plan']['gw'] === GW_MODE_STANDBY && (int)$h['plan']['power'] === 0 && $h['soc'] === 60.0 && !empty($h['plan']['nw']), json_encode($h['plan']));
 check('Preis 18 ct liegt ueber 18,36 ct x 0,95 = 17,44 ct: Haus vom Akku versorgt (normale Logik, null)', call($ems, 'nightWindowSlot', [3, 0.18, 60.0, $nw, $ctxN]) === null && call($ems, 'nightWindowSlot', [3, 0.30, 60.0, $nw, $ctxN]) === null);
 check('Grenze: 17,4 ct noch Netz, 17,5 ct schon Akku', call($ems, 'nightWindowSlot', [3, 0.174, 60.0, $nw, $ctxN]) !== null && call($ems, 'nightWindowSlot', [3, 0.175, 60.0, $nw, $ctxN]) === null);
 check('Ladeslot bleibt Ladeslot, auch wenn der Preis ueber der Vergueltungsgrenze liegt (guenstigste Viertelstunden zaehlen)', call($ems, 'nightWindowSlot', [12, 0.19, 80.0, $nw, $ctxN])['plan']['op'] === EMS_OP_NET_CHARGE);

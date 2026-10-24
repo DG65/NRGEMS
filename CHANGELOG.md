@@ -2,6 +2,9 @@
 
 Ältere Versionen: [CHANGELOG-Archiv.md](CHANGELOG-Archiv.md)
 
+## 0.87.0 (2026-10-24)
+- **„Akku halten“ über Batterie-Bereitschaft (GoodWe-Modus 8) statt AC-Export mit 0 W (Dietmar 24.10.2026):** Modus 8 lässt den Akku komplett ruhen (kein Laden, kein Entladen), die PV versorgt das Haus und speist den Überschuss ein, eine Lücke kommt aus dem Netz. AC-Export (Modus 5) mit 0 W begrenzt dagegen laut GoodWe-Doku die PV-Einspeisung auf den Sollwert und taugt deshalb nicht, sobald PV im Spiel ist. Alle Haltestellen nutzen jetzt Modus 8: Tagesplan („Bezug unter Vergütung“), Nachtfenster, Restwert, manuelle Einträge „Akku halten“. **Neu:** Ist der Akku voll und PV-Überschuss erwartet, plant EMS bei Bezug unter der Vergütung ebenfalls Bereitschaft statt Automatik; die PV wird genauso eingespeist, aber bei einer Wolke kommt die Lücke aus dem Netz statt aus dem Akku (vorher Sonntag 15:00–15:45 Automatik). Beim Solis gilt Modus 8 wie bisher Modus 5 mit 0 W als „Akku halten“ (Entladesperre). Live-Beleg für Modus 8 an Dietmars Anlage: Nacht 23.10., Akku −90 W, Haus aus dem Netz. Prüfungen angepasst und erweitert, vier Mutationen nachweislich rot. **Tagsüber mit PV am Gerät noch nicht gemessen.**
+
 ## 0.86.3 (2026-10-24)
 - **Vorentladen-Text nennt den echten Rückkaufpreis (Dietmar 24.10.2026):** Seit 0.86.2 endet das Vorentladen am Beginn der billigen Strecke (z. B. 00:00), der Text „Wiederkauf … ct“ zeigte deshalb den Preis dieses Slots (11,7 ct) statt des Preises, zu dem nachgekauft wird (10,5 ct ab 02:00). Jetzt steht dort der günstigste bekannte Preis der sechs Stunden ab dem Ende des Vorentladens, im Tagesplan und in der Statuszeile. Nur Anzeige, die Rechnung ist unverändert. Eine Prüfung, eine Mutation nachweislich rot.
 
