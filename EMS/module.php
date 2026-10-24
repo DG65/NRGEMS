@@ -41,7 +41,7 @@ define('EMS_LOG_VERBOSE',     2);
 // Formular-Konvention (siehe EMS/SUITE.md "Einheitliche Formular-Optik"):
 // Was-ist-Neu-Panel ist versionsscharf dismissible, Referenzmuster InverterHub.
 define('EMS_COLOR_AUTO', 0x2E8B3D); // Gruen: Wert wurde automatisch uebernommen (🔗-Zeilen im Formular)
-define('EMS_NEWS_VERSION', '0.87.0');
+define('EMS_NEWS_VERSION', '0.88.0');
 
 // NRG-Stack Partnermodul-GUIDs (fuer automatische Discovery, siehe discoverPartners())
 define('GUID_CHARGERHUB',    '{9256C34E-5CFD-4F37-8BFE-E65390EBB37C}');
@@ -775,6 +775,10 @@ class EMS extends IPSModule
             )
         ));
 
+        // 0b. Wallboxen bedienen (Dietmar 24.10.2026: "Schalter nicht gefunden"): ganz oben, direkt nach "Neu", wirkt sofort
+        $wbPanel = $this->wallboxControlPanel();
+        if ($wbPanel !== null) { array_unshift($form['elements'], $wbPanel); }
+
         // 1. "Was ist Neu" — aufgeklappt, pro Version dismissible
         if ($this->ReadAttributeString('SeenNews') !== EMS_NEWS_VERSION) {
             array_unshift($form['elements'], array(
@@ -783,6 +787,10 @@ class EMS extends IPSModule
                 'caption'  => '🆕 Neu in Version ' . EMS_NEWS_VERSION,
                 'expanded' => true,
                 'items'    => array(
+                    array(
+                        'type'    => 'Label',
+                        'caption' => '• NEU: Ganz oben gibt es jetzt „🚗 Wallboxen bedienen“: Ladeart, Ladeziel, Frist, Jetzt 1 Stunde laden, Übersteuerung beenden und Ladeziel löschen, mit dem Plan je Wallbox. Wirkt sofort, ohne „Änderungen übernehmen“.'
+                    ),
                     array(
                         'type'    => 'Label',
                         'caption' => '• GEÄNDERT: „Akku halten“ nutzt jetzt die Batterie-Bereitschaft des Wechselrichters (GoodWe-Modus 8): Der Akku ruht, die PV versorgt das Haus und speist ein, Lücken kommen aus dem Netz. Kostet Netzstrom weniger als die Einspeisevergütung, hält EMS den Akku auch bei vollem Akku und PV-Überschuss.'
@@ -9728,6 +9736,52 @@ class EMS extends IPSModule
         $set('EMS_WB' . $n . '_TargetKwh', (float)$this->ReadPropertyFloat('WB' . $n . '_TargetKwh'));
         $set('EMS_WB' . $n . '_TargetTime', (string)$this->ReadPropertyString('WB' . $n . '_TargetTime'));
         $set('EMS_WB' . $n . '_Command', 0);
+    }
+
+    /**
+     * Formular-Panel "Wallboxen bedienen": je aktiver Wallbox Ladeart (wirkt beim Auswaehlen), Ladeziel und Frist (wirken mit
+     * "Ziel übernehmen"), Befehle als Schaltflaechen und die Planzeile. Alles laeuft ueber dieselben Aktionen wie im WebFront
+     * (IPS_RequestAction auf EMS_WBn_*), also eine Quelle; Ladeart/Ziel/Frist laden die Instanz dabei einmal neu.
+     */
+    private function wallboxControlPanel(): ?array
+    {
+        if (!$this->ReadPropertyBoolean('WB_Active')) { return null; }
+        $count = min(2, max(1, $this->ReadPropertyInteger('WB_Count')));
+        $modes = array();
+        foreach (array(0 => 'Preisgesteuert', 1 => 'Manuell (feste Stromstärke)', 2 => 'Nur PV', 3 => 'PV-Anteil', 4 => 'Hybrid (Mindeststrom + PV)', 5 => 'Aus (Laden gesperrt)') as $v => $c) {
+            $modes[] = array('caption' => $c, 'value' => $v);
+        }
+        $items = array();
+        for ($n = 1; $n <= $count; $n++) {
+            $plan = '';
+            $pid = @IPS_GetObjectIDByIdent('EMS_WB' . $n . '_Plan', $this->InstanceID);
+            if ($pid !== false && $pid > 0) { $plan = (string)GetValue($pid); }
+            if ($plan === '') { $plan = 'Noch kein Plan berechnet (erscheint mit dem nächsten Regelzyklus).'; }
+            $nowUntil = $this->ReadAttributeInteger('WB' . $n . 'NowUntil');
+            $items[] = array('type' => 'Label', 'caption' => '── Wallbox ' . $n . ' ─────────────────────────');
+            $items[] = array('type' => 'Label', 'name' => 'FormWB' . $n . 'Plan', 'caption' => '📋 ' . $plan);
+            if ($nowUntil > time()) {
+                $items[] = array('type' => 'Label', 'caption' => sprintf('⚡ Jetzt laden läuft noch bis %s Uhr.', date('H:i', $nowUntil)), 'color' => EMS_COLOR_AUTO);
+            }
+            $items[] = array('type' => 'Select', 'name' => 'FormWB' . $n . 'ChargeMode', 'caption' => 'Ladeart (wirkt sofort)', 'options' => $modes,
+                'value' => $this->ReadPropertyInteger('WB' . $n . '_ChargeMode'),
+                'onChange' => 'IPS_RequestAction($id, "EMS_WB' . $n . '_ChargeMode", $FormWB' . $n . 'ChargeMode);');
+            $items[] = array('type' => 'RowLayout', 'items' => array(
+                array('type' => 'NumberSpinner', 'name' => 'FormWB' . $n . 'TargetKwh', 'caption' => 'Ladeziel (kWh, 0 = aus)', 'minimum' => 0, 'maximum' => 200, 'digits' => 1, 'suffix' => ' kWh',
+                    'value' => (float)$this->ReadPropertyFloat('WB' . $n . '_TargetKwh')),
+                array('type' => 'ValidationTextBox', 'name' => 'FormWB' . $n . 'TargetTime', 'caption' => 'Frist (HH:MM)', 'validate' => '^([01]?\\d|2[0-3]):[0-5]\\d$',
+                    'value' => (string)$this->ReadPropertyString('WB' . $n . '_TargetTime')),
+                array('type' => 'Button', 'caption' => 'Ziel übernehmen',
+                    'onClick' => 'IPS_RequestAction($id, "EMS_WB' . $n . '_TargetTime", $FormWB' . $n . 'TargetTime); IPS_RequestAction($id, "EMS_WB' . $n . '_TargetKwh", $FormWB' . $n . 'TargetKwh); echo "Ladeziel für Wallbox ' . $n . ' übernommen.";'),
+            ));
+            $items[] = array('type' => 'RowLayout', 'items' => array(
+                array('type' => 'Button', 'caption' => '⚡ Jetzt 1 Stunde laden', 'onClick' => 'IPS_RequestAction($id, "EMS_WB' . $n . '_Command", 1); echo "Wallbox ' . $n . ': Jetzt laden für 1 Stunde gestartet.";'),
+                array('type' => 'Button', 'caption' => '⏹ Übersteuerung beenden', 'onClick' => 'IPS_RequestAction($id, "EMS_WB' . $n . '_Command", 2); echo "Wallbox ' . $n . ': Übersteuerung beendet, es gilt wieder die Ladeart.";'),
+                array('type' => 'Button', 'caption' => '🗑 Ladeziel löschen', 'onClick' => 'IPS_RequestAction($id, "EMS_WB' . $n . '_Command", 3); echo "Wallbox ' . $n . ': Ladeziel gelöscht.";'),
+            ));
+        }
+        $items[] = array('type' => 'Label', 'caption' => 'Dieselben Bedienelemente gibt es im WebFront als Variablen „Wallbox n: Ladeart / Ladeziel / Frist / Befehl / Plan“ unter dieser Instanz (für eine eigene Kategorie dort Links anlegen). Die Einstellungen im Bereich „🚗 Wallboxen“ weiter unten zeigen dieselben Werte.');
+        return array('type' => 'ExpansionPanel', 'caption' => '🚗 Wallboxen bedienen', 'expanded' => true, 'items' => $items);
     }
 
     /** WebFront-Bedienung: eine Quelle -- Ladeart, Ziel und Frist aendern die Einstellung selbst, der Befehl wirkt sofort. */

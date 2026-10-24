@@ -1917,6 +1917,26 @@ check('Halten setzt Modus 8 (Batterie-Bereitschaft), nicht AC-Export', $r['plan'
 $r = call($ems, 'simulateDaySlot', [64, 0.1836, 0.0, 100.0, [], $fCtx2, 0.0]);
 check('Preis gleich der Verguetung: kein Halten', $r['plan']['op'] !== EMS_OP_HOLD);
 
+echo "\n8k18) Formular-Panel 'Wallboxen bedienen' ganz oben\n";
+$ems = freshEms();
+prop('WB_Active', true); prop('WB_Count', 2); prop('WB1_ChargeMode', 4); prop('WB1_TargetKwh', 12.5); prop('WB1_TargetTime', '06:30'); prop('EMS_Risk_Acknowledged', true);
+call($ems, 'maintainWallboxControlVariables');
+SetValue(IPS_GetObjectIDByIdent('EMS_WB1_Plan', EMS_IID), 'Hybrid: 6 A (Mindeststrom 6 A plus PV-Überschuss 0 W).');
+$fj = json_decode($ems->GetConfigurationForm(), true);
+$idx = null; foreach ($fj['elements'] as $k => $e) { if (($e['caption'] ?? '') === '🚗 Wallboxen bedienen') { $idx = $k; break; } }
+check('Panel "Wallboxen bedienen" ganz oben (Position 0 oder direkt nach "Neu")', $idx !== null && $idx <= 1, var_export($idx, true));
+$pj = json_encode($fj['elements'][$idx] ?? [], JSON_UNESCAPED_UNICODE);
+check('Panel zeigt Planzeile, aktuelle Ladeart, Ziel, Frist fuer Wallbox 1 und Wallbox 2', strpos($pj, '"name":"FormWB1Plan"') !== false && strpos($pj, 'Hybrid: 6 A') !== false && strpos($pj, '"name":"FormWB1ChargeMode"') !== false && strpos($pj, '"value":4') !== false && strpos($pj, '"value":12.5') !== false && strpos($pj, '"value":"06:30"') !== false && strpos($pj, '"name":"FormWB2ChargeMode"') !== false, $pj);
+check('Ladeart wirkt sofort ueber dieselbe Aktion wie im WebFront (EMS_WB1_ChargeMode)', strpos($pj, 'IPS_RequestAction($id, \"EMS_WB1_ChargeMode\", $FormWB1ChargeMode);') !== false);
+check('Schaltflaechen Jetzt laden / Uebersteuerung beenden / Ladeziel loeschen mit Rueckmeldung', strpos($pj, 'EMS_WB1_Command\", 1); echo') !== false && strpos($pj, 'EMS_WB1_Command\", 2); echo') !== false && strpos($pj, 'EMS_WB1_Command\", 3); echo') !== false);
+prop('WB_Count', 1);
+$pj1 = ''; foreach (json_decode($ems->GetConfigurationForm(), true)['elements'] as $e) { if (($e['caption'] ?? '') === '🚗 Wallboxen bedienen') { $pj1 = json_encode($e, JSON_UNESCAPED_UNICODE); } }
+check('nur eine Wallbox: kein Wallbox-2-Block', strpos($pj1, 'FormWB2') === false && strpos($pj1, 'FormWB1') !== false);
+prop('WB_Active', false);
+$has = false; foreach (json_decode($ems->GetConfigurationForm(), true)['elements'] as $e) { if (($e['caption'] ?? '') === '🚗 Wallboxen bedienen') { $has = true; } }
+check('Wallboxen aus: kein Bedien-Panel', $has === false);
+prop('WB1_ChargeMode', 0); prop('WB1_TargetKwh', 0.0); prop('WB1_TargetTime', '07:00');
+
 echo "\n8l) Wallbox bei PV-Ueberschuss auch ueber der Preisschwelle\n";
 $ems = freshEms();
 $sW = state(['tib_active' => true, 'pv_total_w' => 3000.0, 'house_pow_w' => 800.0, 'wb1_pow_kw' => 0.0]);

@@ -2,6 +2,9 @@
 
 Ältere Versionen: [CHANGELOG-Archiv.md](CHANGELOG-Archiv.md)
 
+## 0.88.0 (2026-10-24)
+- **Panel „🚗 Wallboxen bedienen“ ganz oben im Formular (Auftrag Dietmar 24.10.2026: „Schalter nicht gefunden“):** Direkt nach „Neu in Version“, aufgeklappt, je aktiver Wallbox: Planzeile („was als Nächstes passiert“), Hinweis bei laufendem „Jetzt laden“, Auswahl **Ladeart** (wirkt beim Auswählen), **Ladeziel** und **Frist** mit Schaltfläche „Ziel übernehmen“, Schaltflächen **„⚡ Jetzt 1 Stunde laden“**, **„⏹ Übersteuerung beenden“**, **„🗑 Ladeziel löschen“** mit Rückmeldung. Alles läuft über dieselben Aktionen wie im WebFront (`EMS_WBn_ChargeMode/_TargetKwh/_TargetTime/_Command`), es bleibt eine Quelle; Ladeart, Ziel und Frist laden die Instanz dabei einmal neu. Ohne aktive Wallboxen kein Panel; solange die Risiken im Bereich „Allgemein“ nicht bestätigt sind, bleibt es wie alle Steuerungsfelder verborgen. Sechs Prüfungen, drei Mutationen nachweislich rot.
+
 ## 0.87.1 (2026-10-24)
 - **Bedarfsabsicherung kauft nicht mehr vor der billigsten Nachtstunde (Live-Befund 24.10.2026 23:00):** Seit das Vorentladen um 00:00 endet, ist der Akku um Mitternacht leer. Die Bedarfsabsicherung rechnete den SOC über die Nacht so, als versorge der Akku das Haus, sah deshalb sofort einen Engpass und plante Netzladen ab 00:00 für 11,1–11,7 ct statt ab 02:00 für 10,5 ct. Jetzt bildet ihre Rechnung das Halten ab: In Viertelstunden, in denen Netzstrom billiger ist als die gespeicherte Energie (unter der Lohnschwelle oder unter der Einspeisevergütung), sinkt der SOC nicht, und ein SOC unter der Reserve zählt dort nicht als Engpass, weil der Akku dann nichts liefern muss. Engpässe zählen nur, wo der Akku tatsächlich das Haus versorgt (z. B. Abendspitze). Das Netzladen nachts übernimmt wie vorgesehen das Nachtfenster in den günstigsten Viertelstunden. Zwei neue Prüfungen, drei Mutationen nachweislich rot.
 
