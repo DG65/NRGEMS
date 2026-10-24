@@ -1602,6 +1602,79 @@
                     "caption": "Aktuelles Preisniveau (act_level)"
                 },
                 {
+                    "type": "Label",
+                    "caption": "── Zeitvariable Netzentgelte (z. B. §14a Modul 3) ──────────────"
+                },
+                {
+                    "type": "Label",
+                    "caption": "Nur für Preisquellen OHNE enthaltenes Netzentgelt (z. B. Symcon-Strompreis/aWATTar oder eigene Viertelstunden-Preise). Bei Tibber sind die Netzentgelt-Stufen schon im Preis, dort wirken diese Zeilen nicht. Je Zeitfenster ein Zuschlag in ct/kWh auf den Preis der Quelle (negativ = Abschlag, z. B. Niedertarif 00:00–06:00: −7,5). Über Mitternacht und 24:00 sind erlaubt, die erste passende Zeile gilt. Leer = keine Änderung."
+                },
+                {
+                    "type": "List",
+                    "name": "TARIF_NetzentgeltStufen",
+                    "caption": "Netzentgelt-Stufen",
+                    "rowCount": 4,
+                    "add": true,
+                    "delete": true,
+                    "columns": [
+                        {
+                            "caption": "Von (HH:MM)",
+                            "name": "From",
+                            "width": "120px",
+                            "add": "00:00",
+                            "edit": {
+                                "type": "ValidationTextBox",
+                                "validate": "^([01]?\\d|2[0-3]):[0-5]\\d$|^24:00$"
+                            }
+                        },
+                        {
+                            "caption": "Bis (HH:MM)",
+                            "name": "To",
+                            "width": "120px",
+                            "add": "06:00",
+                            "edit": {
+                                "type": "ValidationTextBox",
+                                "validate": "^([01]?\\d|2[0-3]):[0-5]\\d$|^24:00$"
+                            }
+                        },
+                        {
+                            "caption": "Zuschlag (ct/kWh)",
+                            "name": "Ct",
+                            "width": "160px",
+                            "add": 0,
+                            "edit": {
+                                "type": "NumberSpinner",
+                                "digits": 2,
+                                "minimum": -100,
+                                "maximum": 100
+                            }
+                        },
+                        {
+                            "caption": "Tage",
+                            "name": "Days",
+                            "width": "auto",
+                            "add": 0,
+                            "edit": {
+                                "type": "Select",
+                                "options": [
+                                    {
+                                        "caption": "alle Tage",
+                                        "value": 0
+                                    },
+                                    {
+                                        "caption": "Mo–Fr",
+                                        "value": 1
+                                    },
+                                    {
+                                        "caption": "Sa–So",
+                                        "value": 2
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                },
+                {
                     "type": "SelectVariable",
                     "name": "VAR_TIB_Feed_Tariff",
                     "caption": "Einspeisevergütung (EUR/kWh)"

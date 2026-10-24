@@ -41,7 +41,7 @@ define('EMS_LOG_VERBOSE',     2);
 // Formular-Konvention (siehe EMS/SUITE.md "Einheitliche Formular-Optik"):
 // Was-ist-Neu-Panel ist versionsscharf dismissible, Referenzmuster InverterHub.
 define('EMS_COLOR_AUTO', 0x2E8B3D); // Gruen: Wert wurde automatisch uebernommen (🔗-Zeilen im Formular)
-define('EMS_NEWS_VERSION', '0.85.0');
+define('EMS_NEWS_VERSION', '0.86.0');
 
 // NRG-Stack Partnermodul-GUIDs (fuer automatische Discovery, siehe discoverPartners())
 define('GUID_CHARGERHUB',    '{9256C34E-5CFD-4F37-8BFE-E65390EBB37C}');
@@ -363,6 +363,7 @@ class EMS extends IPSModule
         // ── Tibber ──────────────────────────────────────────────────
         $this->RegisterPropertyBoolean('TIBBER_Active',            false);
         $this->RegisterPropertyInteger('VAR_TIB_Price',            0);
+        $this->RegisterPropertyString('TARIF_NetzentgeltStufen', '[]'); // zeitvariable Netzentgelt-Zuschlaege je Zeitfenster (ct/kWh, auch negativ) fuer Preisquellen OHNE enthaltenes Netzentgelt
         $this->RegisterPropertyInteger('VAR_TIB_Level',            0);
         $this->RegisterPropertyInteger('VAR_TIB_Feed_Tariff',      0);
         $this->RegisterPropertyBoolean('PLAN_Restwert_Aktiv',      false); // Restwert der Batterieenergie im Plan (Beta)
@@ -492,6 +493,7 @@ class EMS extends IPSModule
         $this->RegisterAttributeString('WriteFailText', '');
         $this->RegisterAttributeString('DataStaleText', '');        // veraltete Messwerte (Netz/PV), leer = alles frisch
         $this->RegisterAttributeString('PriceSourceNote', '');      // Herkunft des aktuellen Preises ('' = unbekannt)
+        $this->RegisterAttributeString('PriceEstimate', '');        // '' = echte Preise; sonst Klartext, welcher Tag geschaetzt ist (Vorentladen gesperrt)
         for ($i = 1; $i <= 2; $i++) {
             $this->RegisterAttributeInteger('WB' . $i . 'CurrentSentA', -1);    // zuletzt gesendete Stromstaerke (Ladearten), -1 = noch nichts
             $this->RegisterAttributeInteger('WB' . $i . 'CurrentSentAt', 0);
@@ -781,6 +783,10 @@ class EMS extends IPSModule
                 'caption'  => '🆕 Neu in Version ' . EMS_NEWS_VERSION,
                 'expanded' => true,
                 'items'    => array(
+                    array(
+                        'type'    => 'Label',
+                        'caption' => '• NEU: Zeitvariable Netzentgelte (z. B. §14a Modul 3) lassen sich im Bereich „Tibber & Tarif“ als Stufen eintragen, für Preisquellen ohne Netzentgelt (Symcon-Strompreis, eigene Preise). Bei Tibber sind sie schon im Preis. Fehlen Preise (Quelle ausgefallen), plant EMS mit dem Vortag bzw. dem heutigen Verlauf weiter, aber ohne Vorentladen ins Netz.'
+                    ),
                     array(
                         'type'    => 'Label',
                         'caption' => '• NEU: Je Wallbox zeigt die Variable „Wallbox n: Plan (was als Nächstes passiert)“ im Klartext, was die Wallbox tun wird. Im WebFront und in der App lassen sich Ladeart (neu auch „Aus“), Ladeziel und Frist ändern, dazu „Jetzt 1 Stunde laden“. Änderungen dort ändern die Einstellungen hier direkt.'
@@ -5182,6 +5188,20 @@ class EMS extends IPSModule
         $tomorrowJson   = $this->getPT15MTomorrowJson();
         $tomorrowPrices = $this->parsePT15M($tomorrowJson, 1);
 
+        // Preis-Schaetzung als Sicherheitsnetz (Dietmar 24.10.2026): Fehlen die Preise eines Tages (Quelle verspaetet oder
+        // ausgefallen), gilt fuer HEUTE der gestrige Verlauf aus dem Preisarchiv, fuer MORGEN der heutige Verlauf -- die Netzentgelt-
+        // Stufen und die Tagesform wiederholen sich jeden Tag. Nur fuers Halten und Laden; Vorentladen ins Netz wird mit
+        // geschaetzten Preisen nie geplant. Sichtbar in Statuszeile und Plan.
+        $est = $this->priceEstimates($prices, $tomorrowPrices, (int)date('G'));
+        if ($est['today']) { $todayJson = $todayJson ?: '[]'; }
+        $prices = $est['prices'];
+        $tomorrowPrices = $est['tomorrow'];
+        $estText = $est['text'];
+        if ($this->ReadAttributeString('PriceEstimate') !== $estText) {
+            $this->WriteAttributeString('PriceEstimate', $estText);
+            if ($estText !== '') { $this->emsLog(EMS_LOG_BASIC, $estText); }
+        }
+
         // Fahrzeug-Ladebedarf bei Heimkehr (Dietmars Schneeflocke/Philippsburg-
         // Fund, 25.08.2026) -- muss ebenfalls Teil der Signatur sein, sonst
         // loest ein Fahrzeug, das gerade den Heimweg antritt, keine
@@ -5363,7 +5383,7 @@ class EMS extends IPSModule
 
         // Vorentladen (0.48.0): gleiche Rechnung wie zur Laufzeit, damit der Plan zeigt, was passiert
         $pd = null;
-        if ($this->ReadPropertyBoolean('PLAN_PreDischarge_Active') && $this->ReadPropertyBoolean('PLAN_NightGrid_Active') && $feedTariff > 0) {
+        if ($this->ReadPropertyBoolean('PLAN_PreDischarge_Active') && $this->ReadPropertyBoolean('PLAN_NightGrid_Active') && $feedTariff > 0 && $this->ReadAttributeString('PriceEstimate') === '') {
             $p192 = array();
             for ($i = 0; $i < 96; $i++) { $p192[$i] = $prices[$i] ?? null; $p192[96 + $i] = $tomorrowPrices[$i] ?? null; }
             $pdEnd = $this->preDischargeEnd($p192, $nowSlot, $feedTariff);
@@ -5766,6 +5786,7 @@ class EMS extends IPSModule
     private function applyPreDischarge($s)
     {
         if (!$this->ReadPropertyBoolean('PLAN_PreDischarge_Active') || !$this->ReadPropertyBoolean('PLAN_NightGrid_Active')) { return null; }
+        if ($this->ReadAttributeString('PriceEstimate') !== '') { return null; } // nie mit geschaetzten Preisen ins Netz entladen
         if (empty($s['bat_active'])) { return null; }
         $feed = $this->planFeedTariffEur();
         if ($feed <= 0) { return null; }
@@ -6459,8 +6480,9 @@ class EMS extends IPSModule
             for ($i = 0; $i < min(96, count($data)); $i++) {
                 $prices[$i] = (float)$data[$i];
             }
-            return $prices;
+            return $this->applyFeeSteps($prices, array(), $dayOffset);
         }
+        $feeIncluded = array();
 
         $targetDate = date('Y-m-d', strtotime($dayOffset === 0 ? 'today' : "today +{$dayOffset} day"));
         // Sommerzeit: Der Plan zaehlt Viertelstunden nach der WANDUHR (Slot = Stunde*4 + Minute/15, 96 Slots), genau wie
@@ -6512,13 +6534,89 @@ class EMS extends IPSModule
                     $slot = $this->slotIndexForTs($t, $dayStartTs);
                     if ($slot >= 0 && $slot < count($prices) && $prices[$slot] === null) {
                         $prices[$slot] = $price; // doppelte Stunde: erster Preis gilt
+                        if (($entry['netzentgelt'] ?? '') === 'enthalten') { $feeIncluded[$slot] = true; }
                     }
                 }
             } elseif ($i >= 0 && $i < 96) {
                 $prices[$i] = $price;
+                if (($entry['netzentgelt'] ?? '') === 'enthalten') { $feeIncluded[$i] = true; }
+            }
+        }
+        return $this->applyFeeSteps($prices, $feeIncluded, $dayOffset);
+    }
+
+    /**
+     * Sicherheitsnetz fuer fehlende Preise (Dietmar 24.10.2026): heute fehlt -> gestriger Verlauf aus dem Preisarchiv; morgen fehlt
+     * ab 15 Uhr (Tibber meldet ueblich gegen 13 Uhr) -> heutiger Verlauf. Rueckgabe: prices, tomorrow, today (bool), text ('' = echt).
+     */
+    private function priceEstimates(array $prices, array $tomorrow, int $hour): array
+    {
+        $known = function (array $a) { return count(array_filter($a, function ($v) { return $v !== null; })); };
+        $parts = array(); $today = false;
+        if ($this->ReadPropertyBoolean('TIBBER_Active') && $known($prices) < 4) {
+            $y = $this->estimatePricesFromHistory(strtotime('yesterday'));
+            if ($known($y) >= 90) { $prices = $y; $today = true; $parts[] = 'heute (Vortag)'; }
+        }
+        if ($known($tomorrow) === 0 && $known($prices) >= 90 && $hour >= 15) {
+            $tomorrow = $prices;
+            $parts[] = 'morgen (wie heute)';
+        }
+        $text = empty($parts) ? '' : 'Preise geschätzt: ' . implode(', ', $parts) . '. Vorentladen ins Netz ist ausgesetzt, bis echte Preise vorliegen.';
+        return array('prices' => $prices, 'tomorrow' => $tomorrow, 'today' => $today, 'text' => $text);
+    }
+
+    /** Viertelstundenpreise (EUR/kWh, 96 Slots) eines vergangenen Tages aus dem Preisarchiv (EMS_GetPurchasePriceHistory). */
+    private function estimatePricesFromHistory(int $dayStart): array
+    {
+        $out = array_fill(0, 96, null);
+        try { $r = $this->GetPurchasePriceHistory($dayStart, strtotime('+1 day', $dayStart)); } catch (Throwable $e) { return $out; }
+        foreach ((array)($r['slots'] ?? array()) as $sl) {
+            if (!isset($sl['start'], $sl['priceCt']) || $sl['priceCt'] === null) { continue; }
+            $i = $this->slotIndexForTs((int)$sl['start'], $dayStart);
+            if ($i >= 0 && $i < 96 && $out[$i] === null) { $out[$i] = (float)$sl['priceCt'] / 100.0; }
+        }
+        return $out;
+    }
+
+    /**
+     * Zeitvariable Netzentgelt-Stufen (Dietmar 24.10.2026, z. B. §14a Modul 3): Zuschlag/Abschlag in ct/kWh je Zeitfenster auf den
+     * Preis der Preisquelle -- NUR fuer Viertelstunden, deren Quelle das Netzentgelt nicht als enthalten meldet (Tibber liefert
+     * `netzentgelt: enthalten`, dort wirkt nichts). Einstellung: Liste {From HH:MM, To HH:MM (24:00 erlaubt, ueber Mitternacht
+     * erlaubt), Ct, Days 0 alle / 1 Mo-Fr / 2 Sa-So}; die erste passende Zeile gilt.
+     */
+    private function applyFeeSteps(array $prices, array $feeIncluded, int $dayOffset): array
+    {
+        $rows = json_decode((string)$this->ReadPropertyString('TARIF_NetzentgeltStufen'), true);
+        if (!is_array($rows) || empty($rows)) { return $prices; }
+        $dow = (int)date('N', strtotime($dayOffset === 0 ? 'today' : 'today +' . $dayOffset . ' day'));
+        $win = array();
+        foreach ($rows as $r) {
+            $f = $this->clockMinutes((string)($r['From'] ?? ''));
+            $t = $this->clockMinutes((string)($r['To'] ?? ''));
+            if ($f === null || $t === null || $f === $t) { continue; }
+            $days = (int)($r['Days'] ?? 0);
+            if (($days === 1 && $dow > 5) || ($days === 2 && $dow <= 5)) { continue; }
+            $win[] = array($f, $t, (float)($r['Ct'] ?? 0) / 100.0);
+        }
+        if (empty($win)) { return $prices; }
+        foreach ($prices as $i => $p) {
+            if ($p === null || !empty($feeIncluded[$i])) { continue; }
+            $m = (int)$i * 15;
+            foreach ($win as $w) {
+                $in = ($w[0] < $w[1]) ? ($m >= $w[0] && $m < $w[1]) : ($m >= $w[0] || $m < $w[1]);
+                if ($in) { $prices[$i] = (float)$p + $w[2]; break; }
             }
         }
         return $prices;
+    }
+
+    /** HH:MM (00:00 bis 24:00) in Minuten seit Mitternacht, null bei ungueltiger Eingabe. */
+    private function clockMinutes(string $hhmm): ?int
+    {
+        if (!preg_match('/^\s*(\d{1,2}):(\d{2})\s*$/', $hhmm, $m)) { return null; }
+        $h = (int)$m[1]; $mi = (int)$m[2];
+        if ($mi > 59 || $h > 24 || ($h === 24 && $mi !== 0)) { return null; }
+        return $h * 60 + $mi;
     }
 
     /**
@@ -8852,6 +8950,8 @@ class EMS extends IPSModule
         if ($failAt > 0 && time() - $failAt < 3600) {
             $add('warn', 'Ein Schreibzugriff ist fehlgeschlagen (' . $this->ReadAttributeString('WriteFailText') . ', ' . date('H:i', $failAt) . ' Uhr). Gerät oder Instanz prüfen; EMS kann dort nichts schalten.');
         }
+        $est = $this->ReadAttributeString('PriceEstimate');
+        if ($est !== '') { $add('warn', $est . ' Die Preisquelle liefert gerade nicht alle Tage.'); }
         if ($this->ReadPropertyBoolean('TIBBER_Active')) {
             $src = $this->ReadAttributeString('PriceSourceNote');
             if ($src === '') {

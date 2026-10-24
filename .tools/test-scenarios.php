@@ -1809,6 +1809,66 @@ $txt = call($ems, 'wallboxPlanText', [1, 'ems', ['wb1_enable' => false, 'source'
 check('mit Fahrzeug und gesperrt: "jetzt gesperrt"', strpos($txt, 'jetzt gesperrt') !== false, $txt);
 prop('VAR_TIB_Price', 0); prop('TIB_Threshold_WB', 0.0);
 
+echo "\n8k15) Netzentgelt-Stufen fuer Preisquellen ohne Netzentgelt, Preis-Schaetzung als Sicherheitsnetz\n";
+$ems = freshEms();
+$flat = json_encode(array_fill(0, 96, 0.20));
+check('ohne Stufen: Preise unveraendert', call($ems, 'parsePT15M', [$flat, 0])[0] === 0.20);
+prop('TARIF_NetzentgeltStufen', json_encode([
+    ['From' => '00:00', 'To' => '06:00', 'Ct' => -7.5, 'Days' => 0],
+    ['From' => '17:00', 'To' => '21:00', 'Ct' => 5.4, 'Days' => 0],
+    ['From' => 'Unsinn', 'To' => '07:00', 'Ct' => 99, 'Days' => 0],
+]));
+$pp = call($ems, 'parsePT15M', [$flat, 0]);
+check('Niedertarif 00:00-06:00: 20 - 7,5 = 12,5 ct (Slot 0 und 23)', abs($pp[0] - 0.125) < 1e-9 && abs($pp[23] - 0.125) < 1e-9, json_encode([$pp[0], $pp[23]]));
+check('06:00 wieder 20 ct (Bis exklusiv), ungueltige Zeile ignoriert', abs($pp[24] - 0.20) < 1e-9);
+check('Hochtarif 17:00-21:00: +5,4 ct (Slot 68), 21:00 wieder normal (Slot 84)', abs($pp[68] - 0.254) < 1e-9 && abs($pp[84] - 0.20) < 1e-9);
+prop('TARIF_NetzentgeltStufen', json_encode([['From' => '22:00', 'To' => '02:00', 'Ct' => -3, 'Days' => 0], ['From' => '20:00', 'To' => '24:00', 'Ct' => 1, 'Days' => 0]]));
+$pp = call($ems, 'parsePT15M', [$flat, 0]);
+check('ueber Mitternacht (22:00-02:00) trifft 23:45 und 00:00, nicht 02:00', abs($pp[95] - 0.17) < 1e-9 && abs($pp[0] - 0.17) < 1e-9 && abs($pp[8] - 0.20) < 1e-9);
+check('erste passende Zeile gilt, 24:00 als Ende erlaubt (20:00-22:00 = +1 ct)', abs($pp[80] - 0.21) < 1e-9);
+$dowT = (int)date('N'); $weekend = $dowT >= 6;
+prop('TARIF_NetzentgeltStufen', json_encode([['From' => '00:00', 'To' => '06:00', 'Ct' => -7.5, 'Days' => 1]]));
+$pp = call($ems, 'parsePT15M', [$flat, 0]);
+check('Zeile nur Mo-Fr: gilt heute ' . ($weekend ? 'nicht (Wochenende)' : '(Werktag)'), $weekend ? abs($pp[0] - 0.20) < 1e-9 : abs($pp[0] - 0.125) < 1e-9);
+prop('TARIF_NetzentgeltStufen', json_encode([['From' => '00:00', 'To' => '06:00', 'Ct' => -7.5, 'Days' => 0]]));
+$d0x = strtotime('today');
+$tibJ = json_encode([['start' => $d0x, 'end' => $d0x + 900, 'price' => 11.0, 'netzentgelt' => 'enthalten'], ['start' => $d0x + 900, 'end' => $d0x + 1800, 'price' => 11.0]]);
+$pp = call($ems, 'parsePT15M', [$tibJ, 0]);
+check('Tibber-Eintrag mit netzentgelt "enthalten": keine doppelte Absenkung; Eintrag ohne Angabe: Stufe wirkt', abs($pp[0] - 0.11) < 1e-9 && abs($pp[1] - 0.035) < 1e-9, json_encode([$pp[0], $pp[1]]));
+prop('TARIF_NetzentgeltStufen', '[]');
+check('Uhrzeit-Pruefung: 24:00 ok, 24:15 und 7 Uhr ungueltig', call($ems, 'clockMinutes', ['24:00']) === 1440 && call($ems, 'clockMinutes', ['24:15']) === null && call($ems, 'clockMinutes', ['7 Uhr']) === null);
+// Schaetzung
+attr('PriceEstimate', 'Preise geschätzt: morgen (wie heute). Vorentladen ins Netz ist ausgesetzt, bis echte Preise vorliegen.');
+prop('PLAN_PreDischarge_Active', true); prop('PLAN_NightGrid_Active', true);
+prop('ANL_Verguetung_ct', 18.36); prop('BAT_SOC_Min', 10); prop('BAT_Capacity_kWh', 40.0); prop('EMS_Max_Power_W', 10000);
+attr('DayPlan', json_encode(array_fill(0, 96, ['price' => 0.30]))); attr('DayPlanTomorrow', json_encode(array_fill(0, 96, ['price' => 0.05])));
+$sPd = state(['bat_active' => true, 'bat_soc' => 80.0, 'house_pow_w' => 300.0]);
+attr('PriceEstimate', '');
+$pdReal = call($ems, 'applyPreDischarge', [$sPd]);
+attr('PriceEstimate', 'Preise geschätzt: morgen (wie heute). Vorentladen ins Netz ist ausgesetzt, bis echte Preise vorliegen.');
+check('Gegenprobe: mit echten Preisen wuerde vorentladen; mit geschaetzten Preisen nie (Laufzeit)', is_array($pdReal) && call($ems, 'applyPreDischarge', [$sPd]) === null, json_encode($pdReal));
+$cc = call($ems, 'configCheckLines');
+check('Konfigurationspruefung nennt die Schaetzung als Warnung', count(array_filter($cc, fn($l) => $l['level'] === 'warn' && strpos($l['text'], 'Preise geschätzt') === 0)) === 1);
+attr('PriceEstimate', ''); prop('PLAN_PreDischarge_Active', false);
+$GLOBALS['INSTMOD'][500] = GUID_ARCHIVECONTROL;
+$TIBE = 520; $GLOBALS['INSTMOD'][$TIBE] = GUID_TIBBERGRIDREWARD;
+$cpE = vari('Aktueller Preis', $TIBE, 'CurrentPrice', 0.30, 2);
+$yd = strtotime('yesterday');
+$GLOBALS['ARCHIVE'][$cpE] = [[$yd - 3600, 0.25], [$yd + 12 * 3600, 0.30]];
+$ests = call($ems, 'estimatePricesFromHistory', [$yd]);
+check('Schaetzung aus dem Vortag: 00:00 = 25 ct, 12:00 = 30 ct, alle 96 Slots belegt', abs($ests[0] - 0.25) < 1e-9 && abs($ests[48] - 0.30) < 1e-9 && count(array_filter($ests, fn($v) => $v !== null)) === 96, json_encode([$ests[0], $ests[48]]));
+prop('TIBBER_Active', true);
+$full = array_fill(0, 96, 0.2); $none = array_fill(0, 96, null);
+$e = call($ems, 'priceEstimates', [$full, $none, 16]);
+check('morgen fehlt um 16 Uhr: morgen = heute, als geschaetzt gekennzeichnet', $e['tomorrow'] === $full && strpos($e['text'], 'morgen (wie heute)') !== false);
+$e = call($ems, 'priceEstimates', [$full, $none, 12]);
+check('morgen fehlt um 12 Uhr (Tibber meldet erst gegen 13 Uhr): keine Schaetzung', $e['tomorrow'] === $none && $e['text'] === '');
+$e = call($ems, 'priceEstimates', [$none, $none, 2]);
+check('heute fehlt (Quelle ausgefallen): Vortag aus dem Archiv, gekennzeichnet', $e['today'] === true && abs($e['prices'][0] - 0.25) < 1e-9 && strpos($e['text'], 'heute (Vortag)') !== false, $e['text']);
+$e = call($ems, 'priceEstimates', [$full, $full, 16]);
+check('alle Preise da: keine Schaetzung', $e['text'] === '' && $e['today'] === false);
+unset($GLOBALS['INSTMOD'][500], $GLOBALS['INSTMOD'][$TIBE]);
+
 echo "\n8l) Wallbox bei PV-Ueberschuss auch ueber der Preisschwelle\n";
 $ems = freshEms();
 $sW = state(['tib_active' => true, 'pv_total_w' => 3000.0, 'house_pow_w' => 800.0, 'wb1_pow_kw' => 0.0]);
