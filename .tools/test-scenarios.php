@@ -1307,6 +1307,7 @@ check('Speicherbetrieb 35 (Netzladen erlaubt): kein Schreiben des Speicherbetrie
 $GLOBALS['VAL'][$vSt] = 3; $GLOBALS['ACTIONS'] = [];
 call($ems, 'setGoodweMode', [GW_MODE_BAT_CHARGE, 12000, true]);
 check('Speicherbetrieb 3: Bit 5 dazu = 35, andere Bits bleiben', in_array('ctl_storage_mode=35', $acts(), true), json_encode($acts()));
+check('Zielwerte: 1->33, 3->35, 64->96, 17->33 (nie 49), 19->35', call($ems, 'solisGridChargeTarget', [1]) === 33 && call($ems, 'solisGridChargeTarget', [3]) === 35 && call($ems, 'solisGridChargeTarget', [64]) === 96 && call($ems, 'solisGridChargeTarget', [17]) === 33 && call($ems, 'solisGridChargeTarget', [19]) === 35);
 // Zyklus bleibt aus: KeepAlive gibt auch die Netzlade-Erlaubnis frei
 prop('EMS_Active', true); prop('EMS_DryRun', false);
 attr('LastGoodweMode', GW_MODE_BAT_CHARGE); attr('LastGoodweEnable', true); attr('LastGoodweWriteAt', time() - 3600); $GLOBALS['ACTIONS'] = [];

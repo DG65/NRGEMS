@@ -41,7 +41,7 @@ define('EMS_LOG_VERBOSE',     2);
 // Formular-Konvention (siehe EMS/SUITE.md "Einheitliche Formular-Optik"):
 // Was-ist-Neu-Panel ist versionsscharf dismissible, Referenzmuster InverterHub.
 define('EMS_COLOR_AUTO', 0x2E8B3D); // Gruen: Wert wurde automatisch uebernommen (🔗-Zeilen im Formular)
-define('EMS_NEWS_VERSION', '0.90.0');
+define('EMS_NEWS_VERSION', '0.90.1');
 
 // NRG-Stack Partnermodul-GUIDs (fuer automatische Discovery, siehe discoverPartners())
 define('GUID_CHARGERHUB',    '{9256C34E-5CFD-4F37-8BFE-E65390EBB37C}');
@@ -9126,6 +9126,12 @@ class EMS extends IPSModule
      * setzt ihn mit Bit 5 (andere Bits bleiben) und stellt ihn nach dem Laden wieder her (Ruecklesen und Wiederholen wie beim Halten).
      * Die Rueckmeldung cfg_storage_mode kommt nur alle 5 min, deshalb wird nur eine Rueckmeldung nach dem Schreiben bewertet.
      */
+    /** Speicherbetrieb mit Netzlade-Erlaubnis: Bit 5 dazu; Reserve (Bit 4) faellt weg, denn 49/51 laden von selbst mit voller Leistung (gemessen 20.10.2026). */
+    private function solisGridChargeTarget(int $cur): int
+    {
+        return (($cur & 16) !== 0) ? (($cur & ~16) | 32) : ($cur | 32);
+    }
+
     private function solisGridChargeEnsure(int $iid, bool $wantCharge, int $now): void
     {
         $active = $this->ReadAttributeBoolean('SolisGcActive');
@@ -9156,8 +9162,8 @@ class EMS extends IPSModule
             $this->WriteAttributeBoolean('SolisGcActive', true);
             $this->WriteAttributeInteger('SolisGcTries', 1);
             $this->WriteAttributeInteger('SolisGcTryAt', $now);
-            $this->ipsWrite($iid, 'ctl_storage_mode', $cur | 32);
-            $this->emsLog(EMS_LOG_BASIC, sprintf('Solis: Speicherbetrieb %d erlaubt kein Netzladen -- für das Zwangsladen vorübergehend %d', $cur, $cur | 32));
+            $this->ipsWrite($iid, 'ctl_storage_mode', $this->solisGridChargeTarget($cur));
+            $this->emsLog(EMS_LOG_BASIC, sprintf('Solis: Speicherbetrieb %d erlaubt kein Netzladen -- für das Zwangsladen vorübergehend %d', $cur, $this->solisGridChargeTarget($cur)));
             return;
         }
         if (($cur & 32) !== 0) { if ($this->ReadAttributeInteger('SolisGcTries') !== 0) { $this->WriteAttributeInteger('SolisGcTries', 0); } return; }
@@ -9172,7 +9178,7 @@ class EMS extends IPSModule
         }
         $this->WriteAttributeInteger('SolisGcTries', $tries + 1);
         $this->WriteAttributeInteger('SolisGcTryAt', $now);
-        $this->ipsWrite($iid, 'ctl_storage_mode', $this->ReadAttributeInteger('SolisGcSaved') | 32);
+        $this->ipsWrite($iid, 'ctl_storage_mode', $this->solisGridChargeTarget($this->ReadAttributeInteger('SolisGcSaved')));
     }
 
     /**

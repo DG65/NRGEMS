@@ -2,6 +2,9 @@
 
 Ältere Versionen: [CHANGELOG-Archiv.md](CHANGELOG-Archiv.md)
 
+## 0.90.1 (2026-10-25)
+- **Solis: Netzlade-Erlaubnis schreibt nie 49/51 (Hinweis InverterHub 25.10.2026):** Stand der Speicherbetrieb auf 17 (Reserve, z. B. nach einem nicht zurückgestellten „Akku halten“), hätte 0.90.0 17 | 32 = 49 geschrieben. Mit 49/51 lädt der Solis von sich aus mit voller Leistung bis zum Reserve-SOC aus dem Netz (gemessen 20.10.2026). Jetzt fällt das Reserve-Bit (16) beim Setzen der Erlaubnis weg: 17 → 33, 19 → 35; 1 → 33, 3 → 35, 64 → 96 wie bisher. Gleiche Zielwerte wie die Absicherung im InverterHub-Treiber (0.77.0-beta.50), die nur greift, wenn Bit 5 fehlt. Eine neue Prüfung, eine Mutation nachweislich rot.
+
 ## 0.90.0 (2026-10-25)
 - **Solis: Netzladen stellt die Netzlade-Erlaubnis im Speicherbetrieb sicher (Befund an einer zweiten Anlage 25.10.2026, Auftrag Dietmar):** Der Speicherbetrieb des Solis (Register 43110) stand auf 1 („Eigenverbrauch ohne Netzladen“). Damit nahm der Wechselrichter das Zwangsladen zwar an, lud aber nur aus PV und deckte das Haus sogar aus dem Akku (+0,8 kW statt −17 kW). Mit 33 lud er sofort mit 17,4 kW aus dem Netz (gemessen). Jetzt prüft EMS vor dem Netzladen am Solis, ob Netzladen erlaubt ist (Bit 5, Wert 32). Fehlt die Erlaubnis, merkt sich EMS den bisherigen Wert, setzt ihn vorübergehend mit Bit 5 (andere Bits bleiben, aus 1 wird 33) und stellt ihn nach dem Laden wieder her. Gilt auch, wenn der Regelzyklus ausbleibt. Rücklesen und höchstens drei Wiederholungen wie beim „Akku halten“; da der Wechselrichter den Speicherbetrieb nur alle 5 Minuten zurückmeldet, wird nur eine Rückmeldung nach dem Schreiben bewertet (gilt jetzt auch für die Wiederherstellung nach dem Halten). GoodWe unverändert. Neun neue Prüfungen, vier Mutationen nachweislich rot.
 
