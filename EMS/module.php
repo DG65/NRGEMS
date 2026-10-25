@@ -41,7 +41,7 @@ define('EMS_LOG_VERBOSE',     2);
 // Formular-Konvention (siehe EMS/SUITE.md "Einheitliche Formular-Optik"):
 // Was-ist-Neu-Panel ist versionsscharf dismissible, Referenzmuster InverterHub.
 define('EMS_COLOR_AUTO', 0x2E8B3D); // Gruen: Wert wurde automatisch uebernommen (🔗-Zeilen im Formular)
-define('EMS_NEWS_VERSION', '0.89.0');
+define('EMS_NEWS_VERSION', '0.89.1');
 
 // NRG-Stack Partnermodul-GUIDs (fuer automatische Discovery, siehe discoverPartners())
 define('GUID_CHARGERHUB',    '{9256C34E-5CFD-4F37-8BFE-E65390EBB37C}');
@@ -3257,14 +3257,19 @@ class EMS extends IPSModule
         }
         $valid = array(EMS_OP_AUTO, EMS_OP_NET_CHARGE, EMS_OP_HOLD);
         $today = date('Y-m-d');
-        $norm = array(); $sets = array();
+        $norm = array(); $sets = array(); $removed = array();
         foreach (array_values($in['entries']) as $i => $e) {
             $f = 'entries[' . $i . ']';
             if (!is_array($e)) { $errors[] = array('field' => $f, 'message' => 'Kein Eintrag.'); continue; }
             $bad = false;
             $d = $this->manualEntryDate((string)($e['date'] ?? ''));
             if ($d === null) { $errors[] = array('field' => $f . '.date', 'message' => 'Das Datum ist nicht lesbar (JJJJ-MM-TT oder TT.MM.JJJJ, leer = jeden Tag).'); $bad = true; }
-            elseif ($d !== '' && $d < $today) { $errors[] = array('field' => $f . '.date', 'message' => 'Das Datum liegt in der Vergangenheit.'); $bad = true; }
+            elseif ($d !== '' && $d < $today) {
+                // Vergangene Eintraege werden still entfernt statt die ganze Speicherung abzulehnen (Befund Pauls Anlage 25.10.2026:
+                // der Editor schickt die geladene Liste samt erledigtem Eintrag zurueck, kein neuer Eintrag wurde gespeichert).
+                $removed[] = array('field' => $f . '.date', 'message' => 'Der Eintrag vom ' . date('d.m.Y', strtotime($d)) . ' liegt in der Vergangenheit und wurde entfernt.');
+                continue;
+            }
             $act = isset($e['action']) ? (int)$e['action'] : -1;
             if (!in_array($act, $valid, true)) { $errors[] = array('field' => $f . '.action', 'message' => 'Unbekannte Aktion (erlaubt: 0 Automatik, 2 Netz laden, 8 Akku halten).'); $bad = true; }
             $from = trim((string)($e['from'] ?? '')); $to = trim((string)($e['to'] ?? ''));
@@ -3289,12 +3294,12 @@ class EMS extends IPSModule
             $norm[] = array('Date' => $d, 'From' => $from, 'To' => ($to === '' ? '' : $to), 'Action' => $act, 'Power' => (int)round((float)$pw));
         }
         if (!empty($errors)) {
-            return array('ok' => false, 'errors' => $errors, 'plan' => $cur, 'revision' => $cur['revision']);
+            return array('ok' => false, 'errors' => $errors, 'removed' => $removed, 'plan' => $cur, 'revision' => $cur['revision']);
         }
         IPS_SetProperty($this->InstanceID, 'PLAN_Manual', json_encode($norm));
         IPS_ApplyChanges($this->InstanceID);
         $plan = $this->GetManualPlan();
-        return array('ok' => true, 'errors' => array(), 'plan' => $plan, 'revision' => $plan['revision']);
+        return array('ok' => true, 'errors' => array(), 'removed' => $removed, 'plan' => $plan, 'revision' => $plan['revision']);
     }
 
     /**

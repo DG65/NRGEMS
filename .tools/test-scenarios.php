@@ -1038,7 +1038,16 @@ $rBad = call($ems, 'SetManualPlan', [json_encode(['entries' => [
     ['date' => 'irgendwann', 'from' => '10:00', 'to' => '11:00', 'action' => EMS_OP_AUTO, 'power' => 0],
 ]])]);
 $fields = array_column($rBad['errors'], 'field');
-check('Set mit Fehlern: ok false, ein Fehler je Problem mit Pfad (Datum, Zeit, Ende, Aktion, Leistung, Datum unlesbar)', $rBad['ok'] === false && in_array('entries[0].date', $fields, true) && in_array('entries[1].from', $fields, true) && in_array('entries[2].to', $fields, true) && in_array('entries[3].action', $fields, true) && in_array('entries[4].power', $fields, true) && in_array('entries[5].date', $fields, true), json_encode($fields));
+// 0.89.1: Liste mit vergangenem + neuem gueltigem Eintrag wird gespeichert, der vergangene still entfernt (Befund Paul 25.10.2026)
+$gR = call($ems, 'GetManualPlan', []); $keepPlan = $GLOBALS['PROP'][EMS_IID]['PLAN_Manual'];
+$rMix = call($ems, 'SetManualPlan', [json_encode(['revision' => $gR['revision'], 'entries' => [
+    ['date' => '21.10.2023', 'from' => '11:45', 'to' => '16:04', 'action' => EMS_OP_NET_CHARGE, 'power' => 18000],
+    ['date' => '', 'from' => '10:00', 'to' => '11:00', 'action' => EMS_OP_HOLD, 'power' => 0],
+]])]);
+$savedMix = json_decode($GLOBALS['PROP'][EMS_IID]['PLAN_Manual'], true);
+check('Set mit vergangenem + neuem Eintrag: gespeichert, vergangener entfernt und gemeldet', $rMix['ok'] === true && count($savedMix) === 1 && $savedMix[0]['From'] === '10:00' && count($rMix['removed']) === 1 && strpos($rMix['removed'][0]['message'], '21.10.2023') !== false, json_encode([$rMix['ok'], $rMix['errors'], $savedMix]));
+$GLOBALS['PROP'][EMS_IID]['PLAN_Manual'] = $keepPlan;
+check('Set mit Fehlern: ok false, ein Fehler je Problem mit Pfad (Zeit, Ende, Aktion, Leistung, Datum unlesbar); vergangenes Datum ist kein Fehler, sondern entfernt', $rBad['ok'] === false && !in_array('entries[0].date', $fields, true) && ($rBad['removed'][0]['field'] ?? '') === 'entries[0].date' && in_array('entries[1].from', $fields, true) && in_array('entries[2].to', $fields, true) && in_array('entries[3].action', $fields, true) && in_array('entries[4].power', $fields, true) && in_array('entries[5].date', $fields, true), json_encode($fields));
 check('bei Fehlern bleibt der gespeicherte Plan unveraendert', $GLOBALS['PROP'][EMS_IID]['PLAN_Manual'] === $before);
 $rOv = call($ems, 'SetManualPlan', [json_encode(['entries' => [
     ['date' => $tmrIso, 'from' => '01:00', 'to' => '03:00', 'action' => EMS_OP_NET_CHARGE, 'power' => 0],
