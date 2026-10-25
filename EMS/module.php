@@ -41,7 +41,7 @@ define('EMS_LOG_VERBOSE',     2);
 // Formular-Konvention (siehe EMS/SUITE.md "Einheitliche Formular-Optik"):
 // Was-ist-Neu-Panel ist versionsscharf dismissible, Referenzmuster InverterHub.
 define('EMS_COLOR_AUTO', 0x2E8B3D); // Gruen: Wert wurde automatisch uebernommen (🔗-Zeilen im Formular)
-define('EMS_NEWS_VERSION', '0.91.0');
+define('EMS_NEWS_VERSION', '0.92.0');
 
 // NRG-Stack Partnermodul-GUIDs (fuer automatische Discovery, siehe discoverPartners())
 define('GUID_CHARGERHUB',    '{9256C34E-5CFD-4F37-8BFE-E65390EBB37C}');
@@ -342,6 +342,8 @@ class EMS extends IPSModule
             $this->RegisterPropertyInteger('WB' . $i . '_PhaseSetting', 0); // Phasen: 0 nicht aendern, 1 einphasig, 3 dreiphasig (nur wenn die Wallbox umschaltbar ist)
             $this->RegisterPropertyFloat('WB' . $i . '_TargetKwh', 0.0);    // Ladeziel: Energie seit dem Anstecken in kWh, 0 = aus (Stufe 2)
             $this->RegisterPropertyString('WB' . $i . '_TargetTime', '07:00'); // Frist fuer das Ladeziel (Uhrzeit, naechstes Auftreten nach dem Anstecken)
+            // Frist je Wochentag (0.92.0): 7 Zeilen {Day 1..7 ISO, Label, Time 'HH:MM' oder '', Kwh (0 = TargetKwh)}; alle Zeiten leer = TargetTime/TargetKwh gilt
+            $this->RegisterPropertyString('WB' . $i . '_WeekTargets', json_encode($this->defaultWeekTargets()));
             $this->RegisterPropertyInteger('WB' . $i . '_NowCurrentA', 0);  // "Jetzt laden": Stromstaerke in A, 0 = Hoechststrom der Wallbox
             $this->RegisterPropertyInteger('VAR_WB' . $i . '_Status', 0);
             $this->RegisterPropertyInteger('VAR_WB' . $i . '_Power',  0);
@@ -501,6 +503,8 @@ class EMS extends IPSModule
             $this->RegisterAttributeString('WB' . $i . 'ChargeText', '');        // Klartext der letzten Ladeart-Entscheidung fuers Panel
             $this->RegisterAttributeInteger('WB' . $i . 'TargetSession', 0);     // Anstecken erkannt (Unix-Zeit), 0 = kein Fahrzeug/keine Sitzung
             $this->RegisterAttributeInteger('WB' . $i . 'TargetDeadline', 0);    // Frist dieser Sitzung (Unix-Zeit), beim Anstecken festgelegt
+            $this->RegisterAttributeFloat('WB' . $i . 'TargetKwhSession', 0.0);   // Ladeziel dieser Sitzung aus der Wochen-Frist (0 = TargetKwh gilt)
+            $this->RegisterAttributeBoolean('WB' . $i . 'TargetCleared', false);  // "Ladeziel löschen" in dieser Sitzung
             $this->RegisterAttributeBoolean('WB' . $i . 'TargetDone', false);    // Ziel in dieser Sitzung erreicht (bis zum Abstecken)
             $this->RegisterAttributeFloat('WB' . $i . 'TargetBase', 0.0);        // Sitzungsenergie der Wallbox beim Anstecken (kWh), Bezugspunkt
             $this->RegisterAttributeFloat('WB' . $i . 'TargetCarry', 0.0);       // vor einem Ruecksprung des Zaehlers schon geladene kWh
@@ -4838,6 +4842,57 @@ class EMS extends IPSModule
      * mode (smart = Tibber steuert, ems = EMS steuert, observe = nur beobachten), emsControls (bool: Ladeart, Ziel und
      * "Jetzt laden" wirken), modeManual (bool), chargeMode (0..5) und die Idents der Bedienvariablen (fehlen ohne Variablen).
      */
+    /**
+     * Wochen-Frist der Wallbox $n (EMS 0.92.0, Vertrag 1.0, Wunsch Dietmar/Dashboard 25.10.2026):
+     * {contractVersion, n, revision, active (bool: mindestens ein Tag mit Uhrzeit), days[{day 1..7 ISO, label, time 'HH:MM'|'', kwh (0 = Ladeziel
+     * aus targetKwh)}], targetKwh, targetTime (einheitliche Frist, gilt nur ohne Wochen-Frist)}. Ungueltiges $n: ok false.
+     */
+    public function GetWeekTargets(int $n): array
+    {
+        if ($n < 1 || $n > 2) { return array('ok' => false, 'errors' => array(array('field' => 'n', 'message' => 'Wallbox 1 oder 2.'))); }
+        $raw  = $this->ReadPropertyString('WB' . $n . '_WeekTargets');
+        $days = array();
+        foreach ($this->weekTargets($n) as $r) { $days[] = array('day' => $r['Day'], 'label' => $r['Label'], 'time' => $r['Time'], 'kwh' => $r['Kwh']); }
+        return array('contractVersion' => '1.0', 'n' => $n, 'revision' => (string)crc32($raw), 'active' => $this->weekTargetsActive($n), 'days' => $days,
+            'targetKwh' => (float)$this->ReadPropertyFloat('WB' . $n . '_TargetKwh'), 'targetTime' => (string)$this->ReadPropertyString('WB' . $n . '_TargetTime'));
+    }
+
+    /**
+     * Wochen-Frist setzen: $json = {revision (optional, optimistische Sperre), days[{day 1..7, time 'HH:MM'|'' , kwh >= 0}]}; nicht genannte Tage
+     * bleiben unveraendert. Rueckgabe {ok, errors[{field, message}], targets (wie GetWeekTargets), revision}; bei Fehlern wird nichts gespeichert.
+     * Wirkt ab dem naechsten Anstecken (die Frist einer laufenden Ladesitzung bleibt).
+     */
+    public function SetWeekTargets(int $n, string $json): array
+    {
+        if ($n < 1 || $n > 2) { return array('ok' => false, 'errors' => array(array('field' => 'n', 'message' => 'Wallbox 1 oder 2.'))); }
+        $cur = $this->GetWeekTargets($n);
+        $in  = json_decode($json, true);
+        if (!is_array($in) || !isset($in['days']) || !is_array($in['days'])) {
+            return array('ok' => false, 'errors' => array(array('field' => 'days', 'message' => 'Erwartet wird JSON mit einer Liste "days".')), 'targets' => $cur, 'revision' => $cur['revision']);
+        }
+        if (isset($in['revision']) && (string)$in['revision'] !== $cur['revision']) {
+            return array('ok' => false, 'errors' => array(array('field' => 'revision', 'message' => 'Die Wochen-Frist wurde inzwischen geändert, bitte neu laden.')), 'targets' => $cur, 'revision' => $cur['revision']);
+        }
+        $rows = $this->weekTargets($n); $errors = array();
+        foreach (array_values($in['days']) as $i => $d) {
+            $f = 'days[' . $i . ']';
+            $day = is_array($d) ? (int)($d['day'] ?? 0) : 0;
+            if ($day < 1 || $day > 7) { $errors[] = array('field' => $f . '.day', 'message' => 'Tag 1 (Montag) bis 7 (Sonntag).'); continue; }
+            $t = trim((string)($d['time'] ?? ''));
+            if ($t !== '' && (!preg_match('/^(\d{1,2}):(\d{2})$/', $t, $m) || (int)$m[1] > 23 || (int)$m[2] > 59)) { $errors[] = array('field' => $f . '.time', 'message' => 'Uhrzeit HH:MM oder leer (keine Frist).'); continue; }
+            if ($t !== '') { $t = sprintf('%02d:%02d', (int)$m[1], (int)$m[2]); }
+            $k = isset($d['kwh']) ? (float)$d['kwh'] : (float)$rows[$day - 1]['Kwh'];
+            if ($k < 0 || $k > 200) { $errors[] = array('field' => $f . '.kwh', 'message' => 'Ladeziel 0 bis 200 kWh (0 = einheitliches Ladeziel).'); continue; }
+            $rows[$day - 1]['Time'] = $t; $rows[$day - 1]['Kwh'] = round($k, 1);
+        }
+        if (!empty($errors)) { return array('ok' => false, 'errors' => $errors, 'targets' => $cur, 'revision' => $cur['revision']); }
+        IPS_SetProperty($this->InstanceID, 'WB' . $n . '_WeekTargets', json_encode($rows));
+        IPS_ApplyChanges($this->InstanceID);
+        $now = $this->GetWeekTargets($n);
+        $this->emsLog(EMS_LOG_BASIC, sprintf('WB%d: Wochen-Frist geändert', $n));
+        return array('ok' => true, 'errors' => array(), 'targets' => $now, 'revision' => $now['revision']);
+    }
+
     public function GetWallboxes(): array
     {
         $out = array('contractVersion' => '1.0', 'wallboxes' => array());
@@ -9668,7 +9723,7 @@ class EMS extends IPSModule
             return '⚠️ Wallbox ' . $n . ': „EMS steuert“ gewählt, aber EMS darf diese Wallbox nicht schalten (fremd gesteuert). Es passiert nichts.';
         }
         $tail = ($t !== null) ? ' Tibber meldet Smart Charging für ' . $who . ' als aus' . $old . '.' : ' Smart Charging im Fahrzeug sollte aus sein, sonst regeln zwei Stellen.';
-        if ($override === null && ($this->ReadPropertyInteger('WB' . $n . '_ChargeMode') > 0 || $this->ReadPropertyFloat('WB' . $n . '_TargetKwh') > 0)) {
+        if ($override === null && ($this->ReadPropertyInteger('WB' . $n . '_ChargeMode') > 0 || $this->wallboxTargetConfigured($n))) {
             $ct = trim($this->ReadAttributeString('WB' . $n . 'ChargeText'));
             if ($ct !== '') { $tail = ' Ladeart: ' . $ct . '.' . $tail; }
         }
@@ -9762,7 +9817,7 @@ class EMS extends IPSModule
         }
         if (!in_array((string)($d['source'] ?? ''), array('netzbetreiber', 'nutzer'), true)) {
             for ($n = 1; $n <= $count; $n++) {
-                if ($modes[$n] !== 'ems' || ($this->ReadPropertyInteger('WB' . $n . '_ChargeMode') <= 0 && $this->ReadPropertyFloat('WB' . $n . '_TargetKwh') <= 0 && $this->ReadAttributeInteger('WB' . $n . 'NowUntil') <= time())) { continue; }
+                if ($modes[$n] !== 'ems' || ($this->ReadPropertyInteger('WB' . $n . '_ChargeMode') <= 0 && !$this->wallboxTargetConfigured($n) && $this->ReadAttributeInteger('WB' . $n . 'NowUntil') <= time())) { continue; }
                 $plan = $this->wallboxChargePlanFor($n, $s);
                 if ($plan === null) { continue; }
                 $plans[$n] = $plan;
@@ -9943,6 +9998,7 @@ class EMS extends IPSModule
                     $this->WriteAttributeInteger('WB' . $n . 'NowUntil', 0);
                     $this->emsLog(EMS_LOG_BASIC, sprintf('WB%d: Übersteuerung beendet', $n));
                 } elseif ($c === 3) {
+                    $this->WriteAttributeBoolean('WB' . $n . 'TargetCleared', true); // wirkt auch auf eine Wochen-Frist dieser Sitzung
                     IPS_SetProperty($this->InstanceID, 'WB' . $n . '_TargetKwh', 0.0);
                     IPS_ApplyChanges($this->InstanceID);
                     $this->emsLog(EMS_LOG_BASIC, sprintf('WB%d: Ladeziel gelöscht', $n));
@@ -10182,6 +10238,74 @@ class EMS extends IPSModule
     }
 
     /** Naechstes Auftreten der Uhrzeit HH:MM nach $from; null bei ungueltiger Eingabe. */
+    /** Leere Wochen-Frist: 7 Zeilen Mo..So ohne Uhrzeit. */
+    private function defaultWeekTargets(): array
+    {
+        $out = array();
+        foreach (array(1 => 'Montag', 2 => 'Dienstag', 3 => 'Mittwoch', 4 => 'Donnerstag', 5 => 'Freitag', 6 => 'Samstag', 7 => 'Sonntag') as $d => $l) {
+            $out[] = array('Day' => $d, 'Label' => $l, 'Time' => '', 'Kwh' => 0.0);
+        }
+        return $out;
+    }
+
+    /** Wochen-Frist der Wallbox $n, immer 7 Zeilen nach Tag 1..7 (fehlende/kaputte Zeilen = ohne Frist). */
+    private function weekTargets(int $n): array
+    {
+        $rows = $this->defaultWeekTargets();
+        $raw = json_decode($this->ReadPropertyString('WB' . $n . '_WeekTargets'), true);
+        if (is_array($raw)) {
+            foreach (array_values($raw) as $i => $r) {
+                if (!is_array($r)) { continue; }
+                $d = (int)($r['Day'] ?? ($i + 1)); // Symcon-Listen speichern womoeglich nur Spaltenfelder: dann zaehlt die Zeilenposition
+                if ($d < 1 || $d > 7) { continue; }
+                $rows[$d - 1]['Time'] = trim((string)($r['Time'] ?? ''));
+                $rows[$d - 1]['Kwh']  = max(0.0, (float)($r['Kwh'] ?? 0));
+            }
+        }
+        return $rows;
+    }
+
+    private function weekTargetsActive(int $n): bool
+    {
+        foreach ($this->weekTargets($n) as $r) { if ($r['Time'] !== '') { return true; } }
+        return false;
+    }
+
+    /** Gilt fuer Wallbox $n ueberhaupt ein Ladeziel (Wochen-Frist oder einheitliches Ladeziel)? */
+    private function wallboxTargetConfigured(int $n): bool
+    {
+        return $this->ReadPropertyFloat('WB' . $n . '_TargetKwh') > 0 || $this->weekTargetsActive($n);
+    }
+
+    /**
+     * Frist und Ziel beim Anstecken: Wochen-Frist (naechster Tag ab jetzt mit eingetragener Uhrzeit, heute nur wenn noch nicht vorbei;
+     * Ziel des Tages oder, bei 0, das einheitliche Ladeziel), sonst wie bisher TargetTime/TargetKwh. Wanduhr (mktime), Sommerzeit-fest.
+     * array('deadline' => int|null, 'kwh' => float, 'source' => 'week'|'single', 'note' => string)
+     */
+    private function wallboxEffectiveTarget(int $n, int $now): array
+    {
+        $single = (float)$this->ReadPropertyFloat('WB' . $n . '_TargetKwh');
+        if ($this->weekTargetsActive($n)) {
+            $rows = $this->weekTargets($n);
+            for ($off = 0; $off <= 7; $off++) {
+                $ts  = mktime(0, 0, 0, (int)date('n', $now), (int)date('j', $now) + $off, (int)date('Y', $now));
+                $row = $rows[(int)date('N', $ts) - 1];
+                if ($row['Time'] === '' || !preg_match('/^(\d{1,2}):(\d{2})$/', $row['Time'], $m) || (int)$m[1] > 23 || (int)$m[2] > 59) { continue; }
+                $dl = mktime((int)$m[1], (int)$m[2], 0, (int)date('n', $ts), (int)date('j', $ts), (int)date('Y', $ts));
+                if ($dl <= $now) { continue; }
+                $kwh = ($row['Kwh'] > 0) ? (float)$row['Kwh'] : $single;
+                if ($kwh <= 0.0) {
+                    return array('deadline' => null, 'kwh' => 0.0, 'source' => 'week', 'note' => sprintf('Ladeziel aus: Frist %s %s ohne Ladeziel (weder für den Tag noch einheitlich).', $row['Label'], $row['Time']));
+                }
+                return array('deadline' => $dl, 'kwh' => $kwh, 'source' => 'week', 'note' => '');
+            }
+            return array('deadline' => null, 'kwh' => 0.0, 'source' => 'week', 'note' => 'Ladeziel aus: keine gültige Wochen-Frist (HH:MM).');
+        }
+        if ($single <= 0.0) { return array('deadline' => null, 'kwh' => 0.0, 'source' => 'single', 'note' => ''); }
+        $dl = $this->nextClockTs($this->ReadPropertyString('WB' . $n . '_TargetTime'), $now);
+        return array('deadline' => $dl, 'kwh' => $single, 'source' => 'single', 'note' => $dl === null ? 'Ladeziel aus: Frist ist keine gültige Uhrzeit (HH:MM).' : '');
+    }
+
     private function nextClockTs(string $hhmm, int $from): ?int
     {
         if (!preg_match('/^\s*(\d{1,2}):(\d{2})\s*$/', $hhmm, $m) || (int)$m[1] > 23 || (int)$m[2] > 59) { return null; }
@@ -10232,7 +10356,6 @@ class EMS extends IPSModule
     private function wallboxTargetPlanFor(int $n, array $entry, float $maxA, int $phases): ?array
     {
         $this->WriteAttributeString('WB' . $n . 'TargetNote', '');
-        $target = (float)$this->ReadPropertyFloat('WB' . $n . '_TargetKwh');
         $plugId = (int)($entry['plugStateID'] ?? 0);
         $plugged = ($plugId > 0 && IPS_VariableExists($plugId)) ? (bool)GetValue($plugId) : false;
         if (!$plugged) {
@@ -10240,10 +10363,16 @@ class EMS extends IPSModule
                 $this->WriteAttributeInteger('WB' . $n . 'TargetSession', 0);
                 $this->WriteAttributeInteger('WB' . $n . 'TargetDeadline', 0);
                 $this->WriteAttributeBoolean('WB' . $n . 'TargetDone', false);
+                $this->WriteAttributeFloat('WB' . $n . 'TargetKwhSession', 0.0);
             }
+            if ($this->ReadAttributeBoolean('WB' . $n . 'TargetCleared')) { $this->WriteAttributeBoolean('WB' . $n . 'TargetCleared', false); }
             return null;
         }
-        if ($target <= 0.0) { return null; }
+        if ($this->ReadAttributeBoolean('WB' . $n . 'TargetCleared')) {
+            $this->WriteAttributeString('WB' . $n . 'TargetNote', 'Ladeziel für diese Ladesitzung gelöscht.');
+            return null;
+        }
+        if (!$this->wallboxTargetConfigured($n)) { return null; }
         $eId = (int)($entry['sessionEnergyID'] ?? 0);
         if ($eId <= 0 || !IPS_VariableExists($eId)) {
             $this->WriteAttributeString('WB' . $n . 'TargetNote', 'Ladeziel nicht unterstützt: die Wallbox meldet keine Energie der Ladesitzung.');
@@ -10251,11 +10380,13 @@ class EMS extends IPSModule
         }
         $now = time();
         if ($this->ReadAttributeInteger('WB' . $n . 'TargetSession') === 0) {
-            $dl = $this->nextClockTs($this->ReadPropertyString('WB' . $n . '_TargetTime'), $now);
-            if ($dl === null) {
-                $this->WriteAttributeString('WB' . $n . 'TargetNote', 'Ladeziel aus: Frist ist keine gültige Uhrzeit (HH:MM).');
+            $eff = $this->wallboxEffectiveTarget($n, $now);
+            if ($eff['deadline'] === null) {
+                $this->WriteAttributeString('WB' . $n . 'TargetNote', $eff['note']);
                 return null;
             }
+            $dl = $eff['deadline'];
+            $this->WriteAttributeFloat('WB' . $n . 'TargetKwhSession', $eff['source'] === 'week' ? $eff['kwh'] : 0.0);
             $this->WriteAttributeInteger('WB' . $n . 'TargetSession', $now);
             $this->WriteAttributeInteger('WB' . $n . 'TargetDeadline', $dl);
             $this->WriteAttributeBoolean('WB' . $n . 'TargetDone', false);
@@ -10263,8 +10394,12 @@ class EMS extends IPSModule
             $this->WriteAttributeFloat('WB' . $n . 'TargetBase', $v0);
             $this->WriteAttributeFloat('WB' . $n . 'TargetCarry', 0.0);
             $this->WriteAttributeFloat('WB' . $n . 'TargetLast', $v0);
-            $this->emsLog(EMS_LOG_BASIC, sprintf('WB%d: Ladeziel %s kWh bis %s', $n, $this->fmtKwh($target), date('d.m. H:i', $dl)));
+            $this->emsLog(EMS_LOG_BASIC, sprintf('WB%d: Ladeziel %s kWh bis %s%s', $n, $this->fmtKwh($eff['kwh']), date('d.m. H:i', $dl), $eff['source'] === 'week' ? ' (Wochen-Frist)' : ''));
         }
+        // Wochen-Frist: Ziel beim Anstecken festgelegt; sonst wie bisher das aktuelle Ladeziel (0 = aus)
+        $wk = $this->ReadAttributeFloat('WB' . $n . 'TargetKwhSession');
+        $target = ($wk > 0.0) ? $wk : (float)$this->ReadPropertyFloat('WB' . $n . '_TargetKwh');
+        if ($target <= 0.0) { return null; }
         if ($this->ReadAttributeBoolean('WB' . $n . 'TargetDone')) {
             $this->WriteAttributeString('WB' . $n . 'TargetNote', sprintf('Ladeziel %s kWh erreicht.', $this->fmtKwh($target)));
             return null;

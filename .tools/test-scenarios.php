@@ -1575,6 +1575,41 @@ check('GetWallboxes: Smart Charging (Tibber steuert) -> emsControls false, mode 
 prop('WB1_Mode', 0); prop('WB_Active', false);
 check('GetWallboxes: Wallboxen aus -> leere Liste', call($ems, 'GetWallboxes', [])['wallboxes'] === []);
 prop('WB_Active', true);
+// 0.92.0: Frist je Wochentag
+prop('WB1_TargetKwh', 0.0); prop('WB1_TargetTime', '07:00');
+$wt0 = call($ems, 'GetWeekTargets', [1]);
+check('Wochen-Frist leer: 7 Tage Mo..So ohne Uhrzeit, inaktiv, Revision', count($wt0['days']) === 7 && $wt0['days'][0]['label'] === 'Montag' && $wt0['days'][6]['day'] === 7 && $wt0['active'] === false && $wt0['revision'] !== '', json_encode($wt0));
+$rBad = call($ems, 'SetWeekTargets', [1, json_encode(['days' => [['day' => 8, 'time' => '07:00'], ['day' => 1, 'time' => '25:00'], ['day' => 2, 'time' => '07:00', 'kwh' => -1]]])]);
+check('Wochen-Frist: Fehler je Feld (Tag, Uhrzeit, kWh), nichts gespeichert', $rBad['ok'] === false && array_column($rBad['errors'], 'field') === ['days[0].day', 'days[1].time', 'days[2].kwh'] && call($ems, 'GetWeekTargets', [1])['active'] === false, json_encode($rBad['errors']));
+$rOld = call($ems, 'SetWeekTargets', [1, json_encode(['revision' => 'x', 'days' => [['day' => 1, 'time' => '07:00']]])]);
+check('Wochen-Frist: veraltete Revision abgelehnt', $rOld['ok'] === false && $rOld['errors'][0]['field'] === 'revision');
+$rOk = call($ems, 'SetWeekTargets', [1, json_encode(['revision' => $wt0['revision'], 'days' => [['day' => 6, 'time' => '10:00', 'kwh' => 40], ['day' => 1, 'time' => '7:30']]])]);
+check('Wochen-Frist gespeichert: Sa 10:00 40 kWh, Mo 07:30 (normiert), aktiv, neue Revision', $rOk['ok'] === true && $rOk['targets']['days'][5]['time'] === '10:00' && $rOk['targets']['days'][5]['kwh'] === 40.0 && $rOk['targets']['days'][0]['time'] === '07:30' && $rOk['targets']['active'] === true && $rOk['revision'] !== $wt0['revision'], json_encode($rOk));
+// Fristwahl: Freitag 23.10.2026 20:00 -> naechste Frist Samstag 10:00 (40 kWh)
+$fr = mktime(20, 0, 0, 10, 23, 2026);
+$e1 = call($ems, 'wallboxEffectiveTarget', [1, $fr]);
+check('Fr 20:00 angesteckt: Frist Sa 24.10. 10:00 mit 40 kWh (Wochen-Frist)', $e1['deadline'] === mktime(10, 0, 0, 10, 24, 2026) && $e1['kwh'] === 40.0 && $e1['source'] === 'week', json_encode($e1));
+// Samstag 11:00 (Frist vorbei), Sonntag ohne Frist -> Montag 07:30; Montag ohne eigenes Ziel und ohne einheitliches Ziel -> aus mit Hinweis
+$sa = mktime(11, 0, 0, 10, 24, 2026);
+$e2 = call($ems, 'wallboxEffectiveTarget', [1, $sa]);
+check('Sa 11:00: Montag 07:30 ist die naechste Frist, aber ohne Ladeziel -> aus mit Hinweis', $e2['deadline'] === null && strpos($e2['note'], 'Montag 07:30') !== false, json_encode($e2));
+prop('WB1_TargetKwh', 20.0);
+$e3 = call($ems, 'wallboxEffectiveTarget', [1, $sa]);
+check('mit einheitlichem Ladeziel 20 kWh: Mo 26.10. 07:30 mit 20 kWh (ueber die Zeitumstellung, Wanduhr)', $e3['deadline'] === mktime(7, 30, 0, 10, 26, 2026) && $e3['kwh'] === 20.0, json_encode($e3));
+prop('WB1_TargetKwh', 0.0);
+check('Ladeziel gilt als eingestellt, auch ohne einheitliches Ladeziel (Wochen-Frist aktiv)', call($ems, 'wallboxTargetConfigured', [1]) === true);
+prop('WB1_TargetKwh', 20.0);
+// Wochen-Frist leeren -> wieder die einheitliche Frist 07:00
+call($ems, 'SetWeekTargets', [1, json_encode(['days' => [['day' => 6, 'time' => ''], ['day' => 1, 'time' => '']]])]);
+$e4 = call($ems, 'wallboxEffectiveTarget', [1, $sa]);
+check('Wochen-Frist geleert: einheitliche Frist 07:00 am naechsten Tag mit 20 kWh', $e4['source'] === 'single' && $e4['deadline'] === mktime(7, 0, 0, 10, 25, 2026) && $e4['kwh'] === 20.0, json_encode($e4));
+prop('WB1_TargetKwh', 0.0);
+check('ohne Wochen-Frist und ohne Ladeziel: kein Ladeziel eingestellt', call($ems, 'wallboxTargetConfigured', [1]) === false);
+prop('WB1_WeekTargets', json_encode([['Label' => 'Montag', 'Time' => '06:15', 'Kwh' => 0], ['Label' => 'Dienstag', 'Time' => '', 'Kwh' => 0]]));
+$wtL = call($ems, 'GetWeekTargets', [1]);
+check('Liste aus dem Formular ohne Day-Feld: Zuordnung ueber die Zeilenposition (Mo 06:15)', $wtL['days'][0]['time'] === '06:15' && $wtL['days'][1]['time'] === '' && $wtL['active'] === true, json_encode($wtL['days']));
+prop('WB1_WeekTargets', '[]');
+check('GetWeekTargets(3): ungueltige Wallbox abgelehnt', call($ems, 'GetWeekTargets', [3])['ok'] === false);
 // Formular
 $f = json_encode(json_decode($ems->GetConfigurationForm(), true), JSON_UNESCAPED_UNICODE);
 check('Formular enthaelt Ladeart, Stromstaerke, PV-Anteil und Phasen fuer beide Wallboxen', strpos($f, '"name":"WB1_ChargeMode"') !== false && strpos($f, '"name":"WB2_ChargeMode"') !== false && strpos($f, '"name":"WB1_PhaseSetting"') !== false && strpos($f, '"name":"WB2_PvSharePct"') !== false);
@@ -3315,10 +3350,11 @@ $ems = freshEms(); prop('EMS_Risk_Acknowledged', true); $GLOBALS['SPOT_CURVE'] =
 $fx = json_encode(json_decode($ems->GetConfigurationForm(), true), JSON_UNESCAPED_UNICODE);
 check('Ohne Boersenpreis-Quelle: ℹ️ "Keine Börsenpreis-Quelle gefunden" im Formular', strpos($fx, 'Keine Börsenpreis-Quelle gefunden') !== false && strpos($fx, 'SpotStatusLabel') !== false, 'Label: ' . (strpos($fx, 'SpotStatusLabel') !== false ? 'da' : 'fehlt') . ', Text: ' . (preg_match('/Börsenpreis[^"]{0,80}/u', $fx, $mx) ? $mx[0] : '-'));
 $GLOBALS['INSTMOD'][7401] = GUID_SPOTPRICE; obj(7401, 1, 'Börsenpreis Test', 0);
-$dd = strtotime('today'); $curveS = []; for ($i = 0; $i < 96; $i++) { $curveS[] = ['start' => $dd + $i * 900, 'end' => $dd + ($i + 1) * 900, 'price' => 5.0, 'aufloesung' => 900]; }
+$dd = strtotime('today'); $nqS = (int)((strtotime('tomorrow') - $dd) / 900); // 92/96/100 je nach Zeitumstellung
+$curveS = []; for ($i = 0; $i < $nqS; $i++) { $curveS[] = ['start' => $dd + $i * 900, 'end' => $dd + ($i + 1) * 900, 'price' => 5.0, 'aufloesung' => 900]; }
 $GLOBALS['SPOT_CURVE'] = $curveS;
 $fx = json_encode(json_decode($ems->GetConfigurationForm(), true), JSON_UNESCAPED_UNICODE);
-check('Mit Boersenpreis-Modul: ✅ mit Instanz, Name, Umfang und aktuellem Wert', strpos($fx, '✅ Börsenpreis #7401') !== false && strpos($fx, 'Börsenpreis Test') !== false && strpos($fx, '96 Viertelstunden') !== false && strpos($fx, 'aktuell 5.00 ct') !== false, (preg_match('/[✅⚠️ℹ️] ?Börsenpreis[^"]{0,200}/u', $fx, $mm) ? $mm[0] : 'keine Zeile'));
+check('Mit Boersenpreis-Modul: ✅ mit Instanz, Name, Umfang und aktuellem Wert', strpos($fx, '✅ Börsenpreis #7401') !== false && strpos($fx, 'Börsenpreis Test') !== false && strpos($fx, $nqS . ' Viertelstunden') !== false && strpos($fx, 'aktuell 5.00 ct') !== false, (preg_match('/[✅⚠️ℹ️] ?Börsenpreis[^"]{0,200}/u', $fx, $mm) ? $mm[0] : 'keine Zeile'));
 $GLOBALS['INSTMOD'][7402] = GUID_SPOTPRICE; obj(7402, 1, 'Zweite', 0);
 $fx = json_encode(json_decode($ems->GetConfigurationForm(), true), JSON_UNESCAPED_UNICODE);
 check('Zwei Boersenpreis-Instanzen: ⚠️ (EMS nutzt die erste) statt still zu raten', strpos($fx, '⚠️ Mehrere Börsenpreis-Instanzen gefunden') !== false);

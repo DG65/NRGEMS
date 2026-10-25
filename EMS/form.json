@@ -1209,6 +1209,19 @@
                     "validate": "^([01]?\\d|2[0-3]):[0-5]\\d$"
                 },
                 {
+                    "type": "List",
+                    "name": "WB1_WeekTargets",
+                    "caption": "WB1 Frist je Wochentag (leer = keine Frist an dem Tag; sind alle Tage leer, gilt die Frist oben für jeden Tag; Ladeziel 0 = Ladeziel oben)",
+                    "rowCount": 7,
+                    "add": false,
+                    "delete": false,
+                    "columns": [
+                        { "caption": "Tag", "name": "Label", "width": "140px" },
+                        { "caption": "Frist (HH:MM)", "name": "Time", "width": "140px", "add": "", "edit": { "type": "ValidationTextBox", "validate": "^(([01]?\\d|2[0-3]):[0-5]\\d)?$" } },
+                        { "caption": "Ladeziel (kWh)", "name": "Kwh", "width": "auto", "add": 0, "edit": { "type": "NumberSpinner", "minimum": 0, "maximum": 200, "digits": 1, "suffix": " kWh" } }
+                    ]
+                },
+                {
                     "type": "NumberSpinner",
                     "name": "WB1_NowCurrentA",
                     "caption": "WB1 „Jetzt laden“ (Befehl im WebFront): Stromstärke in A, 0 = Höchststrom der Wallbox",
@@ -1430,6 +1443,19 @@
                         "property": "WB_Count",
                         "value": 2
                     }
+                },
+                {
+                    "type": "List",
+                    "name": "WB2_WeekTargets",
+                    "caption": "WB2 Frist je Wochentag (leer = keine Frist an dem Tag; sind alle Tage leer, gilt die Frist oben für jeden Tag; Ladeziel 0 = Ladeziel oben)",
+                    "rowCount": 7,
+                    "add": false,
+                    "delete": false,
+                    "columns": [
+                        { "caption": "Tag", "name": "Label", "width": "140px" },
+                        { "caption": "Frist (HH:MM)", "name": "Time", "width": "140px", "add": "", "edit": { "type": "ValidationTextBox", "validate": "^(([01]?\\d|2[0-3]):[0-5]\\d)?$" } },
+                        { "caption": "Ladeziel (kWh)", "name": "Kwh", "width": "auto", "add": 0, "edit": { "type": "NumberSpinner", "minimum": 0, "maximum": 200, "digits": 1, "suffix": " kWh" } }
+                    ]
                 },
                 {
                     "type": "NumberSpinner",
