@@ -359,9 +359,9 @@ dayPlanAll(EMS_OP_NET_CHARGE, GW_MODE_BAT_CHARGE, 8000);
 $sNeg = fn(array $o = []) => state(array_merge(['grid_rewards' => true, 'wb_active' => true, 'wb1_pow_kw' => 7.4, 'wb1_cable' => 1, 'tib_price' => -0.05, 'tib_price_eff' => -0.05, 'bat_soc' => 50.0, 'pv_total_w' => 3000.0, 'house_pow_w' => 400.0], $o));
 $d = call($ems, 'optimize', [$sNeg()]);
 check('Grid Reward (Auto laedt) + negativer Preis: Tagesplan-Netzladen mit Modus 11, nicht der Grid-Rewards-Zweig', $d['op_mode'] === EMS_OP_NET_CHARGE && $d['gw_mode'] === GW_MODE_BAT_CHARGE && ($d['source'] ?? '') === 'tagesplan', fmt($d));
-check('Wallboxen bleiben unangetastet (Tibber steuert das Auto), Grund nennt den Vorrang', !empty($d['wb_hands_off']) && strpos($d['reason'], 'geplantes Netzladen der Batterie hat Vorrang') !== false, $d['reason']);
+check('Wallboxen bleiben unangetastet (Tibber steuert das Auto), Grund nennt den Hausakku nach Tagesplan', !empty($d['wb_hands_off']) && strpos($d['reason'], 'Hausakku nach Tagesplan') !== false, $d['reason']);
 $d = call($ems, 'optimize', [$sNeg(['wb1_pow_kw' => 0.0])]);
-check('Grid Reward mit Ladestopp (Auto 0 W, Knappheit) + negativer Preis: bleibt Grid Rewards/Automatik, kein zusaetzlicher Netzbezug', $d['op_mode'] === EMS_OP_GRIDREWARDS && $d['gw_mode'] === GW_MODE_AUTO && $d['gw_enable'] === false, fmt($d));
+check('Grid Reward mit Ladestopp (Auto 0 W, Knappheit): der Hausakku folgt seinem Plan (hier Netzladen), Grid Rewards gilt nur fuers Auto (Dietmar 25.10.2026), Wallbox unangetastet', $d['op_mode'] === EMS_OP_NET_CHARGE && $d['gw_mode'] === GW_MODE_BAT_CHARGE && !empty($d['wb_hands_off']), fmt($d));
 $d = call($ems, 'optimize', [$sNeg(['bat_soc' => 99.8])]);
 check('Batterie voll + negativer Preis: Grid-Rewards-Zweig (Modus 2, Haus und Auto aus dem Netz, wird bezahlt)', $d['op_mode'] === EMS_OP_GRIDREWARDS && $d['gw_mode'] === GW_MODE_CHARGE_PV, fmt($d));
 pricesToday(0.30);
@@ -371,7 +371,7 @@ dayPlanAll(EMS_OP_AUTO, GW_MODE_AUTO);
 $d = call($ems, 'optimize', [$sNeg(['tib_price' => 0.30, 'tib_price_eff' => 0.30])]);
 check('Punkt 3, Gegenprobe: positiver Preis und der Plan sieht KEIN Netzladen: wie bisher Grid-Rewards-Zweig (Modus 9)', $d['op_mode'] === EMS_OP_GRIDREWARDS && $d['gw_mode'] === GW_MODE_BUY, fmt($d));
 $d = call($ems, 'optimize', [$sNeg(['tib_price' => 0.30, 'tib_price_eff' => 0.30, 'wb1_pow_kw' => 0.0])]);
-check('Punkt 3, Gegenprobe: Ladestopp (Auto 0 W, Knappheit): auch bei geplantem Netzladen kein zusaetzlicher Netzbezug, Grid Rewards/Automatik', $d['op_mode'] === EMS_OP_GRIDREWARDS && $d['gw_mode'] === GW_MODE_AUTO, fmt($d));
+check('Punkt 3, Gegenprobe: Ladestopp (Auto 0 W, Knappheit), Plan sieht Automatik: Hausakku nach Plan (Automatik), Wallbox unangetastet', $d['op_mode'] === EMS_OP_AUTO && ($d['source'] ?? '') === 'tagesplan' && !empty($d['wb_hands_off']), fmt($d));
 pricesToday(-0.05);
 dayPlanAll(EMS_OP_AUTO, GW_MODE_AUTO);
 $d = call($ems, 'optimize', [$sNeg()]);
@@ -1535,7 +1535,7 @@ $whLong = $whObs; $whLong['controlReason'] = str_repeat('x', 300); $whLong['cont
 attr('PartnerCache', json_encode(['chargerhub' => [$whLong]]));
 $l = $txt(call($ems, 'wallboxModeStatusLine', [1]));
 check('langer Grund wird auf 160 Zeichen gekuerzt, ohne Zeit bei controlSince 0', strpos($l, str_repeat('x', 157) . '...') !== false && strpos($l, str_repeat('x', 158)) === false && strpos($l, '(seit') === false, $l);
-$whOld2 = $whObs; $whOld2['controlSince'] = mktime(8, 15, 0) - 86400 * 3;
+$whOld2 = $whObs; $whOld2['controlSince'] = mktime(8, 15, 0, (int)date('n'), (int)date('j') - 3, (int)date('Y')); // Wanduhr, auch ueber eine Zeitumstellung
 attr('PartnerCache', json_encode(['chargerhub' => [$whOld2]]));
 check('Besitzerwechsel an einem frueheren Tag: mit Datum', (bool)preg_match('/\(seit \d\d\.\d\d\. 08:15\)/', $txt(call($ems, 'wallboxModeStatusLine', [1]))), $txt(call($ems, 'wallboxModeStatusLine', [1])));
 $whEms = ['instanceID' => 600, 'source' => 'chargerhub', 'chargeEnableID' => $cenX, 'maxCurrent' => 16, 'managedBy' => 'none', 'powerID' => 0, 'plugStateID' => 0, 'controlReason' => 'EMS steuert', 'controlSince' => time() - 60];
@@ -1846,7 +1846,10 @@ check('Uhrzeit-Pruefung: 24:00 ok, 24:15 und 7 Uhr ungueltig', call($ems, 'clock
 attr('PriceEstimate', 'Preise geschätzt: morgen (wie heute). Vorentladen ins Netz ist ausgesetzt, bis echte Preise vorliegen.');
 prop('PLAN_PreDischarge_Active', true); prop('PLAN_NightGrid_Active', true);
 prop('ANL_Verguetung_ct', 18.36); prop('BAT_SOC_Min', 10); prop('BAT_Capacity_kWh', 40.0); prop('EMS_Max_Power_W', 10000);
-attr('DayPlan', json_encode(array_fill(0, 96, ['price' => 0.30]))); attr('DayPlanTomorrow', json_encode(array_fill(0, 96, ['price' => 0.05])));
+$nsPd = (int)(((int)date('G') * 60 + (int)date('i')) / 15);
+$dpT = []; $dpM = [];
+for ($i = 0; $i < 96; $i++) { $dpT[$i] = ['price' => ($i >= $nsPd + 8) ? 0.05 : 0.30]; $dpM[$i] = ['price' => 0.05]; } // guenstiges Fenster 2 h ab jetzt, unabhaengig von der Uhrzeit
+attr('DayPlan', json_encode($dpT)); attr('DayPlanTomorrow', json_encode($dpM));
 $sPd = state(['bat_active' => true, 'bat_soc' => 80.0, 'house_pow_w' => 300.0]);
 attr('PriceEstimate', '');
 $pdReal = call($ems, 'applyPreDischarge', [$sPd]);
@@ -2014,7 +2017,7 @@ check('Gleiche Preise: ein zusammenhaengender Block', count($pk) === 3 && (max(a
 echo "\n8q) Symcon-Strompreis als automatische Preisquelle (Stundenpreise, ohne Tibber)\n";
 $ems = freshEms();
 $d0 = strtotime('today'); $md = [];
-for ($h = 0; $h < 24; $h++) { $md[] = ['start' => $d0 + $h * 3600, 'end' => $d0 + ($h + 1) * 3600, 'price' => 20.0 + $h]; }
+for ($h = 0; $h < 24; $h++) { $md[] = ['start' => mktime($h, 0, 0, (int)date('n', $d0), (int)date('j', $d0), (int)date('Y', $d0)), 'end' => mktime($h + 1, 0, 0, (int)date('n', $d0), (int)date('j', $d0), (int)date('Y', $d0)), 'price' => 20.0 + $h]; } // Wanduhr-Stunden (23-/25-Stunden-Tag)
 $md2 = []; $d1 = strtotime('tomorrow');
 for ($h = 0; $h < 24; $h++) { $a1 = mktime($h, 0, 0, (int)date('n', $d1), (int)date('j', $d1), (int)date('Y', $d1)); $md2[] = ['start' => $a1, 'end' => mktime($h + 1, 0, 0, (int)date('n', $d1), (int)date('j', $d1), (int)date('Y', $d1)), 'price' => 50.0 + $h]; } // Wanduhr-Stunden: auch am 23-/25-Stunden-Tag
 $GLOBALS['INSTMOD'][7001] = GUID_POWERPRICE; obj(7001, 1, 'aWATTar', 0);
@@ -2140,7 +2143,7 @@ check('Bei PV-Ueberschuss hat das PV-Laden Vorrang vor dem Restwert', $r['plan']
 // Symcon-Strompreis: nur heute vorhanden (morgen noch nicht veroeffentlicht) und Stundenraster
 $GLOBALS['INSTMOD'][7201] = GUID_POWERPRICE; obj(7201, 1, 'Strompreis', 0);
 $dd0 = strtotime('today'); $mdOne = [];
-for ($h = 0; $h < 24; $h++) { $mdOne[] = ['start' => $dd0 + $h * 3600, 'end' => $dd0 + ($h + 1) * 3600, 'price' => 25.0]; }
+for ($h = 0; $h < 24; $h++) { $mdOne[] = ['start' => mktime($h, 0, 0, (int)date('n', $dd0), (int)date('j', $dd0), (int)date('Y', $dd0)), 'end' => mktime($h + 1, 0, 0, (int)date('n', $dd0), (int)date('j', $dd0), (int)date('Y', $dd0)), 'price' => 25.0]; } // Wanduhr-Stunden
 vari('Marktdaten', 7201, 'MarketData', json_encode($mdOne), 3);
 $pt = call($ems, 'parsePT15M', [call($ems, 'getPT15MTodayJson'), 0]); $pm = call($ems, 'parsePT15M', [call($ems, 'getPT15MTomorrowJson'), 1]);
 check('Nur heute veroeffentlicht: heute 96 Slots belegt, morgen alle leer (null), kein Fehler', count(array_filter($pt, fn($v) => $v !== null)) === 96 && count(array_filter($pm, fn($v) => $v !== null)) === 0);
@@ -2248,7 +2251,7 @@ echo "\n11) Regression 12.09.2026 -- Tagesplan-Rueckschau (Plan/Archiv-Vergleich
 $ems = freshEms();
 $GLOBALS['INSTMOD'][500] = GUID_ARCHIVECONTROL;
 $dayStart = strtotime('today');
-$nowSlot = (int)((time() - $dayStart) / 900);
+$nowSlot = (int)(((int)date('G') * 60 + (int)date('i')) / 15); // Wanduhr-Slot wie im EMS (am 25-Stunden-Tag != vergangene Sekunden / 900)
 $socVar = vari('SOC', IHUB_IID, '', 0.0);
 $GLOBALS['ARCHIVE'][$socVar] = [[$dayStart - 1200, 96.0]]; // letzter Wert gestern 23:40, heute noch keine Aenderung
 $a = call($ems, 'getArchivedSlotsToday', [$socVar]);

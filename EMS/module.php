@@ -41,7 +41,7 @@ define('EMS_LOG_VERBOSE',     2);
 // Formular-Konvention (siehe EMS/SUITE.md "Einheitliche Formular-Optik"):
 // Was-ist-Neu-Panel ist versionsscharf dismissible, Referenzmuster InverterHub.
 define('EMS_COLOR_AUTO', 0x2E8B3D); // Gruen: Wert wurde automatisch uebernommen (🔗-Zeilen im Formular)
-define('EMS_NEWS_VERSION', '0.88.0');
+define('EMS_NEWS_VERSION', '0.89.0');
 
 // NRG-Stack Partnermodul-GUIDs (fuer automatische Discovery, siehe discoverPartners())
 define('GUID_CHARGERHUB',    '{9256C34E-5CFD-4F37-8BFE-E65390EBB37C}');
@@ -787,6 +787,10 @@ class EMS extends IPSModule
                 'caption'  => '🆕 Neu in Version ' . EMS_NEWS_VERSION,
                 'expanded' => true,
                 'items'    => array(
+                    array(
+                        'type'    => 'Label',
+                        'caption' => '• GEÄNDERT: Tibber Grid Rewards betrifft nur das Auto. Während eines Grid-Rewards-Ereignisses folgt der Hausakku jetzt weiter seinem Tagesplan (z. B. Nachtladen), die Wallbox bleibt unangetastet.'
+                    ),
                     array(
                         'type'    => 'Label',
                         'caption' => '• NEU: Ganz oben gibt es jetzt „🚗 Wallboxen bedienen“: Ladeart, Ladeziel, Frist, Jetzt 1 Stunde laden, Übersteuerung beenden und Ladeziel löschen, mit dem Plan je Wallbox. Wirkt sofort, ohne „Änderungen übernehmen“.'
@@ -7060,12 +7064,20 @@ class EMS extends IPSModule
             // zur Laufzeit gegen Anschlussgrenze, Haus und Wallbox (Modus 11, PV ungedrosselt, Auto obendrauf).
             // Bei Ladestopp (Auto 0 W, Knappheit im Netz) gilt weiter Grid Rewards: dort soll KEIN zusaetzlicher Netzbezug
             // entstehen. Die Wallboxen bleiben unangetastet (Tibber steuert das Auto).
-            if ($wbTotalW >= 500 && !empty($s['bat_active']) && (float)$s['bat_soc'] < 99.5) {
-                $negPlan = $this->applyPlanSlot($s);
-                if ($negPlan !== null && $negPlan['op_mode'] === EMS_OP_NET_CHARGE) {
-                    $negPlan['wb_hands_off'] = true;
-                    $negPlan['reason'] .= ' | Grid Rewards läuft, geplantes Netzladen der Batterie hat Vorrang (Wallbox unangetastet)';
-                    return $negPlan;
+            // Grid Rewards ist ein Vertrag zwischen Tibber und dem AUTO (Wallbox), nicht dem Haus (Dietmar 25.10.2026, nach der
+            // Nacht 25.10.: drei Knappheits-Ereignisse 01:59-06:08 verhinderten das Nachtladen, Akku 23 % statt 100 %). Der Hausakku
+            // folgt deshalb immer seinem Tagesplan; die Wallbox bleibt unangetastet (Tibber steuert sie). Nur wenn das Auto gerade
+            // laedt und der Plan fuer den Akku nichts Eigenes vorsieht (Automatik), gilt die Einstellung "Smart-Charging-Auto aus dem
+            // Netz laden" (carFromGridSetting), damit der Akku nicht ins Auto entlaedt. Steuert Tibber den Akku selbst, gilt der
+            // eigene Zweig tibber_battery oben.
+            if (!empty($s['bat_active'])) {
+                $hp = $this->applyPlanSlot($s);
+                if ($hp !== null && ($hp['op_mode'] !== EMS_OP_AUTO || $wbTotalW < 500)) {
+                    $hp['wb_hands_off'] = true;
+                    $hp['reason'] .= ($wbTotalW >= 500)
+                        ? ' | Grid Rewards (Auto): Hausakku nach Tagesplan, Wallbox unangetastet'
+                        : ' | Grid Rewards (Auto lädt gerade nicht): Hausakku nach Tagesplan, Wallbox unangetastet';
+                    return $hp;
                 }
             }
             // Umbau 04.10.2026 (Live-Befund 03.10.): Bis 0.70.0 bestellte EMS hier per Modus 4 (AC-Import) einen
