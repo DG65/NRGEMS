@@ -1275,6 +1275,46 @@ call($ems, 'KeepAlive');
 check('Regelzyklus laeuft nicht mehr (Stunden): KeepAlive gibt die Entladesperre frei (kein Totmann am Geraet)', in_array('svc_discharge_inhibit=false', $acts(), true), json_encode($acts()));
 attr('SolisRestoreTarget', -1);
 
+echo "\n8k7b) Solis: Netzlade-Erlaubnis (Bit 5 im Speicherbetrieb) fuer das Zwangsladen (0.90.0, Pauls Anlage 25.10.2026)\n";
+$vCtlSt = vari('Speicherbetrieb', IHUB_IID, 'ctl_storage_mode', 33, 1);
+foreach (['SolisHoldActive' => false, 'SolisHoldBlockedUntil' => 0, 'SolisRestoreTarget' => -1, 'SolisLastMode' => 0, 'SolisLastPowerW' => 0, 'SolisLastWriteAt' => 0, 'SolisReleaseTries' => 0, 'SolisGcActive' => false, 'SolisGcSaved' => -1, 'SolisGcTries' => 0, 'SolisGcTryAt' => 0] as $k => $v) { attr($k, $v); }
+$GLOBALS['VAL'][$vDev] = 0; $GLOBALS['VAL'][$vSt] = 1; $GLOBALS['VAR'][$vSt]['VariableUpdated'] = time() - 100; $GLOBALS['ACTIONS'] = [];
+call($ems, 'setGoodweMode', [GW_MODE_BAT_CHARGE, 12000, true]);
+check('Speicherbetrieb 1 (kein Netzladen) + Netzladen: vorher 33 geschrieben, 1 gemerkt, Zwangsladen trotzdem gesetzt', in_array('ctl_storage_mode=33', $acts(), true) && in_array('ctl_force_mode=1', $acts(), true) && $ems->ReadAttributeInteger('SolisGcSaved') === 1 && $ems->ReadAttributeBoolean('SolisGcActive') === true, json_encode($acts()));
+// Rueckmeldung noch alt (Lesezyklus 5 min): kein erneutes Schreiben, auch nach 61 s nicht
+attr('SolisGcTryAt', time() - 61); $GLOBALS['ACTIONS'] = [];
+call($ems, 'setGoodweMode', [GW_MODE_BAT_CHARGE, 12000, true]);
+check('Rueckmeldung aelter als das Schreiben: kein erneutes Schreiben des Speicherbetriebs', !in_array('ctl_storage_mode=33', $acts(), true), json_encode($acts()));
+// frische Rueckmeldung, immer noch 1: erneut schreiben
+$GLOBALS['VAR'][$vSt]['VariableUpdated'] = time(); $GLOBALS['ACTIONS'] = [];
+call($ems, 'setGoodweMode', [GW_MODE_BAT_CHARGE, 12000, true]);
+check('frische Rueckmeldung weiter 1: Netzlade-Erlaubnis erneut geschrieben', in_array('ctl_storage_mode=33', $acts(), true), json_encode($acts()));
+// Bit 5 kam an
+$GLOBALS['VAL'][$vSt] = 33; $GLOBALS['VAR'][$vSt]['VariableUpdated'] = time() + 1; $GLOBALS['ACTIONS'] = [];
+call($ems, 'setGoodweMode', [GW_MODE_BAT_CHARGE, 12000, true]);
+check('Bit 5 zurueckgelesen: kein weiteres Schreiben des Speicherbetriebs', !in_array('ctl_storage_mode=33', $acts(), true) && $ems->ReadAttributeInteger('SolisGcTries') === 0, json_encode($acts()));
+// Laden endet: alter Wert 1 zurueck, Ruecklesen ueber das Merkziel
+$GLOBALS['VAL'][$vDev] = 1; $GLOBALS['ACTIONS'] = [];
+call($ems, 'setGoodweMode', [GW_MODE_AUTO, 0, false]);
+check('Laden endet: Speicherbetrieb zurueck auf 1, Merkziel 1, Zwangsmodus freigegeben', in_array('ctl_storage_mode=1', $acts(), true) && in_array('ctl_force_mode=0', $acts(), true) && $ems->ReadAttributeBoolean('SolisGcActive') === false && $ems->ReadAttributeInteger('SolisRestoreTarget') === 1, json_encode($acts()));
+$GLOBALS['VAL'][$vSt] = 1; $GLOBALS['VAR'][$vSt]['VariableUpdated'] = time() + 2; call($ems, 'setGoodweMode', [GW_MODE_AUTO, 0, false]);
+check('Speicherbetrieb 1 zurueckgelesen: Merkziel geloescht', $ems->ReadAttributeInteger('SolisRestoreTarget') === -1);
+// Netzladen schon erlaubt (35 = Bits 0,1,5): nichts am Speicherbetrieb
+attr('SolisLastMode', 0); $GLOBALS['VAL'][$vDev] = 0; $GLOBALS['VAL'][$vSt] = 35; $GLOBALS['ACTIONS'] = [];
+call($ems, 'setGoodweMode', [GW_MODE_BAT_CHARGE, 12000, true]);
+check('Speicherbetrieb 35 (Netzladen erlaubt): kein Schreiben des Speicherbetriebs, nichts gemerkt', !preg_grep('/^ctl_storage_mode=/', $acts()) && $ems->ReadAttributeBoolean('SolisGcActive') === false, json_encode($acts()));
+// andere Bits bleiben: 3 -> 35
+$GLOBALS['VAL'][$vSt] = 3; $GLOBALS['ACTIONS'] = [];
+call($ems, 'setGoodweMode', [GW_MODE_BAT_CHARGE, 12000, true]);
+check('Speicherbetrieb 3: Bit 5 dazu = 35, andere Bits bleiben', in_array('ctl_storage_mode=35', $acts(), true), json_encode($acts()));
+// Zyklus bleibt aus: KeepAlive gibt auch die Netzlade-Erlaubnis frei
+prop('EMS_Active', true); prop('EMS_DryRun', false);
+attr('LastGoodweMode', GW_MODE_BAT_CHARGE); attr('LastGoodweEnable', true); attr('LastGoodweWriteAt', time() - 3600); $GLOBALS['ACTIONS'] = [];
+call($ems, 'KeepAlive');
+check('Regelzyklus bleibt aus: KeepAlive stellt den Speicherbetrieb 3 wieder her', in_array('ctl_storage_mode=3', $acts(), true), json_encode($acts()));
+foreach (['SolisGcActive' => false, 'SolisGcSaved' => -1, 'SolisGcTries' => 0, 'SolisGcTryAt' => 0, 'SolisRestoreTarget' => -1, 'SolisLastMode' => 0] as $k => $v) { attr($k, $v); }
+$GLOBALS['VAL'][$vSt] = 33;
+
 echo "\n8k8) Solis: Entladen auf Vorgabe (Zwangsentladen ins Haus, Einspeisewache)\n";
 $vDisMax = vari('Max. Entladeleistung', IHUB_IID, 'bat_discharge_max_w', 16900.0, 2);
 foreach (['SolisHoldActive' => false, 'SolisHoldBlockedUntil' => 0, 'SolisRestoreTarget' => -1, 'SolisLastMode' => 0, 'SolisLastPowerW' => 0, 'SolisLastWriteAt' => 0, 'SolisReleaseTries' => 0] as $k => $v) { attr($k, $v); }

@@ -41,7 +41,7 @@ define('EMS_LOG_VERBOSE',     2);
 // Formular-Konvention (siehe EMS/SUITE.md "Einheitliche Formular-Optik"):
 // Was-ist-Neu-Panel ist versionsscharf dismissible, Referenzmuster InverterHub.
 define('EMS_COLOR_AUTO', 0x2E8B3D); // Gruen: Wert wurde automatisch uebernommen (🔗-Zeilen im Formular)
-define('EMS_NEWS_VERSION', '0.89.2');
+define('EMS_NEWS_VERSION', '0.90.0');
 
 // NRG-Stack Partnermodul-GUIDs (fuer automatische Discovery, siehe discoverPartners())
 define('GUID_CHARGERHUB',    '{9256C34E-5CFD-4F37-8BFE-E65390EBB37C}');
@@ -520,6 +520,10 @@ class EMS extends IPSModule
         $this->RegisterAttributeInteger('SolisHoldTries', 0);
         $this->RegisterAttributeInteger('SolisHoldTryAt', 0);
         $this->RegisterAttributeInteger('SolisHoldBlockedUntil', 0);
+        $this->RegisterAttributeBoolean('SolisGcActive', false);      // Netzlade-Erlaubnis (Bit 5 im Speicherbetrieb) von EMS gesetzt
+        $this->RegisterAttributeInteger('SolisGcSaved', -1);          // Speicherbetrieb vor dem Setzen von Bit 5
+        $this->RegisterAttributeInteger('SolisGcTries', 0);
+        $this->RegisterAttributeInteger('SolisGcTryAt', 0);
         $this->RegisterAttributeInteger('SolisRestoreTarget', -1);   // Speicherbetrieb, der nach dem Freigeben erwartet wird (Rücklesen)
         $this->RegisterAttributeString('ChargeObsCurve',   '{}'); // real beobachtete Ladeleistung (Spitzenwert) je SOC-Stufe {stufe: [kW, Zeitstempel]}
         $this->RegisterAttributeString('NightTargetDay',   '');   // Datum (Y-m-d), an dem das Nachtziel im Nachtfenster erreicht wurde (kein Neustart des Netzladens bei kleinem Rueckgang)
@@ -8909,8 +8913,8 @@ class EMS extends IPSModule
         // Nur, wenn der Zyklus in letzter Zeit lief (kein Halten eines veralteten Sollwerts nach Ausfall)
         if (time() - $this->ReadAttributeInteger('LastGoodweWriteAt') > 3 * max(30, (int)$this->ReadPropertyInteger('EMS_Interval')) + 60) {
             // Solis: eine gesetzte Entladesperre (hat keinen Totmann) bei ausbleibendem Zyklus freigeben
-            if ($this->ReadAttributeBoolean('SolisHoldActive') && $this->isSolisDriver((int)$inv['instanceID'])) {
-                $this->emsLog(EMS_LOG_BASIC, 'Solis: Regelzyklus bleibt aus -- Entladesperre wird freigegeben');
+            if (($this->ReadAttributeBoolean('SolisHoldActive') || $this->ReadAttributeBoolean('SolisGcActive')) && $this->isSolisDriver((int)$inv['instanceID'])) {
+                $this->emsLog(EMS_LOG_BASIC, 'Solis: Regelzyklus bleibt aus -- Entladesperre/Netzlade-Erlaubnis wird freigegeben');
                 $this->setSolisMode((int)$inv['instanceID'], GW_MODE_AUTO, 0);
             }
             return;
@@ -9100,6 +9104,7 @@ class EMS extends IPSModule
         if ($target <= 0) { return; }
         $stId = $this->findChildVariableIdByIdent($iid, 'cfg_storage_mode');
         $cur = ($stId > 0) ? (int)GetValue($stId) : -1;
+        if ($cur !== $target && $stId > 0 && IPS_GetVariable($stId)['VariableUpdated'] <= $this->ReadAttributeInteger('SolisHoldTryAt')) { return; } // Rueckmeldung noch aelter als das Schreiben (Lesezyklus 5 min)
         if ($cur === $target || $cur <= 0) { if ($cur === $target) { $this->WriteAttributeInteger('SolisRestoreTarget', -1); $this->WriteAttributeInteger('SolisHoldTries', 0); } return; }
         $now = time();
         if ($now - $this->ReadAttributeInteger('SolisHoldTryAt') < 60) { return; }
@@ -9112,6 +9117,62 @@ class EMS extends IPSModule
         $this->WriteAttributeInteger('SolisHoldTries', $this->ReadAttributeInteger('SolisHoldTries') + 1);
         $this->WriteAttributeInteger('SolisHoldTryAt', $now);
         $this->ipsWrite($iid, 'ctl_storage_mode', $target);
+    }
+
+    /**
+     * Netzlade-Erlaubnis fuer das Zwangsladen (EMS 0.90.0, Dietmar 25.10.2026): Ohne Bit 5 (32 = Netzladen erlaubt) im Speicherbetrieb
+     * (Register 43110) laedt der Solis bei Zwangsladen nur aus PV und deckt das Haus sogar aus dem Akku (Pauls Anlage 25.10.2026:
+     * Speicherbetrieb 1, Akku +0,8 kW statt -17 kW; mit 33 sofort -17,4 kW Netzladen, gemessen). Fehlt Bit 5, merkt EMS den Wert,
+     * setzt ihn mit Bit 5 (andere Bits bleiben) und stellt ihn nach dem Laden wieder her (Ruecklesen und Wiederholen wie beim Halten).
+     * Die Rueckmeldung cfg_storage_mode kommt nur alle 5 min, deshalb wird nur eine Rueckmeldung nach dem Schreiben bewertet.
+     */
+    private function solisGridChargeEnsure(int $iid, bool $wantCharge, int $now): void
+    {
+        $active = $this->ReadAttributeBoolean('SolisGcActive');
+        $stId = $this->findChildVariableIdByIdent($iid, 'cfg_storage_mode');
+        if ($stId <= 0 || $this->findChildVariableIdByIdent($iid, 'ctl_storage_mode') <= 0) { return; }
+        $cur = (int)GetValue($stId);
+        $fresh = (IPS_GetVariable($stId)['VariableUpdated'] > $this->ReadAttributeInteger('SolisGcTryAt'));
+        if (!$wantCharge) {
+            if (!$active) { return; }
+            $saved = $this->ReadAttributeInteger('SolisGcSaved');
+            $this->WriteAttributeBoolean('SolisGcActive', false);
+            $this->WriteAttributeInteger('SolisGcTries', 0);
+            if ($saved > 0) {
+                $this->ipsWrite($iid, 'ctl_storage_mode', $saved);
+                // Ruecklesen/Wiederholen uebernimmt solisHoldHousekeeping(); fuer ein anschliessendes Halten ist das der Nutzerwert
+                $this->WriteAttributeInteger('SolisUserStorage', $saved);
+                $this->WriteAttributeInteger('SolisRestoreTarget', $saved);
+                $this->WriteAttributeInteger('SolisHoldTries', 0);
+                $this->WriteAttributeInteger('SolisHoldTryAt', $now);
+            }
+            return;
+        }
+        if ($this->ReadAttributeInteger('SolisRestoreTarget') > 0) { return; } // erst die laufende Wiederherstellung abwarten
+        if ($cur <= 0) { return; }
+        if (!$active) {
+            if (($cur & 32) !== 0) { return; } // Netzladen ist schon erlaubt
+            $this->WriteAttributeInteger('SolisGcSaved', $cur);
+            $this->WriteAttributeBoolean('SolisGcActive', true);
+            $this->WriteAttributeInteger('SolisGcTries', 1);
+            $this->WriteAttributeInteger('SolisGcTryAt', $now);
+            $this->ipsWrite($iid, 'ctl_storage_mode', $cur | 32);
+            $this->emsLog(EMS_LOG_BASIC, sprintf('Solis: Speicherbetrieb %d erlaubt kein Netzladen -- für das Zwangsladen vorübergehend %d', $cur, $cur | 32));
+            return;
+        }
+        if (($cur & 32) !== 0) { if ($this->ReadAttributeInteger('SolisGcTries') !== 0) { $this->WriteAttributeInteger('SolisGcTries', 0); } return; }
+        if (!$fresh || ($now - $this->ReadAttributeInteger('SolisGcTryAt')) < 60) { return; }
+        $tries = $this->ReadAttributeInteger('SolisGcTries');
+        if ($tries >= 3) {
+            if ($tries === 3) {
+                $this->emsLog(EMS_LOG_BASIC, sprintf('Solis: Netzlade-Erlaubnis kam nach drei Versuchen nicht an (Speicherbetrieb %d) -- Zwangsladen wirkt nur aus PV, bitte am Gerät prüfen', $cur));
+                $this->WriteAttributeInteger('SolisGcTries', 4);
+            }
+            return;
+        }
+        $this->WriteAttributeInteger('SolisGcTries', $tries + 1);
+        $this->WriteAttributeInteger('SolisGcTryAt', $now);
+        $this->ipsWrite($iid, 'ctl_storage_mode', $this->ReadAttributeInteger('SolisGcSaved') | 32);
     }
 
     /**
@@ -9144,7 +9205,7 @@ class EMS extends IPSModule
                 return;
             }
             if ($now - $this->ReadAttributeInteger('SolisHoldChangedAt') < 60) { return; }
-            if ($cur > 0 && $cur !== 17) { $this->WriteAttributeInteger('SolisUserStorage', $cur); }
+            if ($cur > 0 && $cur !== 17 && $this->ReadAttributeInteger('SolisRestoreTarget') <= 0) { $this->WriteAttributeInteger('SolisUserStorage', $cur); }
             $this->WriteAttributeInteger('SolisRestoreTarget', -1);
             $this->ipsWrite($iid, 'svc_discharge_inhibit', true);
             $this->WriteAttributeBoolean('SolisHoldActive', true);
@@ -9219,6 +9280,7 @@ class EMS extends IPSModule
         $holdCapable = ($this->findChildVariableIdByIdent($iid, 'svc_discharge_inhibit') > 0 && $this->findChildVariableIdByIdent($iid, 'cfg_storage_mode') > 0);
         $isHold = (($mode === GW_MODE_AC_EXPORT || $mode === GW_MODE_STANDBY) && $powerW <= 0);
         $wantHold = (!$wantCharge && $holdCapable && $isHold && $this->solisHoldAllowed($iid));
+        $this->solisGridChargeEnsure($iid, $wantCharge, $now);
         $this->solisHoldHousekeeping($iid);
         $this->solisHoldApply($iid, $wantHold, $now);
         $dischW = $wantCharge ? 0 : $this->solisDischargeW($iid, $mode, $powerW);

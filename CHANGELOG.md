@@ -2,6 +2,9 @@
 
 Ältere Versionen: [CHANGELOG-Archiv.md](CHANGELOG-Archiv.md)
 
+## 0.90.0 (2026-10-25)
+- **Solis: Netzladen stellt die Netzlade-Erlaubnis im Speicherbetrieb sicher (Befund an einer zweiten Anlage 25.10.2026, Auftrag Dietmar):** Der Speicherbetrieb des Solis (Register 43110) stand auf 1 („Eigenverbrauch ohne Netzladen“). Damit nahm der Wechselrichter das Zwangsladen zwar an, lud aber nur aus PV und deckte das Haus sogar aus dem Akku (+0,8 kW statt −17 kW). Mit 33 lud er sofort mit 17,4 kW aus dem Netz (gemessen). Jetzt prüft EMS vor dem Netzladen am Solis, ob Netzladen erlaubt ist (Bit 5, Wert 32). Fehlt die Erlaubnis, merkt sich EMS den bisherigen Wert, setzt ihn vorübergehend mit Bit 5 (andere Bits bleiben, aus 1 wird 33) und stellt ihn nach dem Laden wieder her. Gilt auch, wenn der Regelzyklus ausbleibt. Rücklesen und höchstens drei Wiederholungen wie beim „Akku halten“; da der Wechselrichter den Speicherbetrieb nur alle 5 Minuten zurückmeldet, wird nur eine Rückmeldung nach dem Schreiben bewertet (gilt jetzt auch für die Wiederherstellung nach dem Halten). GoodWe unverändert. Neun neue Prüfungen, vier Mutationen nachweislich rot.
+
 ## 0.89.2 (2026-10-25)
 - **Manuelles „Netz laden“ wird nie mehr abgebrochen (Dietmar 25.10.2026: „Wenn ich Netzladen sage, dann meine ich auch Netzladen und nicht Haltephase!“):** Der Wächter „Netzladen ohne Wirkung“ (seit dem Vorfall vom 20.09.) gab einen Ladebefehl nach 3 Minuten ohne messbare Ladeleistung auf und hielt 20 Minuten die Automatik. Das traf an einer zweiten Anlage auch einen ausdrücklich eingetragenen manuellen Ladeauftrag. Ein manueller Eintrag „Netz laden“ im Tagesplan ist jetzt davon ausgenommen: EMS lädt durchgehend, auch wenn gerade eine Haltephase läuft. Für vom EMS selbst geplantes Netzladen bleibt der Wächter wie bisher. Zwei neue Prüfungen, zwei Mutationen nachweislich rot.
 
