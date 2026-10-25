@@ -41,7 +41,7 @@ define('EMS_LOG_VERBOSE',     2);
 // Formular-Konvention (siehe EMS/SUITE.md "Einheitliche Formular-Optik"):
 // Was-ist-Neu-Panel ist versionsscharf dismissible, Referenzmuster InverterHub.
 define('EMS_COLOR_AUTO', 0x2E8B3D); // Gruen: Wert wurde automatisch uebernommen (🔗-Zeilen im Formular)
-define('EMS_NEWS_VERSION', '0.89.1');
+define('EMS_NEWS_VERSION', '0.89.2');
 
 // NRG-Stack Partnermodul-GUIDs (fuer automatische Discovery, siehe discoverPartners())
 define('GUID_CHARGERHUB',    '{9256C34E-5CFD-4F37-8BFE-E65390EBB37C}');
@@ -6058,6 +6058,7 @@ class EMS extends IPSModule
             'wb2_enable' => $wb2En,
             'reason'     => $reason,
             'source'     => 'tagesplan',
+            'manual'     => !empty($slot['man']),
         );
     }
 
@@ -8644,7 +8645,10 @@ class EMS extends IPSModule
         $hold = $this->ReadAttributeInteger('ChargeNoEffectHoldUntil');
         $isCharge = (($d['op_mode'] ?? -1) === EMS_OP_NET_CHARGE) && !empty($d['gw_enable'])
             && in_array((int)($d['gw_mode'] ?? 0), array(GW_MODE_AC_IMPORT, GW_MODE_BUY, GW_MODE_BAT_CHARGE), true)
-            && (($d['source'] ?? 'ems') !== 'netzbetreiber');
+            && (($d['source'] ?? 'ems') !== 'netzbetreiber')
+            // Manueller Eintrag "Netz laden" ist ein ausdruecklicher Befehl des Nutzers (Dietmar 25.10.2026: "Wenn ich
+            // Netzladen sage, dann meine ich auch Netzladen und nicht Haltephase") -- kein Abbruch, keine Haltephase.
+            && empty($d['manual']);
         if (!$isCharge || empty($s['bat_active'])) {
             if ($this->ReadAttributeInteger('ChargeNoEffectSince') > 0) { $this->WriteAttributeInteger('ChargeNoEffectSince', 0); }
             return $d;

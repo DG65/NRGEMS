@@ -837,6 +837,13 @@ check('laedt die Batterie mit voller Leistung: keine Aktion', $r4['gw_mode'] ===
 $ems = freshEms(); attr('ChargeNoEffectSince', time() - 500);
 $r5 = call($ems, 'applyChargeNoEffectGuard', [array_merge($dCh, ['source' => 'netzbetreiber']), $sNo]);
 check('Netzbetreiber-Vorgabe wird nicht ueberstimmt', $r5['gw_mode'] === GW_MODE_AC_IMPORT);
+// 0.89.2: manueller Eintrag "Netz laden" wird nie abgebrochen, auch nicht in einer laufenden Haltephase (Dietmar 25.10.2026)
+$r6 = call($ems, 'applyChargeNoEffectGuard', [array_merge($dCh, ['manual' => true]), $sNo]);
+attr('ChargeNoEffectSince', 0); attr('ChargeNoEffectHoldUntil', time() + 900);
+$r7 = call($ems, 'applyChargeNoEffectGuard', [array_merge($dCh, ['manual' => true]), $sNo]);
+$r8 = call($ems, 'applyChargeNoEffectGuard', [$dCh, $sNo]);
+check('manueller Eintrag Netz laden: kein Abbruch nach 3 min, keine Haltephase, auch nicht in laufender Haltephase; Tagesplan ohne Eintrag weiter mit Haltephase', $r6['gw_mode'] === GW_MODE_AC_IMPORT && $r7['gw_mode'] === GW_MODE_AC_IMPORT && $r8['gw_mode'] === GW_MODE_AUTO, json_encode([$r6['gw_mode'], $r7['gw_mode'], $r8['gw_mode']]));
+attr('ChargeNoEffectHoldUntil', 0);
 
 echo "\n8e) Andere Nutzer, andere Konstellationen: Netzladen ohne feste Einspeiseverguetung\n";
 $ems = freshEms();
@@ -3401,6 +3408,7 @@ pricesToday(0.30);
 $GLOBALS['ATTR'][EMS_IID]['DayPlan'] = json_encode(array_fill(0, 96, ['op' => EMS_OP_NET_CHARGE, 'gw' => GW_MODE_BAT_CHARGE, 'power' => 5000, 'man' => 1, 'reason' => 'Manueller Eintrag: Netz laden', 'price' => 0.3, 'soc' => 60]));
 $d = call($ems, 'optimize', [state(['bat_soc' => 50.0, 'pv_total_w' => 0.0, 'house_pow_w' => 300.0])]);
 check('Laufzeit: manueller Ladeslot gilt auch ohne Arbitrage-Tag (Modus 11)', $d['op_mode'] === EMS_OP_NET_CHARGE && $d['gw_mode'] === GW_MODE_BAT_CHARGE && $d['gw_enable'] === true && $d['source'] === 'tagesplan', fmt($d));
+check('Laufzeit: manueller Ladeslot traegt die Kennzeichnung manual bis zur Entscheidung (Waechter-Ausnahme 0.89.2)', !empty($d['manual']), fmt($d));
 $GLOBALS['ATTR'][EMS_IID]['DayPlan'] = json_encode(array_fill(0, 96, ['op' => EMS_OP_NET_CHARGE, 'gw' => GW_MODE_BAT_CHARGE, 'power' => 5000, 'reason' => 'Plan', 'price' => 0.3, 'soc' => 60]));
 $d = call($ems, 'optimize', [state(['bat_soc' => 50.0, 'pv_total_w' => 0.0, 'house_pow_w' => 300.0])]);
 check('Gegenprobe: derselbe Slot OHNE man-Marker wird an einem Nicht-Arbitrage-Tag nicht ausgefuehrt', isNativeAuto($d), fmt($d));

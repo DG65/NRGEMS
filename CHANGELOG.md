@@ -2,6 +2,9 @@
 
 Ältere Versionen: [CHANGELOG-Archiv.md](CHANGELOG-Archiv.md)
 
+## 0.89.2 (2026-10-25)
+- **Manuelles „Netz laden“ wird nie mehr abgebrochen (Dietmar 25.10.2026: „Wenn ich Netzladen sage, dann meine ich auch Netzladen und nicht Haltephase!“):** Der Wächter „Netzladen ohne Wirkung“ (seit dem Vorfall vom 20.09.) gab einen Ladebefehl nach 3 Minuten ohne messbare Ladeleistung auf und hielt 20 Minuten die Automatik. Das traf an einer zweiten Anlage auch einen ausdrücklich eingetragenen manuellen Ladeauftrag. Ein manueller Eintrag „Netz laden“ im Tagesplan ist jetzt davon ausgenommen: EMS lädt durchgehend, auch wenn gerade eine Haltephase läuft. Für vom EMS selbst geplantes Netzladen bleibt der Wächter wie bisher. Zwei neue Prüfungen, zwei Mutationen nachweislich rot.
+
 ## 0.89.1 (2026-10-25)
 - **Manueller Tagesplan: vergangene Einträge blockieren das Speichern nicht mehr (Befund bei einer zweiten Anlage 25.10.2026):** Der Editor schickt beim Speichern immer die ganze Liste zurück, also auch einen erledigten Eintrag vom Vortag. Bisher lehnte EMS dann die komplette Speicherung ab („Das Datum liegt in der Vergangenheit“), und kein neuer Eintrag kam an. Jetzt werden vergangene Einträge still entfernt, der Rest wird gespeichert. Die Antwort enthält im neuen Feld `removed` einen Hinweis je entferntem Eintrag. Echte Fehler (Uhrzeit, Ende, Aktion, Leistung, unlesbares Datum) lehnen weiterhin ab. Eine neue Prüfung, eine angepasste.
 
