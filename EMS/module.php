@@ -41,7 +41,7 @@ define('EMS_LOG_VERBOSE',     2);
 // Formular-Konvention (siehe EMS/SUITE.md "Einheitliche Formular-Optik"):
 // Was-ist-Neu-Panel ist versionsscharf dismissible, Referenzmuster InverterHub.
 define('EMS_COLOR_AUTO', 0x2E8B3D); // Gruen: Wert wurde automatisch uebernommen (🔗-Zeilen im Formular)
-define('EMS_NEWS_VERSION', '0.92.0');
+define('EMS_NEWS_VERSION', '0.93.0');
 
 // NRG-Stack Partnermodul-GUIDs (fuer automatische Discovery, siehe discoverPartners())
 define('GUID_CHARGERHUB',    '{9256C34E-5CFD-4F37-8BFE-E65390EBB37C}');
@@ -221,6 +221,7 @@ class EMS extends IPSModule
         $this->RegisterPropertyInteger('PLAN_NightGrid_EndHour',   6);
         $this->RegisterPropertyInteger('BAT_SOC_Target_Day',       80);
         $this->RegisterPropertyBoolean('BAT_SOC_Dynamic_Target',   true);
+        $this->RegisterPropertyBoolean('PLAN_NightGrid_NeedBased', true); // 0.93.0: Nachtfenster nur fuer den Bedarf bis zur naechsten Nacht
         $this->RegisterPropertyInteger('BAT_SOC_Safety_Margin_Pct',10);
         $this->RegisterPropertyInteger('BAT_SOC_Reserve_Backup',   10);
         // Umkreis, innerhalb dessen eine Rueckfahrt "heute noch" als
@@ -3831,6 +3832,36 @@ class EMS extends IPSModule
      * Akku bleibt, nur wenn Netzpreis < Einspeiseverguetung x 0,95). Gibt null zurueck, wenn der
      * Slot nicht im Fenster liegt, keinen Preis hat oder das Haus vom Akku versorgt werden soll.
      */
+    /**
+     * Bedarf bis zur naechsten Nacht (EMS 0.93.0, Befund an einer zweiten Anlage 25.10.2026): Welcher SOC am Ende des Nachtfensters
+     * ($endAbs) reicht, damit der Akku in Automatik bis $stopAbs (Beginn der naechsten Nacht) nie an die Reserve kommt? Simuliert mit
+     * vorsichtiger PV (p10) und der Lastprognose, Binaersuche ueber den Start-SOC. Rueckgabe in % inkl. Sicherheitsaufschlag
+     * (BAT_SOC_Safety_Margin_Pct), hoechstens 100; null = nicht bestimmbar (dann gilt das feste Nachtziel).
+     * Bisher hielt und lud das Nachtfenster stur bis zum festen Nachtziel, auch wenn der Akku am Folgetag gar nicht gebraucht wurde
+     * (Plan: 86 % um Mitternacht, gehalten 00-06 Uhr bei 21 ct, nachgeladen auf 100 %, Tagesende 96,6 %).
+     */
+    private function nightNeedSoc(int $endAbs, int $stopAbs, array $pv192, array $load192, array $ctx): ?float
+    {
+        if ($stopAbs <= $endAbs || $ctx['capKwh'] <= 0) { return null; }
+        $floor = $ctx['socMin'] + $ctx['socReserve'];
+        $c = $ctx; $c['houseLoadSlots'] = $load192;
+        $ok = function (float $start) use ($c, $endAbs, $stopAbs, $pv192, $load192, $floor): bool {
+            $soc = $start;
+            for ($i = $endAbs; $i < $stopAbs; $i++) {
+                $load = (float)($load192[$i] ?? $c['avgHouseW']);
+                $pv   = (float)($pv192[$i] ?? 0.0);
+                if ($load > $pv && $soc <= $floor + 0.01) { return false; } // Haus muesste aus dem Netz, weil der Akku leer ist
+                $soc = $this->simulateAutomatikSlot($i, $pv, null, $soc, $c)['soc'];
+            }
+            return true;
+        };
+        if (!$ok(100.0)) { return null; } // reicht selbst voll nicht: festes Nachtziel (voll laden) bleibt
+        $lo = $floor; $hi = 100.0;
+        if ($ok($lo)) { return min(100.0, $floor + (float)$this->ReadPropertyInteger('BAT_SOC_Safety_Margin_Pct')); }
+        for ($k = 0; $k < 14; $k++) { $mid = ($lo + $hi) / 2.0; if ($ok($mid)) { $hi = $mid; } else { $lo = $mid; } }
+        return min(100.0, $hi + (float)$this->ReadPropertyInteger('BAT_SOC_Safety_Margin_Pct'));
+    }
+
     private function nightWindowSlot(int $slot, $price, $soc, ?array $nw, array $ctx): ?array
     {
         if ($nw === null || $price === null) { return null; }
@@ -3848,6 +3879,8 @@ class EMS extends IPSModule
                         : array($endLabel, $nw['charge'][$slot], $nw['n'], $price * 100, $ctx['socTargetNight']))),
                 'price' => $price, 'soc' => round($soc, 1)), 'soc' => $soc);
         }
+        // 0.93.0: Liegt der Akku ueber dem Bedarf bis zur naechsten Nacht, wird nichts gehalten -- er versorgt das Haus.
+        if (!empty($ctx['nightNeedBased']) && $soc > $ctx['socTargetNight'] + 0.5) { return null; }
         // Haus nur dann aus dem Netz, wenn sich das Halten lohnt (sonst versorgt wie sonst der Akku das Haus).
         // Referenz Einspeisevergütung (Dietmar 19.09.2026): Netzstrom inkl. 5 % Batterieverlust billiger als die Vergütung.
         // Referenz Ersatz-Bezugspreis (Dietmar 20.10.2026, gleiche Referenz wie das Laden): die gehaltene Energie ersetzt
@@ -4835,14 +4868,6 @@ class EMS extends IPSModule
     // ----------------------------------------------------------------
 
     /**
-     * Zuordnung der EMS-Wallboxen fuer Konsumenten (EMS 0.91.0, Wunsch Dashboard 25.10.2026: Bedienung im Wallbox-Cockpit
-     * ordnete bisher ueber den Plantext zu und brach bei zwei gleichen Texten). Je aktiver Wallbox n:
-     * n, source (chargerhub|ocpphub|''), instanceID und powerID des zaehlenden Eintrags (0 = keiner), controlSource/
-     * controlInstanceID des schaltenden Eintrags (Dublette, z. B. OCPP zaehlt, ChargerHub schaltet; 0 = keiner), configuredInstanceID,
-     * mode (smart = Tibber steuert, ems = EMS steuert, observe = nur beobachten), emsControls (bool: Ladeart, Ziel und
-     * "Jetzt laden" wirken), modeManual (bool), chargeMode (0..5) und die Idents der Bedienvariablen (fehlen ohne Variablen).
-     */
-    /**
      * Wochen-Frist der Wallbox $n (EMS 0.92.0, Vertrag 1.0, Wunsch Dietmar/Dashboard 25.10.2026):
      * {contractVersion, n, revision, active (bool: mindestens ein Tag mit Uhrzeit), days[{day 1..7 ISO, label, time 'HH:MM'|'', kwh (0 = Ladeziel
      * aus targetKwh)}], targetKwh, targetTime (einheitliche Frist, gilt nur ohne Wochen-Frist)}. Ungueltiges $n: ok false.
@@ -4893,6 +4918,14 @@ class EMS extends IPSModule
         return array('ok' => true, 'errors' => array(), 'targets' => $now, 'revision' => $now['revision']);
     }
 
+    /**
+     * Zuordnung der EMS-Wallboxen fuer Konsumenten (EMS 0.91.0, Wunsch Dashboard 25.10.2026: Bedienung im Wallbox-Cockpit
+     * ordnete bisher ueber den Plantext zu und brach bei zwei gleichen Texten). Je aktiver Wallbox n:
+     * n, source (chargerhub|ocpphub|''), instanceID und powerID des zaehlenden Eintrags (0 = keiner), controlSource/
+     * controlInstanceID des schaltenden Eintrags (Dublette, z. B. OCPP zaehlt, ChargerHub schaltet; 0 = keiner), configuredInstanceID,
+     * mode (smart = Tibber steuert, ems = EMS steuert, observe = nur beobachten), emsControls (bool: Ladeart, Ziel und
+     * "Jetzt laden" wirken), modeManual (bool), chargeMode (0..5) und die Idents der Bedienvariablen (fehlen ohne Variablen).
+     */
     public function GetWallboxes(): array
     {
         $out = array('contractVersion' => '1.0', 'wallboxes' => array());
@@ -5547,6 +5580,23 @@ class EMS extends IPSModule
         }
         $abAll = $this->bedarfInsuranceSlots($price192, $pvLow192, $load192, $nowSlot, $soc, $ctx);
 
+        // 0.93.0: Nachtziel nach Bedarf bis zur naechsten Nacht (heute: Fensterende bis Mitternacht, morgen: bis Tagesende)
+        $ctxNwToday = $ctx; $nightNeedToday = null; $nightNeedTomorrow = null;
+        // Ausnahme: Ist Nachtstrom inkl. Hin- und Rueckwandlung billiger als die Einspeiseverguetung, lohnt das volle Laden auch ohne
+        // eigenen Bedarf (Einkauf nachts, Verkauf ueber Vorentladen/Einspeisung; Dietmar 24.10.2026: 10,5 ct kaufen, 18,36 ct verkaufen).
+        $resaleOk = function (array $pr, int $from, int $to) use ($feedTariff): bool {
+            if ($feedTariff <= 0) { return false; }
+            for ($i = $from; $i < $to; $i++) { if (isset($pr[$i]) && $pr[$i] !== null && (float)$pr[$i] < $feedTariff * $this->convEff() * $this->convEff()) { return true; } }
+            return false;
+        };
+        if ($this->ReadPropertyBoolean('PLAN_NightGrid_NeedBased') && $this->nightWindowEndHour() > 0) {
+            $nwEnd = $this->nightWindowEndHour() * 4;
+            $nightNeedToday = $resaleOk($price192, 0, $nwEnd) ? null : $this->nightNeedSoc($nwEnd, 96, $pvLow192, $load192, $ctx);
+            $nightNeedTomorrow = $resaleOk($price192, 96, 96 + $nwEnd) ? null : $this->nightNeedSoc(96 + $nwEnd, 192, $pvLow192, $load192, $ctx);
+            if ($nightNeedToday !== null && $nightNeedToday < $ctx['socTargetNight']) {
+                $ctxNwToday['socTargetNight'] = $nightNeedToday; $ctxNwToday['nightNeedBased'] = true;
+            }
+        }
         $plan = array();
         $nwToday = false; // beim ersten kuenftigen Slot mit dem dann gueltigen SOC berechnet
         for ($slot = 0; $slot < 96; $slot++) {
@@ -5575,7 +5625,7 @@ class EMS extends IPSModule
                 $soc = $r['soc'];
                 continue;
             }
-            if ($nwToday === false) { $nwToday = $this->nightWindowPlan($prices, $slot, $soc, $ctx); }
+            if ($nwToday === false) { $nwToday = $this->nightWindowPlan($prices, $slot, $soc, $ctxNwToday); }
             if (!empty($ctx['restwert'])) { $ctx['rwCharge'] = array_merge(array_keys((array)($nwToday['charge'] ?? array())), $rwTmrCharge); }
             if (isset($manual[0][$slot])) {
                 $r = $this->manualPlanSlot($slot, $price, $pvW, $soc, $manual[0][$slot], $ctx);
@@ -5587,7 +5637,7 @@ class EMS extends IPSModule
                 $plan[$slot] = $r['plan']; $soc = $r['soc'];
                 continue;
             }
-            $result = $this->nightWindowSlot($slot, $price, $soc, $nwToday, $ctx);
+            $result = $this->nightWindowSlot($slot, $price, $soc, $nwToday, $ctxNwToday);
             if ($result === null) {
                 $result = $hasArbitrageToday
                     ? $this->simulateDaySlot($slot, $price, $pvW, $soc, $cheapRank, $ctx, $expensiveReserve[$slot] ?? 0.0)
@@ -5634,7 +5684,11 @@ class EMS extends IPSModule
         $hasArbitrageTomorrow = $this->hasArbitrageInPrices($tomorrowPrices);
 
         $tomorrowPlan = array();
-        $nwTomorrow = $this->nightWindowPlan($tomorrowPrices, 0, $soc, $ctxTomorrow);
+        $ctxNwTomorrow = $ctxTomorrow;
+        if ($nightNeedTomorrow !== null && $nightNeedTomorrow < $ctxTomorrow['socTargetNight']) {
+            $ctxNwTomorrow['socTargetNight'] = $nightNeedTomorrow; $ctxNwTomorrow['nightNeedBased'] = true;
+        }
+        $nwTomorrow = $this->nightWindowPlan($tomorrowPrices, 0, $soc, $ctxNwTomorrow);
         if (!empty($ctxTomorrow['restwert'])) {
             $rwc = array_map(function ($k) { return 96 + (int)$k; }, array_keys((array)($nwTomorrow['charge'] ?? array())));
             $ctxTomorrow['rwCharge'] = array_merge((array)($ctx['rwCharge'] ?? array()), $rwc);
@@ -5658,7 +5712,7 @@ class EMS extends IPSModule
                 $tomorrowPlan[$slot] = $r['plan']; $soc = $r['soc'];
                 continue;
             }
-            $result = $this->nightWindowSlot($slot, $price, $soc, $nwTomorrow, $ctxTomorrow);
+            $result = $this->nightWindowSlot($slot, $price, $soc, $nwTomorrow, $ctxNwTomorrow);
             if ($result === null) {
                 $result = $hasArbitrageTomorrow
                     ? $this->simulateDaySlot($slot, $price, $pvW, $soc, $tomorrowCheapRank, $ctxTomorrow, $tomorrowExpensiveReserve[$slot] ?? 0.0)

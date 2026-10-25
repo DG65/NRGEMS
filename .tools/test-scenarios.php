@@ -864,6 +864,23 @@ check('Referenz Ersatzpreis: es gibt einen Nicht-Ladeslot im Fenster (Testvoraus
 check('Referenz Ersatzpreis (Nutzer ohne Verguetung): uebriger Slot im Fenster (12 ct < 36 ct x 0,95 - 3 ct = 31,2 ct) -> Akku halten, Haus aus dem Netz, Begruendung nennt den Ersatzpreis', ($hU = call($ems, 'nightWindowSlot', [$slU, 0.12, 60.0, $nwU, $ctxU])) !== null && $hU['plan']['op'] === EMS_OP_HOLD && $hU['plan']['gw'] === GW_MODE_STANDBY && strpos($hU['plan']['reason'], 'Ersatzpreis') !== false, json_encode($hU['plan'] ?? null));
 check('Referenz Ersatzpreis: Grenze 31,2 ct (31 ct noch halten, 32 ct schon Akku)', call($ems, 'nightWindowSlot', [$slU, 0.31, 60.0, $nwU, $ctxU]) !== null && call($ems, 'nightWindowSlot', [$slU, 0.32, 60.0, $nwU, $ctxU]) === null);
 check('Referenz Ersatzpreis ohne Preisvergleichswert: kein Halten', call($ems, 'nightWindowSlot', [$slU, 0.12, 60.0, $nwU, array_merge($ctxU, ['replacePrice' => null])]) === null);
+// 0.93.0: Nachtfenster nach Bedarf bis zur naechsten Nacht (Befund Pauls Anlage 25.10.2026)
+prop('BAT_SOC_Safety_Margin_Pct', 10);
+$ctxN = array_merge($ctxU, ['capKwh' => 100.0, 'socMin' => 10.0, 'socReserve' => 10.0, 'avgHouseW' => 500.0, 'dischargeKw' => 10.0, 'houseLoadSlots' => []]);
+$pvN = array_fill(0, 192, 0.0); $ldN = array_fill(0, 192, 500.0);
+$needN = call($ems, 'nightNeedSoc', [24, 96, $pvN, $ldN, $ctxN]);
+check('Bedarf 06-24 Uhr: 18 h x 0,5 kW = 9 kWh = 9 % ueber der Reserve 20 % plus 10 % Aufschlag = ~39 %', $needN !== null && abs($needN - 39.0) < 0.5, (string)$needN);
+$pvSun = $pvN; for ($i = 40; $i < 64; $i++) { $pvSun[$i] = 5000.0; }
+$needSun = call($ems, 'nightNeedSoc', [24, 96, $pvSun, $ldN, $ctxN]);
+check('mit PV ab 10 Uhr: weniger Bedarf als ohne PV (PV laedt nach)', $needSun !== null && $needSun < $needN, (string)$needSun);
+check('Bedarf groesser als der volle Akku (20 kW Last): nicht bestimmbar, festes Nachtziel bleibt', call($ems, 'nightNeedSoc', [24, 96, $pvN, array_fill(0, 192, 20000.0), $ctxN]) === null);
+$ctxNB = array_merge($ctxU, ['socTargetNight' => 39.0, 'nightNeedBased' => true]);
+check('Akku 86 % ueber dem Bedarf 39 %: kein Halten, Akku versorgt das Haus', call($ems, 'nightWindowSlot', [$slU, 0.21, 86.0, $nwU, $ctxNB]) === null);
+check('Akku 30 % unter dem Bedarf 39 %: Halten wie bisher', ($hN = call($ems, 'nightWindowSlot', [$slU, 0.21, 30.0, $nwU, $ctxNB])) !== null && $hN['plan']['op'] === EMS_OP_HOLD);
+$nwN = call($ems, 'nightWindowPlan', [$tagU, 0, 86.0, $ctxNB]);
+check('Akku 86 % ueber dem Bedarf: keine Ladeviertelstunde im Nachtfenster', $nwN !== null && $nwN['n'] === 0, json_encode($nwN));
+$nwN2 = call($ems, 'nightWindowPlan', [$tagU, 0, 20.0, $ctxNB]);
+check('Akku 20 %, Bedarf 39 %: nur so viel laden wie fehlt (19 % von 40 kWh = 7,6 kWh, 1 Viertelstunde bei 10 kW... hoechstens 4)', $nwN2 !== null && $nwN2['n'] >= 1 && $nwN2['n'] <= 4, json_encode($nwN2));
 check('Referenz Ersatzpreis: Halten unabhaengig von der Einspeiseverguetung (Verguetung 18,36 ct, Preis 30 ct, Ersatz 50 ct -> halten)', ($hV = call($ems, 'nightWindowSlot', [$slU, 0.30, 60.0, $nwU, array_merge($ctxU, ['feedTariff' => 0.1836, 'replacePrice' => 0.50])])) !== null && $hV['plan']['op'] === EMS_OP_HOLD, json_encode($hV['plan'] ?? null));
 prop('ANL_Verguetung_ct', 8.0); // niedrige Verguetung (z. B. Ue20/Direktvermarktung)
 check('Verguetung 8 ct, Referenz Verguetung: Netzladen sehr streng (Grenze 7,6 ct)', abs(call($ems, 'gridChargeLimitEur', [['feedTariff' => 0.08, 'refMode' => 0]]) - 0.076) < 0.0005);
