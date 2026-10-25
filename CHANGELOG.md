@@ -2,6 +2,9 @@
 
 Ältere Versionen: [CHANGELOG-Archiv.md](CHANGELOG-Archiv.md)
 
+## 0.91.0 (2026-10-25)
+- **Neue Funktion `EMS_GetWallboxes()` (Vertrag 1.0, Auftrag Dietmar, Wunsch Dashboard):** Liefert je aktiver EMS-Wallbox n die Zuordnung zur zählenden ChargerHub- bzw. OCPPHub-Instanz (`instanceID`, `powerID`), zur schaltenden Instanz (`controlInstanceID`, z. B. wenn OCPP zählt und ChargerHub schaltet) und zur eigenen Wahl im Formular (`configuredInstanceID`). Dazu kommen die Steuerart (`mode`: smart = Tibber steuert, ems = EMS steuert, observe = nur beobachten), `emsControls` (ob Ladeart, Ladeziel und „Jetzt laden“ überhaupt wirken), `chargeMode` und die IDs der Bedienvariablen. Das Wallbox-Cockpit im Dashboard ordnete bisher über den Plantext zu und verlor die Bedienung, sobald zwei Wallboxen denselben Text zeigten. Mit `emsControls` kann es die Bedienung bei Smart Charging ausgrauen. Rein zusätzlich, nichts geändert. Drei neue Prüfungen, eine Mutation nachweislich rot.
+
 ## 0.90.1 (2026-10-25)
 - **Solis: Netzlade-Erlaubnis schreibt nie 49/51 (Hinweis InverterHub 25.10.2026):** Stand der Speicherbetrieb auf 17 (Reserve, z. B. nach einem nicht zurückgestellten „Akku halten“), hätte 0.90.0 17 | 32 = 49 geschrieben. Mit 49/51 lädt der Solis von sich aus mit voller Leistung bis zum Reserve-SOC aus dem Netz (gemessen 20.10.2026). Jetzt fällt das Reserve-Bit (16) beim Setzen der Erlaubnis weg: 17 → 33, 19 → 35; 1 → 33, 3 → 35, 64 → 96 wie bisher. Gleiche Zielwerte wie die Absicherung im InverterHub-Treiber (0.77.0-beta.50), die nur greift, wenn Bit 5 fehlt. Eine neue Prüfung, eine Mutation nachweislich rot.
 

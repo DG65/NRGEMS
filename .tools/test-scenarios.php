@@ -1565,6 +1565,16 @@ attr('WB1PhaseSentAt', time() - 121); attr('LastWB1Switch', 0); $GLOBALS['ACTION
 call($ems, 'applyWallboxControl', [&$d, $sPv()]);
 check('nach 121 s: Phasenmodus wird erneut geschrieben', array_filter($wbActs(), fn($a) => $a[1] === 'ctl_phase_mode') !== [], json_encode($GLOBALS['ACTIONS']));
 prop('WB1_PhaseSetting', 0); prop('WB1_ChargeMode', 0);
+// 0.91.0: EMS_GetWallboxes -- Zuordnung n <-> ChargerHub-Instanz fuers Dashboard-Cockpit
+$gw = call($ems, 'GetWallboxes', []);
+$w1 = $gw['wallboxes'][0] ?? [];
+check('GetWallboxes: Vertrag 1.0, WB1 = ChargerHub #600, EMS steuert, Ladeart 0', $gw['contractVersion'] === '1.0' && ($w1['n'] ?? 0) === 1 && $w1['instanceID'] === 600 && $w1['source'] === 'chargerhub' && $w1['controlInstanceID'] === 600 && $w1['mode'] === 'ems' && $w1['emsControls'] === true && $w1['chargeMode'] === 0, json_encode($gw));
+prop('WB1_Mode', 1);
+$w1 = call($ems, 'GetWallboxes', [])['wallboxes'][0];
+check('GetWallboxes: Smart Charging (Tibber steuert) -> emsControls false, mode smart, modeManual', $w1['mode'] === 'smart' && $w1['emsControls'] === false && $w1['modeManual'] === true, json_encode($w1));
+prop('WB1_Mode', 0); prop('WB_Active', false);
+check('GetWallboxes: Wallboxen aus -> leere Liste', call($ems, 'GetWallboxes', [])['wallboxes'] === []);
+prop('WB_Active', true);
 // Formular
 $f = json_encode(json_decode($ems->GetConfigurationForm(), true), JSON_UNESCAPED_UNICODE);
 check('Formular enthaelt Ladeart, Stromstaerke, PV-Anteil und Phasen fuer beide Wallboxen', strpos($f, '"name":"WB1_ChargeMode"') !== false && strpos($f, '"name":"WB2_ChargeMode"') !== false && strpos($f, '"name":"WB1_PhaseSetting"') !== false && strpos($f, '"name":"WB2_PvSharePct"') !== false);

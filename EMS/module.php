@@ -41,7 +41,7 @@ define('EMS_LOG_VERBOSE',     2);
 // Formular-Konvention (siehe EMS/SUITE.md "Einheitliche Formular-Optik"):
 // Was-ist-Neu-Panel ist versionsscharf dismissible, Referenzmuster InverterHub.
 define('EMS_COLOR_AUTO', 0x2E8B3D); // Gruen: Wert wurde automatisch uebernommen (🔗-Zeilen im Formular)
-define('EMS_NEWS_VERSION', '0.90.1');
+define('EMS_NEWS_VERSION', '0.91.0');
 
 // NRG-Stack Partnermodul-GUIDs (fuer automatische Discovery, siehe discoverPartners())
 define('GUID_CHARGERHUB',    '{9256C34E-5CFD-4F37-8BFE-E65390EBB37C}');
@@ -4829,6 +4829,45 @@ class EMS extends IPSModule
     //  externer Akteur besitzt den Schreibkanal, EMS erkennt nur und
     //  weicht zurueck, uebersteuert NIE)
     // ----------------------------------------------------------------
+
+    /**
+     * Zuordnung der EMS-Wallboxen fuer Konsumenten (EMS 0.91.0, Wunsch Dashboard 25.10.2026: Bedienung im Wallbox-Cockpit
+     * ordnete bisher ueber den Plantext zu und brach bei zwei gleichen Texten). Je aktiver Wallbox n:
+     * n, source (chargerhub|ocpphub|''), instanceID und powerID des zaehlenden Eintrags (0 = keiner), controlSource/
+     * controlInstanceID des schaltenden Eintrags (Dublette, z. B. OCPP zaehlt, ChargerHub schaltet; 0 = keiner), configuredInstanceID,
+     * mode (smart = Tibber steuert, ems = EMS steuert, observe = nur beobachten), emsControls (bool: Ladeart, Ziel und
+     * "Jetzt laden" wirken), modeManual (bool), chargeMode (0..5) und die Idents der Bedienvariablen (fehlen ohne Variablen).
+     */
+    public function GetWallboxes(): array
+    {
+        $out = array('contractVersion' => '1.0', 'wallboxes' => array());
+        if (!$this->ReadPropertyBoolean('WB_Active')) { return $out; }
+        for ($n = 1; $n <= min(2, max(1, $this->ReadPropertyInteger('WB_Count'))); $n++) {
+            $count = $this->getChargerEntry($n);
+            $ctl   = $this->getControlEntry($n);
+            $m     = $this->wallboxMode($n);
+            $vars  = array();
+            foreach (array('plan' => 'Plan', 'chargeMode' => 'ChargeMode', 'targetKwh' => 'TargetKwh', 'targetTime' => 'TargetTime', 'command' => 'Command') as $k => $id) {
+                $vid = $this->findChildVariableIdByIdent($this->InstanceID, 'EMS_WB' . $n . '_' . $id);
+                if ($vid > 0) { $vars[$k] = (int)$vid; }
+            }
+            $out['wallboxes'][] = array(
+                'n'                 => $n,
+                'source'            => (string)($count['source'] ?? ''),
+                'instanceID'        => (int)($count['instanceID'] ?? 0),
+                'powerID'           => (int)($count['powerID'] ?? 0),
+                'controlSource'     => (string)($ctl['source'] ?? ''),
+                'controlInstanceID' => (int)($ctl['instanceID'] ?? 0),
+                'configuredInstanceID' => $this->ReadPropertyInteger('WB' . $n . '_Instance'), // eigene Wahl im Formular (0 = automatisch)
+                'mode'              => (string)$m['mode'],
+                'emsControls'       => ($m['mode'] === 'ems' && !empty($m['writable'])),
+                'modeManual'        => !empty($m['manual']),
+                'chargeMode'        => $this->ReadPropertyInteger('WB' . $n . '_ChargeMode'),
+                'variables'         => $vars,
+            );
+        }
+        return $out;
+    }
 
     /**
      * Vertrag fuer Anzeige-Konsumenten (Dashboard u.a.): WAS das EMS
