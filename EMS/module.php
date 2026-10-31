@@ -796,6 +796,18 @@ class EMS extends IPSModule
                 'items'    => array(
                     array(
                         'type'    => 'Label',
+                        'caption' => '• GEÄNDERT: EMS schaltet das Logging seiner Variablen nicht mehr selbst ein. Fehlt es, erscheint im Formular „📈 Logging für den Tagesplan“ mit einem Knopf. Eingeschaltetes Logging bleibt, wie es ist.'
+                    ),
+                    array(
+                        'type'    => 'Label',
+                        'caption' => '• NEU: Nachtfenster nach Bedarf: EMS hält und lädt nachts nur so viel, wie der Akku bis zur nächsten Nacht braucht. Volles Laden bleibt, wenn Nachtstrom inklusive Verlust unter der Einspeisevergütung liegt.'
+                    ),
+                    array(
+                        'type'    => 'Label',
+                        'caption' => '• NEU: Ladeziel der Wallbox mit Frist je Wochentag (Tabelle unter dem Ladeziel).'
+                    ),
+                    array(
+                        'type'    => 'Label',
                         'caption' => '• GEÄNDERT: Tibber Grid Rewards betrifft nur das Auto. Während eines Grid-Rewards-Ereignisses folgt der Hausakku jetzt weiter seinem Tagesplan (z. B. Nachtladen), die Wallbox bleibt unangetastet.'
                     ),
                     array(
