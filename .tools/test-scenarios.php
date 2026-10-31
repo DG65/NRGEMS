@@ -97,7 +97,8 @@ function GetValue($id)            { return $GLOBALS['VAL'][$id] ?? 0; }
 function GetValueInteger($id)     { return (int)($GLOBALS['VAL'][$id] ?? 0); }
 function SetValue($id, $v)        { $GLOBALS['VAL'][$id] = $v; return true; }
 function RequestAction($id, $v)   { $GLOBALS['VAL'][$id] = $v; return true; }
-function AC_SetLoggingStatus($a, $b, $c) { return true; }
+function AC_SetLoggingStatus($a, $b, $c) { $GLOBALS['LOGGED'][$b] = $c; $GLOBALS['LOGSET'][] = $b; return true; }
+function AC_GetLoggingStatus($a, $b) { return !empty($GLOBALS['LOGGED'][$b]); }
 // Archiv: $GLOBALS['ARCHIVE'][varId] = [[ts, wert], ...]; Rueckgabe wie echtes
 // Archiv absteigend (neueste zuerst), Zeitraum inklusiv, Limit 0 = alle.
 $GLOBALS['ARCHIVE'] = [];
@@ -844,6 +845,20 @@ $r7 = call($ems, 'applyChargeNoEffectGuard', [array_merge($dCh, ['manual' => tru
 $r8 = call($ems, 'applyChargeNoEffectGuard', [$dCh, $sNo]);
 check('manueller Eintrag Netz laden: kein Abbruch nach 3 min, keine Haltephase, auch nicht in laufender Haltephase; Tagesplan ohne Eintrag weiter mit Haltephase', $r6['gw_mode'] === GW_MODE_AC_IMPORT && $r7['gw_mode'] === GW_MODE_AC_IMPORT && $r8['gw_mode'] === GW_MODE_AUTO, json_encode([$r6['gw_mode'], $r7['gw_mode'], $r8['gw_mode']]));
 attr('ChargeNoEffectHoldUntil', 0);
+
+echo "\n8d2) Logging nur auf Klick (0.94.0, Symcon-Review 30.10.2026)\n";
+$ems = freshEms(); prop('EMS_Risk_Acknowledged', true); $GLOBALS['LOGGED'] = []; $GLOBALS['LOGSET'] = [];
+$archMock = 7700; $GLOBALS['INSTMOD'][$archMock] = '{43192F0B-135B-4CE7-A0A7-1475603F3060}';
+$vArch = vari('Hauslast', EMS_IID, 'EMS_HousePower', 0.0, 2);
+$src = file_get_contents(defined('EMS_TEST_MODULE_PATH') ? EMS_TEST_MODULE_PATH : __DIR__ . '/../EMS/module.php');
+check('ApplyChanges schaltet das Logging nicht mehr selbst ein: kein ensureArchiving-Aufruf', strpos($src, 'ensureArchiving') === false);
+if (call($ems, 'getArchiveInstanceId') > 0) {
+    check('Variable ohne Logging: Panel mit Knopf erscheint', (call($ems, 'archivingPanel')['items'][1]['onClick'] ?? '') === 'echo EMS_EnableArchiving($id);');
+    $tx = call($ems, 'EnableArchiving');
+    check('Knopf schaltet ein und meldet Klartext', !empty($GLOBALS['LOGGED'][call($ems, 'findChildVariableIdByIdent', [EMS_IID, 'EMS_HousePower'])]) && strpos($tx, 'eingeschaltet') !== false, $tx);
+    check('alles geloggt: Panel verschwindet', call($ems, 'archivingMissing') === [] || call($ems, 'archivingPanel') === null);
+} else { check('Testvoraussetzung: Archiv im Mock gefunden', false); }
+unset($GLOBALS['INSTMOD'][$archMock]);
 
 echo "\n8e) Andere Nutzer, andere Konstellationen: Netzladen ohne feste Einspeiseverguetung\n";
 $ems = freshEms();

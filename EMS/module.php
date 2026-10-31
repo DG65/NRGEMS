@@ -41,7 +41,7 @@ define('EMS_LOG_VERBOSE',     2);
 // Formular-Konvention (siehe EMS/SUITE.md "Einheitliche Formular-Optik"):
 // Was-ist-Neu-Panel ist versionsscharf dismissible, Referenzmuster InverterHub.
 define('EMS_COLOR_AUTO', 0x2E8B3D); // Gruen: Wert wurde automatisch uebernommen (🔗-Zeilen im Formular)
-define('EMS_NEWS_VERSION', '0.93.0');
+define('EMS_NEWS_VERSION', '0.94.0');
 
 // NRG-Stack Partnermodul-GUIDs (fuer automatische Discovery, siehe discoverPartners())
 define('GUID_CHARGERHUB',    '{9256C34E-5CFD-4F37-8BFE-E65390EBB37C}');
@@ -622,12 +622,6 @@ class EMS extends IPSModule
         }
 
         try {
-            $this->ensureArchiving();
-        } catch (Throwable $e) {
-            $this->emsLog(EMS_LOG_BASIC, 'Archivierung fuer EMS-Variablen konnte nicht gesetzt werden: ' . $e->getMessage());
-        }
-
-        try {
             $this->recordFixedPriceChange();
         } catch (Throwable $e) {
             $this->emsLog(EMS_LOG_BASIC, 'Festpreis-Historie konnte nicht fortgeschrieben werden: ' . $e->getMessage());
@@ -783,6 +777,10 @@ class EMS extends IPSModule
                 ),
             )
         ));
+
+        // 0a. Logging nur auf Klick (Symcon-Review 30.10.2026), erscheint nur, solange etwas fehlt
+        $archPanel = $this->archivingPanel();
+        if ($archPanel !== null) { array_unshift($form['elements'], $archPanel); }
 
         // 0b. Wallboxen bedienen (Dietmar 24.10.2026: "Schalter nicht gefunden"): ganz oben, direkt nach "Neu", wirkt sofort
         $wbPanel = $this->wallboxControlPanel();
@@ -6228,38 +6226,49 @@ class EMS extends IPSModule
      * legt nur an, was fehlt, wie bei den NRG.*-Variablenprofilen.
      */
     /**
-     * Live-Fund 10.09.2026: der Tagesplan zeigte fuer vergangene Slots nie
-     * Hauslast und nie "Grid Rewards war aktiv", obwohl getArchivedSlotsToday()
-     * (0.29.0/0.29.2) technisch korrekt implementiert war -- Ursache war, dass
-     * fuer EMS_HousePower und EMS_GridRewards schlicht NIE Archivierung
-     * eingeschaltet wurde (Symcon-Voreinstellung: neue Variablen sind nicht
-     * geloggt, das ist ein manueller Opt-in in der Konsole). Der SOC-Wert kam
-     * nur zufaellig durch, weil InverterHub diese Variable schon lange vorher
-     * selbst archiviert. Statt das jedem Nutzer als manuellen Schritt
-     * aufzuerlegen, schaltet EMS die Archivierung fuer seine eigenen, fuer den
-     * Tagesplan noetigen Variablen bei jedem ApplyChanges() selbst ein
-     * (idempotent, AC_SetLoggingStatus() bereits aktiver Variablen ist ein
-     * No-Op) -- konsistent mit "Gilt das fuer JEDEN Nutzer?", nicht nur fuer
-     * Dietmars Anlage.
+     * Logging liegt in der Hoheit des Benutzers (Symcon-Review 30.10.2026, SUITE.md Store-Checkliste 19): EMS schaltet es nie von selbst ein.
+     * Ohne Archiv zeigt der Tagesplan fuer vergangene Viertelstunden keine Hauslast und kein "Grid Rewards war aktiv" (Live-Fund 10.09.2026),
+     * die Steuerung laeuft davon unberuehrt weiter. EMS_Mode: Entscheidungs-Historie zum Zuordnen von Vorfaellen.
      */
-    private function ensureArchiving()
+    private function archivingIdents(): array
     {
-        if (!function_exists('AC_SetLoggingStatus')) {
-            return; // kein Archive Control installiert -- Tagesplan zeigt dann weiterhin "(vergangen, keine Archivdaten)"
-        }
+        return array('EMS_HousePower', 'EMS_GridRewards', 'EMS_Mode', 'EMS_ExportOverlapToday_Wh', 'EMS_ExportOverlapToday_Min', 'EMS_BatCostCt', 'EMS_BatCostOppCt');
+    }
+
+    /** Variablen aus archivingIdents(), die noch nicht geloggt werden (Variablen-IDs). */
+    private function archivingMissing(): array
+    {
         $archiveId = $this->getArchiveInstanceId();
-        if ($archiveId <= 0) {
-            return;
+        if ($archiveId <= 0 || !function_exists('AC_GetLoggingStatus')) { return array(); }
+        $out = array();
+        foreach ($this->archivingIdents() as $ident) {
+            $varId = $this->findChildVariableIdByIdent($this->InstanceID, $ident);
+            if ($varId > 0 && !@AC_GetLoggingStatus($archiveId, $varId)) { $out[] = $varId; }
         }
-        // EMS_Mode (12.09.2026): Entscheidungs-Historie, sonst lassen sich
-        // Vorfaelle wie 11.09. 05-07 Uhr im Nachhinein nicht zuordnen.
-        foreach (array('EMS_HousePower', 'EMS_GridRewards', 'EMS_Mode', 'EMS_ExportOverlapToday_Wh', 'EMS_ExportOverlapToday_Min', 'EMS_BatCostCt', 'EMS_BatCostOppCt') as $ident) {
-            $varId = @$this->GetIDForIdent($ident);
-            if ($varId > 0) {
-                @AC_SetLoggingStatus($archiveId, $varId, true);
-            }
-        }
-        @IPS_ApplyChanges($archiveId);
+        return $out;
+    }
+
+    /** Formular-Hinweis samt Knopf; null, wenn alles geloggt wird oder kein Archiv da ist. */
+    private function archivingPanel(): ?array
+    {
+        $missing = $this->archivingMissing();
+        if (empty($missing)) { return null; }
+        return array('type' => 'ExpansionPanel', 'caption' => '📈 Logging für den Tagesplan', 'expanded' => false, 'items' => array(
+            array('type' => 'Label', 'caption' => sprintf('%d EMS-Variablen werden nicht geloggt. Ohne Logging zeigt der Tagesplan für vergangene Viertelstunden keine Hauslast und keine Grid-Rewards-Zeiten. Die Steuerung läuft davon unberührt weiter.', count($missing))),
+            array('type' => 'Button', 'caption' => '📈 Logging für diese Variablen einschalten', 'onClick' => 'echo EMS_EnableArchiving($id);'),
+        ));
+    }
+
+    /** Schaltet das Logging auf ausdruecklichen Klick ein, nie etwas aus. */
+    public function EnableArchiving(): string
+    {
+        $archiveId = $this->getArchiveInstanceId();
+        if ($archiveId <= 0 || !function_exists('AC_SetLoggingStatus')) { return 'Kein Archiv gefunden, Logging wurde nicht eingeschaltet.'; }
+        $missing = $this->archivingMissing();
+        if (empty($missing)) { return 'Das Logging ist für alle Variablen des Tagesplans schon eingeschaltet.'; }
+        foreach ($missing as $varId) { AC_SetLoggingStatus($archiveId, $varId, true); }
+        IPS_ApplyChanges($archiveId);
+        return sprintf('Logging für %d Variablen eingeschaltet. Der Tagesplan zeigt Ist-Werte ab jetzt.', count($missing));
     }
 
     private function ensureDayPlanEvent()
