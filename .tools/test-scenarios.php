@@ -3422,6 +3422,17 @@ $applied = call($ems, 'applyPlanSlot', [$sFB]);
 check('Live-Sicherheitsnetz laesst Xmax=0 auch ohne realen PV-Ueberschuss (10940W Last > 4979W PV) zu, wenn guenstig genug', $applied !== null && $applied['gw_mode'] === GW_MODE_CHARGE_PV && $applied['gw_enable'] === true, json_encode($applied));
 
 // ===========================================================================
+echo "\n8ae) PV-Ueberschuss in den Akku ueber die Automatik, nicht Laden-Solar (Dietmar 02.11.2026)\n";
+$ems = freshEms();
+prop('BAT_Capacity_kWh', 40.0); prop('BAT_Price_EUR', 9998.0); prop('BAT_Cycles', 8000);
+$ctxPv = ['enwgActive' => false, 'enwgStartH' => 0, 'enwgEndH' => 0, 'avgHouseW' => 2700.0, 'houseLoadSlots' => [2700.0],
+    'fcMinPower' => 100.0, 'socTargetDay' => 86.0, 'hystSoc' => 2.0, 'socMin' => 0.0, 'socReserve' => 10.0,
+    'socTargetNight' => 100.0, 'capKwh' => 40.0, 'chargeKw' => 25.0, 'dischargeKw' => 25.0, 'maxW' => 34500.0,
+    'feedTariff' => 0.1836, 'thCharge' => 0.15, 'thDischarge' => 0.25, 'spread' => 0.03, 'restwert' => false];
+$rPv = call($ems, 'simulateDaySlot', [56, 0.4270, 3400.0, 60.0, [], $ctxPv, 0.0]); // Live 02.11.: PV 3,4 kW, Haus 2,7 kW, 42,7 ct
+check('PV-Ueberschuss unter Tagesziel bei 42,7 ct: Automatik, nicht Laden-Solar (Haus zuerst aus PV)', $rPv['plan']['op'] === EMS_OP_AUTO && $rPv['plan']['gw'] === GW_MODE_AUTO, json_encode($rPv['plan']));
+check('Simulierter SOC steigt trotzdem (Ueberschuss geht in den Akku)', $rPv['soc'] > 60.0, (string)$rPv['soc']);
+
 echo "\n20z) Bedarfsabsicherung und manuelle Plan-Eintraege (0.73.0/0.74.0, Dietmar 05.10.2026)\n";
 $ems = freshEms();
 $ctxA = ['avgHouseW' => 300.0, 'socMin' => 0.0, 'socReserve' => 10.0, 'capKwh' => 40.0, 'chargeKw' => 20.0, 'chargeCurve' => [],

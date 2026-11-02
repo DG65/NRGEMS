@@ -41,7 +41,7 @@ define('EMS_LOG_VERBOSE',     2);
 // Formular-Konvention (siehe EMS/SUITE.md "Einheitliche Formular-Optik"):
 // Was-ist-Neu-Panel ist versionsscharf dismissible, Referenzmuster InverterHub.
 define('EMS_COLOR_AUTO', 0x2E8B3D); // Gruen: Wert wurde automatisch uebernommen (🔗-Zeilen im Formular)
-define('EMS_NEWS_VERSION', '0.94.0');
+define('EMS_NEWS_VERSION', '0.94.1');
 
 // NRG-Stack Partnermodul-GUIDs (fuer automatische Discovery, siehe discoverPartners())
 define('GUID_CHARGERHUB',    '{9256C34E-5CFD-4F37-8BFE-E65390EBB37C}');
@@ -794,6 +794,10 @@ class EMS extends IPSModule
                 'caption'  => '🆕 Neu in Version ' . EMS_NEWS_VERSION,
                 'expanded' => true,
                 'items'    => array(
+                    array(
+                        'type'    => 'Label',
+                        'caption' => '• KORRIGIERT: Bei PV-Überschuss lädt der Akku wieder über die Automatik des Wechselrichters statt per „Laden - Solar“. Die PV versorgt zuerst das Haus, nur der Rest geht in den Akku. Vorher konnte der Akku die ganze PV ziehen, während das Haus teuren Netzstrom bezog.'
+                    ),
                     array(
                         'type'    => 'Label',
                         'caption' => '• GEÄNDERT: EMS schaltet das Logging seiner Variablen nicht mehr selbst ein. Fehlt es, erscheint im Formular „📈 Logging für den Tagesplan“ mit einem Knopf. Eingeschaltetes Logging bleibt, wie es ist.'
@@ -4216,7 +4220,12 @@ class EMS extends IPSModule
                     // fuer beide Faelle korrekt.
                     ? sprintf('PV-Ueberschuss %.0fW -> Batterie (Ziel %.0f%%, +%.0f%% Reserve für %.1fkWh späteren Bedarf)', $surplusW, $ctx['socTargetDay'], $priceBonusPct, $expensiveReserveKwh)
                     : sprintf('PV-Ueberschuss %.0fW -> Batterie (Ziel %.0f%%)', $surplusW, $ctx['socTargetDay']);
-                return array('plan' => array('op' => EMS_OP_PV_SELFUSE, 'gw' => GW_MODE_CHARGE_PV, 'power' => 0,
+                // Automatik statt Laden-Solar (Dietmar 02.11.2026): den Ueberschuss laedt die WR-Automatik von selbst in den
+                // Akku. Modus 2 gaebe dem Akku Vorrang vor dem Haus -- live 02.11. lud er die ganze PV (3,4 kW), das Haus
+                // lief mit 2,6 kW zu 42 ct aus dem Netz. Laden-Solar bleibt der Zykluskosten-Regel (Netz guenstiger) vorbehalten.
+                $cheapVsCycle = ($price !== null && $this->cycleCostCt() > 0.0 && ($price * 100.0 * 1.05) < $this->cycleCostCt());
+                return array('plan' => array('op' => $cheapVsCycle ? EMS_OP_PV_SELFUSE : EMS_OP_AUTO,
+                    'gw' => $cheapVsCycle ? GW_MODE_CHARGE_PV : GW_MODE_AUTO, 'power' => 0,
                     'reason' => $reason, 'price' => $price, 'soc' => round($soc, 1)), 'soc' => $soc);
             }
             // Dauerhafte Einspeisegrenze am Netzanschluss (nur gesetzt von

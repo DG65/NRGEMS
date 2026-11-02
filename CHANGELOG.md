@@ -2,6 +2,9 @@
 
 Ältere Versionen: [CHANGELOG-Archiv.md](CHANGELOG-Archiv.md)
 
+## 0.94.1 (2026-11-02)
+- **PV-Überschuss in den Akku über die Automatik statt „Laden - Solar“ (Befund Dietmar 02.11.2026):** Lag der Akku unter seinem Tagesziel, plante EMS bei PV-Überschuss den GoodWe-Modus 2 („Laden - Solar“). Der gibt dem Akku Vorrang vor dem Haus: Live lud der Akku die ganze PV (3,4 kW), das Haus bezog 2,6 kW zu 42 ct aus dem Netz. Den Überschuss lädt die WR-Automatik von selbst in den Akku, also plant EMS dort jetzt Automatik. „Laden - Solar“ bleibt nur für die Zykluskosten-Regel (Netzstrom billiger als die Batterie), wo der Netzbezug des Hauses gewollt ist; das gilt auch bei PV-Überschuss. Zwei neue Prüfungen, eine Mutation nachweislich rot.
+
 ## 0.94.0 (2026-10-31)
 - **Logging nur noch auf ausdrücklichen Klick (Symcon-Review an mehrere Module, 30.10.2026):** EMS schaltete das Logging seiner Tagesplan-Variablen bisher bei jedem Übernehmen selbst ein. Das liegt in der Hoheit des Benutzers und ist entfernt. Fehlt das Logging, erscheint im Formular ein Hinweis mit dem Knopf „📈 Logging für diese Variablen einschalten“ (`EMS_EnableArchiving()`). Bereits eingeschaltetes Logging bleibt, wie es ist. Ohne Logging zeigt der Tagesplan für vergangene Viertelstunden keine Hauslast und keine Grid-Rewards-Zeiten, die Steuerung läuft unverändert. Vier neue Prüfungen, eine Mutation nachweislich rot.
 
