@@ -3433,6 +3433,29 @@ $rPv = call($ems, 'simulateDaySlot', [56, 0.4270, 3400.0, 60.0, [], $ctxPv, 0.0]
 check('PV-Ueberschuss unter Tagesziel bei 42,7 ct: Automatik, nicht Laden-Solar (Haus zuerst aus PV)', $rPv['plan']['op'] === EMS_OP_AUTO && $rPv['plan']['gw'] === GW_MODE_AUTO, json_encode($rPv['plan']));
 check('Simulierter SOC steigt trotzdem (Ueberschuss geht in den Akku)', $rPv['soc'] > 60.0, (string)$rPv['soc']);
 
+echo "\n8af) KI-Assistent: erklaert nur, Schluessel im Attribut, Anfrage/Antwort (0.95.0, Dietmar 04.11.2026)\n";
+$ems = freshEms();
+check('KI aus: Ask antwortet ohne Netzzugriff mit Hinweis', strpos(call($ems, 'Ask', ['x']), 'ist aus') !== false);
+prop('AI_Provider', 1);
+check('Claude ohne Schluessel: Hinweis statt Anfrage', strpos(call($ems, 'Ask', ['x']), 'Schlüssel') !== false);
+call($ems, 'SetAiKey', ['  sk-test  ']);
+check('Schluessel landet getrimmt im Attribut, nicht in einer Property', ($GLOBALS['ATTR'][EMS_IID]['AI_ApiKey'] ?? '') === 'sk-test' && !isset($GLOBALS['PROP'][EMS_IID]['AI_ApiKey']));
+$req = call($ems, 'buildAiRequest', [1, 'Warum?', '{"a":1}']);
+$body = json_decode($req['body'], true);
+check('Claude-Anfrage: Endpunkt, Version, Schluessel-Header, Standardmodell', $req['url'] === 'https://api.anthropic.com/v1/messages' && in_array('anthropic-version: 2023-06-01', $req['headers'], true) && in_array('x-api-key: sk-test', $req['headers'], true) && $body['model'] === EMS_AI_DEFAULT_CLAUDE, $req['body']);
+check('Claude-Anfrage: kein temperature, Kontext und Frage in der Nutzernachricht', !isset($body['temperature']) && strpos($body['messages'][0]['content'], '{"a":1}') !== false && strpos($body['messages'][0]['content'], 'Warum?') !== false);
+prop('AI_Model', 'claude-haiku-5-5');
+check('Eigenes Modell wird verwendet', json_decode(call($ems, 'buildAiRequest', [1, 'q', '{}'])['body'], true)['model'] === 'claude-haiku-5-5');
+prop('AI_Model', ''); prop('AI_OllamaUrl', 'http://nas:11434/');
+$o = call($ems, 'buildAiRequest', [2, 'q', '{}']);
+check('Ollama: lokale Adresse ohne doppelten Schraegstrich, kein Schluessel im Header', $o['url'] === 'http://nas:11434/api/chat' && strpos(implode('|', $o['headers']), 'sk-test') === false, $o['url']);
+check('Antwort Claude: Textbloecke werden zusammengesetzt, Denkbloecke ignoriert', call($ems, 'parseAiResponse', [1, 200, '{"stop_reason":"end_turn","content":[{"type":"thinking","thinking":""},{"type":"text","text":"Akku lädt."}]}']) === 'Akku lädt.');
+check('Antwort Claude: Ablehnung wird gemeldet', strpos(call($ems, 'parseAiResponse', [1, 200, '{"stop_reason":"refusal","content":[]}']), 'abgelehnt') !== false);
+check('Antwort: 401 meldet falschen Schluessel', strpos(call($ems, 'parseAiResponse', [1, 401, '{"error":{"message":"invalid x-api-key"}}']), '401') !== false);
+check('Antwort Ollama: message.content', call($ems, 'parseAiResponse', [2, 200, '{"message":{"content":" Hallo "}}']) === 'Hallo');
+$ctx = json_decode(call($ems, 'GetExplainContext'), true);
+check('Kontext enthaelt keinen Schluessel und die Vorzeichen-Erklaerung', strpos(json_encode($ctx), 'sk-test') === false && isset($ctx['hinweis_vorzeichen'], $ctx['anlage'], $ctx['plan_naechste_6h']), json_encode($ctx));
+
 echo "\n20z) Bedarfsabsicherung und manuelle Plan-Eintraege (0.73.0/0.74.0, Dietmar 05.10.2026)\n";
 $ems = freshEms();
 $ctxA = ['avgHouseW' => 300.0, 'socMin' => 0.0, 'socReserve' => 10.0, 'capKwh' => 40.0, 'chargeKw' => 20.0, 'chargeCurve' => [],

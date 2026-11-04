@@ -41,7 +41,9 @@ define('EMS_LOG_VERBOSE',     2);
 // Formular-Konvention (siehe EMS/SUITE.md "Einheitliche Formular-Optik"):
 // Was-ist-Neu-Panel ist versionsscharf dismissible, Referenzmuster InverterHub.
 define('EMS_COLOR_AUTO', 0x2E8B3D); // Gruen: Wert wurde automatisch uebernommen (🔗-Zeilen im Formular)
-define('EMS_NEWS_VERSION', '0.94.1');
+define('EMS_NEWS_VERSION', '0.95.0');
+define('EMS_AI_DEFAULT_CLAUDE', 'claude-opus-5-5');
+define('EMS_AI_DEFAULT_OLLAMA', 'llama3.1');
 
 // NRG-Stack Partnermodul-GUIDs (fuer automatische Discovery, siehe discoverPartners())
 define('GUID_CHARGERHUB',    '{9256C34E-5CFD-4F37-8BFE-E65390EBB37C}');
@@ -595,6 +597,12 @@ class EMS extends IPSModule
         // ── Formular-Optik (Verbund-Konvention, siehe SUITE.md) ──────
         $this->RegisterAttributeString('SeenNews', '');
         $this->RegisterAttributeBoolean('ForumHintDismissed', false);
+
+        // ── KI-Assistent (0.95.0, Dietmar 04.11.2026): erklaert nur, steuert nie ──
+        $this->RegisterPropertyInteger('AI_Provider', 0);                       // 0 aus, 1 Claude (Anthropic), 2 Ollama (lokal)
+        $this->RegisterPropertyString('AI_Model', '');                          // leer = Standardmodell des Anbieters
+        $this->RegisterPropertyString('AI_OllamaUrl', 'http://localhost:11434');
+        $this->RegisterAttributeString('AI_ApiKey', '');                        // Zugangsdaten im Attribut, nie als Property (Verbund-Regel)
     }
 
     public function Destroy()
@@ -794,6 +802,10 @@ class EMS extends IPSModule
                 'caption'  => '🆕 Neu in Version ' . EMS_NEWS_VERSION,
                 'expanded' => true,
                 'items'    => array(
+                    array(
+                        'type'    => 'Label',
+                        'caption' => '• NEU: KI-Assistent (optional, standardmäßig aus): Unter „🤖 KI-Assistent“ beantwortet Claude (eigener Schlüssel) oder ein lokales Ollama-Modell Fragen wie „Warum lädt der Akku gerade?“ aus Tagesplan, Preisen und Messwerten. Die KI erklärt nur, sie steuert nichts.'
+                    ),
                     array(
                         'type'    => 'Label',
                         'caption' => '• KORRIGIERT: Bei PV-Überschuss lädt der Akku wieder über die Automatik des Wechselrichters statt per „Laden - Solar“. Die PV versorgt zuerst das Haus, nur der Rest geht in den Akku. Vorher konnte der Akku die ganze PV ziehen, während das Haus teuren Netzstrom bezog.'
@@ -1287,6 +1299,9 @@ class EMS extends IPSModule
             }
         }
         unset($element);
+
+        // 3b. KI-Assistent (optional, erklaert nur)
+        $form['elements'][] = $this->aiPanel();
 
         // 4. Symcon-Forum-Hinweis — nach den Haupteinstellungen, einmalig dismissible
         if (!$this->ReadAttributeBoolean('ForumHintDismissed')) {
@@ -6278,6 +6293,155 @@ class EMS extends IPSModule
             array('type' => 'Label', 'caption' => sprintf('%d EMS-Variablen werden nicht geloggt. Ohne Logging zeigt der Tagesplan für vergangene Viertelstunden keine Hauslast und keine Grid-Rewards-Zeiten. Die Steuerung läuft davon unberührt weiter.', count($missing))),
             array('type' => 'Button', 'caption' => '📈 Logging für diese Variablen einschalten', 'onClick' => 'echo EMS_EnableArchiving($id);'),
         ));
+    }
+
+    // ── KI-Assistent ─────────────────────────────────────────────────────────
+    // Die KI bekommt nur geprueften Kontext aus GetExplainContext() und schreibt Text. Sie steuert nichts:
+    // keine Schreibfunktion, kein Rueckweg in optimize()/applyDecision().
+
+    private function aiPanel(): array
+    {
+        $provider = $this->ReadPropertyInteger('AI_Provider');
+        $hasKey   = $this->ReadAttributeString('AI_ApiKey') !== '';
+        $items = array(
+            array('type' => 'Label', 'caption' => 'Optional: Ein KI-Modell beantwortet Fragen wie „Warum lädt der Akku gerade?“ aus dem Tagesplan, den Preisen und den Messwerten. Die KI erklärt nur, sie steuert nichts. Ohne Auswahl ändert sich nichts.'),
+            array('type' => 'Select', 'name' => 'AI_Provider', 'caption' => 'Anbieter', 'options' => array(
+                array('caption' => 'Aus', 'value' => 0),
+                array('caption' => 'Claude (Anthropic, Internet, eigener Schlüssel)', 'value' => 1),
+                array('caption' => 'Ollama (lokal im eigenen Netz)', 'value' => 2),
+            )),
+            array('type' => 'ValidationTextBox', 'name' => 'AI_Model', 'caption' => 'Modell (leer = ' . EMS_AI_DEFAULT_CLAUDE . ' bzw. ' . EMS_AI_DEFAULT_OLLAMA . ')'),
+            array('type' => 'ValidationTextBox', 'name' => 'AI_OllamaUrl', 'caption' => 'Ollama-Adresse', 'visible' => $provider === 2),
+            array('type' => 'RowLayout', 'visible' => $provider === 1, 'items' => array(
+                array('type' => 'PasswordTextBox', 'name' => 'FormAiKey', 'caption' => 'API-Schlüssel (Anthropic)'),
+                array('type' => 'Button', 'caption' => '🔑 Schlüssel speichern', 'onClick' => 'echo EMS_SetAiKey($id, $FormAiKey);'),
+            )),
+            array('type' => 'Label', 'visible' => $provider === 1, 'caption' => $hasKey ? '✅ Schlüssel hinterlegt (leer speichern löscht ihn).' : '⚠️ Noch kein Schlüssel hinterlegt.'),
+            array('type' => 'Label', 'caption' => 'Gesendet werden nur Anlagenwerte: Leistungen, Ladestand, Preise, Prognosen und die Planzeilen der nächsten Stunden. Keine Namen, Adressen oder Zugangsdaten. Bei Claude gehen diese Werte an Anthropic, bei Ollama bleiben sie im eigenen Netz. Die Kosten der Abfragen trägt der Schlüsselinhaber.'),
+            array('type' => 'RowLayout', 'items' => array(
+                array('type' => 'ValidationTextBox', 'name' => 'FormAiQuestion', 'caption' => 'Frage (leer = „Was macht das EMS gerade und warum?“)', 'width' => '500px'),
+                array('type' => 'Button', 'caption' => '💬 Fragen', 'onClick' => 'echo EMS_Ask($id, $FormAiQuestion);'),
+            )),
+        );
+        return array('type' => 'ExpansionPanel', 'caption' => '🤖 KI-Assistent (erklärt den Plan)', 'expanded' => false, 'items' => $items);
+    }
+
+    /** Speichert den API-Schluessel im Attribut; leer loescht ihn. */
+    public function SetAiKey(string $key): string
+    {
+        $key = trim($key);
+        $this->WriteAttributeString('AI_ApiKey', $key);
+        return $key === '' ? 'Schlüssel gelöscht.' : 'Schlüssel gespeichert.';
+    }
+
+    /** Geprueftes Faktenpaket fuer die KI (JSON). Vertrag 1.0, rein lesend. */
+    public function GetExplainContext(): string
+    {
+        return json_encode($this->aiContext(), JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
+    }
+
+    private function aiContext(): array
+    {
+        $val = function (string $ident) {
+            try { $id = @$this->GetIDForIdent($ident); } catch (Throwable $e) { return null; }
+            return ($id !== false && $id > 0) ? GetValue($id) : null;
+        };
+        $now = array();
+        foreach (array('EMS_Status', 'EMS_LastAction', 'EMS_BatSOC', 'EMS_PVPower', 'EMS_HousePower', 'EMS_GridPower', 'EMS_BatPower',
+                       'EMS_TibberPrice', 'EMS_BatCostCt', 'EMS_WB1_Plan', 'EMS_WB2_Plan', 'EMS_Situation') as $ident) {
+            $v = $val($ident);
+            if ($v !== null && $v !== '') { $now[$ident] = $v; }
+        }
+        $plan = $this->GetDayPlan();
+        $rows = array();
+        $slots = is_array($plan) ? ($plan['slots'] ?? $plan) : array();
+        $t0 = time() - 900;
+        foreach ($slots as $e) {
+            if (!is_array($e) || !isset($e['time']) || $e['time'] < $t0) { continue; }
+            $rows[] = array('zeit' => date('d.m. H:i', (int)$e['time']), 'aktion' => (string)($e['reason'] ?? ''),
+                'preis_ct' => $e['price'] ?? null, 'soc_plan' => $e['soc'] ?? null);
+            if (count($rows) >= 24) { break; }
+        }
+        return array(
+            'jetzt'      => date('d.m.Y H:i'),
+            'anlage'     => array('akku_kwh' => $this->batteryCapacityKwh(), 'einspeiseverguetung_ct' => round($this->planFeedTariffEur() * 100, 2),
+                                  'netzanschluss_w' => $this->ReadPropertyInteger('EMS_Max_Power_W')),
+            'messwerte'  => $now,
+            'hinweis_vorzeichen' => 'EMS_GridPower: negativ = Bezug aus dem Netz, positiv = Einspeisung. EMS_BatPower: negativ = Akku lädt, positiv = Akku entlädt.',
+            'plan_naechste_6h' => $rows,
+        );
+    }
+
+    /** Fragt die KI. Leere Frage = "Was macht das EMS gerade und warum?". Liefert immer Text, nie eine Ausnahme. */
+    public function Ask(string $question): string
+    {
+        $provider = $this->ReadPropertyInteger('AI_Provider');
+        if ($provider === 0) { return 'Der KI-Assistent ist aus. Wähle unter „🤖 KI-Assistent“ einen Anbieter.'; }
+        if ($provider === 1 && $this->ReadAttributeString('AI_ApiKey') === '') { return 'Für Claude fehlt noch der API-Schlüssel.'; }
+        $question = trim($question) !== '' ? trim($question) : 'Was macht das EMS gerade und warum?';
+        $req = $this->buildAiRequest($provider, $question, $this->GetExplainContext());
+        $ch = curl_init($req['url']);
+        curl_setopt_array($ch, array(CURLOPT_POST => true, CURLOPT_POSTFIELDS => $req['body'], CURLOPT_HTTPHEADER => $req['headers'],
+            CURLOPT_RETURNTRANSFER => true, CURLOPT_TIMEOUT => 90, CURLOPT_CONNECTTIMEOUT => 10));
+        $raw  = curl_exec($ch);
+        $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $err  = curl_error($ch);
+        curl_close($ch);
+        if ($raw === false) { return 'KI nicht erreichbar: ' . $err; }
+        return $this->parseAiResponse($provider, $code, (string)$raw);
+    }
+
+    private function aiSystemPrompt(): string
+    {
+        return "Du erklärst einem Hausbesitzer auf Deutsch, was sein Energiemanagement (EMS) für Batterie, Wechselrichter und Wallbox tut und warum. "
+            . "Stütze dich ausschließlich auf das mitgelieferte JSON. Fehlt eine Angabe, sag das, statt zu raten. "
+            . "Die Spalte 'aktion' im Plan ist die Begründung des EMS selbst; gib sie verständlich wieder und nenne Preise in ct/kWh. "
+            . "Antworte kurz (höchstens etwa 8 Sätze), ohne Fachjargon. Du steuerst nichts und gibst keine Befehle; "
+            . "wenn etwas unplausibel wirkt, sag es offen.";
+    }
+
+    private function buildAiRequest(int $provider, string $question, string $contextJson): array
+    {
+        $model = trim($this->ReadPropertyString('AI_Model'));
+        $user  = "Daten:\n" . $contextJson . "\n\nFrage: " . $question;
+        if ($provider === 2) {
+            $base = rtrim($this->ReadPropertyString('AI_OllamaUrl'), '/');
+            return array('url' => $base . '/api/chat', 'headers' => array('Content-Type: application/json'),
+                'body' => json_encode(array('model' => $model !== '' ? $model : EMS_AI_DEFAULT_OLLAMA, 'stream' => false,
+                    'messages' => array(array('role' => 'system', 'content' => $this->aiSystemPrompt()), array('role' => 'user', 'content' => $user))),
+                    JSON_UNESCAPED_UNICODE));
+        }
+        // Anthropic Messages API (Raw HTTP: in Symcon-Modulen gibt es kein Composer/SDK). Erklaeren = einfache Aufgabe: Aufwand niedrig.
+        // fallbacks "default": lehnt das Modell ab, beantwortet der Server die Anfrage mit einem passenden anderen Modell.
+        return array('url' => 'https://api.anthropic.com/v1/messages',
+            'headers' => array('Content-Type: application/json', 'anthropic-version: 2023-06-01',
+                'anthropic-beta: server-side-fallback-2026-07-01', 'x-api-key: ' . $this->ReadAttributeString('AI_ApiKey')),
+            'body' => json_encode(array('model' => $model !== '' ? $model : EMS_AI_DEFAULT_CLAUDE, 'max_tokens' => 4000,
+                'output_config' => array('effort' => 'low'), 'fallbacks' => 'default',
+                'system' => $this->aiSystemPrompt(), 'messages' => array(array('role' => 'user', 'content' => $user))),
+                JSON_UNESCAPED_UNICODE));
+    }
+
+    private function parseAiResponse(int $provider, int $code, string $raw): string
+    {
+        $d = json_decode($raw, true);
+        if ($code !== 200 || !is_array($d)) {
+            $msg = is_array($d) ? (string)($d['error']['message'] ?? $d['error'] ?? '') : '';
+            if ($code === 401) { return 'Der API-Schlüssel wurde abgelehnt (401). Bitte prüfen.'; }
+            return sprintf('KI-Anfrage fehlgeschlagen (HTTP %d)%s', $code, $msg !== '' ? ': ' . $msg : '.');
+        }
+        if ($provider === 2) {
+            $t = trim((string)($d['message']['content'] ?? ''));
+            return $t !== '' ? $t : 'Die KI hat keine Antwort geliefert.';
+        }
+        if (($d['stop_reason'] ?? '') === 'refusal') { return 'Die KI hat die Anfrage abgelehnt.'; }
+        $out = '';
+        foreach (($d['content'] ?? array()) as $b) {
+            if (($b['type'] ?? '') === 'text') { $out .= $b['text']; }
+        }
+        $out = trim($out);
+        if (($d['stop_reason'] ?? '') === 'max_tokens') { $out .= ' …(gekürzt)'; }
+        return $out !== '' ? $out : 'Die KI hat keine Antwort geliefert.';
     }
 
     /** Schaltet das Logging auf ausdruecklichen Klick ein, nie etwas aus. */

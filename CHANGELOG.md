@@ -2,6 +2,9 @@
 
 Ältere Versionen: [CHANGELOG-Archiv.md](CHANGELOG-Archiv.md)
 
+## 0.95.0 (2026-11-04)
+- **KI-Assistent, Stufe 1 (Auftrag Dietmar 04.11.2026):** Neuer, standardmäßig ausgeschalteter Bereich „🤖 KI-Assistent“. Ein KI-Modell beantwortet Fragen wie „Warum lädt der Akku gerade?“; eine leere Frage bedeutet „Was macht das EMS gerade und warum?“. Anbieter: Claude (Anthropic, eigener API-Schlüssel, Standardmodell `claude-opus-5-5`, Aufwand niedrig, serverseitige Ausweichmodelle bei Ablehnung) oder ein lokales Ollama-Modell (Standard `llama3.1`). Die KI bekommt nur das geprüfte Faktenpaket aus `EMS_GetExplainContext()` (Vertrag 1.0): Messwerte, Anlagendaten, Vorzeichen-Erklärung und die Planzeilen der nächsten sechs Stunden mit der Begründung des EMS. Sie steuert nichts; es gibt keinen Weg von der Antwort zurück in die Regelung. Der Schlüssel liegt im Attribut (`EMS_SetAiKey()`), nie in einer Eigenschaft und nie im Faktenpaket. Neue Funktionen `EMS_Ask(frage)`, `EMS_SetAiKey(schlüssel)`, `EMS_GetExplainContext()`. Zwölf neue Prüfungen, eine Mutation nachweislich rot.
+
 ## 0.94.1 (2026-11-02)
 - **PV-Überschuss in den Akku über die Automatik statt „Laden - Solar“ (Befund Dietmar 02.11.2026):** Lag der Akku unter seinem Tagesziel, plante EMS bei PV-Überschuss den GoodWe-Modus 2 („Laden - Solar“). Der gibt dem Akku Vorrang vor dem Haus: Live lud der Akku die ganze PV (3,4 kW), das Haus bezog 2,6 kW zu 42 ct aus dem Netz. Den Überschuss lädt die WR-Automatik von selbst in den Akku, also plant EMS dort jetzt Automatik. „Laden - Solar“ bleibt nur für die Zykluskosten-Regel (Netzstrom billiger als die Batterie), wo der Netzbezug des Hauses gewollt ist; das gilt auch bei PV-Überschuss. Zwei neue Prüfungen, eine Mutation nachweislich rot.
 
