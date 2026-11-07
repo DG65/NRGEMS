@@ -41,7 +41,7 @@ define('EMS_LOG_VERBOSE',     2);
 // Formular-Konvention (siehe EMS/SUITE.md "Einheitliche Formular-Optik"):
 // Was-ist-Neu-Panel ist versionsscharf dismissible, Referenzmuster InverterHub.
 define('EMS_COLOR_AUTO', 0x2E8B3D); // Gruen: Wert wurde automatisch uebernommen (🔗-Zeilen im Formular)
-define('EMS_NEWS_VERSION', '0.96.0');
+define('EMS_NEWS_VERSION', '0.96.1');
 define('EMS_AI_DEFAULT_CLAUDE', 'claude-opus-5-5');
 define('EMS_AI_DEFAULT_OLLAMA', 'llama3.1');
 
@@ -605,7 +605,8 @@ class EMS extends IPSModule
         $this->RegisterAttributeString('AI_ApiKey', '');                        // Zugangsdaten im Attribut, nie als Property (Verbund-Regel)
 
         // ── Selbstbilanz (0.96.0, Dietmar 07.11.2026: "du lernst nicht aus der Vergangenheit") ──
-        $this->RegisterAttributeString('SelfBalance', '{}');                   // {"Y-m-d": {ist, auto, imp, exp}} je Tag, 60 Tage
+        $this->RegisterAttributeString('SelfBalance', '{}');
+        $this->RegisterAttributeString('FcLearn', '{}');                       // {"Y-m-d": {pvFc, loadFc, pvAct, loadAct}} Prognose gegen Ist je Tag                   // {"Y-m-d": {ist, auto, imp, exp}} je Tag, 60 Tage
         $this->RegisterVariableFloat('EMS_SelfBalance30', 'EMS-Bilanz 30 Tage gegenüber WR-Automatik (EUR, + = gespart)', '', 110);
     }
 
@@ -807,6 +808,10 @@ class EMS extends IPSModule
                 'caption'  => '🆕 Neu in Version ' . EMS_NEWS_VERSION,
                 'expanded' => true,
                 'items'    => array(
+                    array(
+                        'type'    => 'Label',
+                        'caption' => '• KORRIGIERT: Nachtladen. Der Bedarf bis zur nächsten Nacht wird jetzt mit einer gelernten Prognose-Korrektur gerechnet (PV und Hauslast der letzten Tage gegen die Prognose); bis genug Tage gelernt sind, vorsichtig mit 70 % der PV und 115 % der Last. Außerdem rechnet der Plan richtig, dass die WR-Automatik den Akku auch über dem Tagesziel weiter mit PV-Überschuss lädt.'
+                    ),
                     array(
                         'type'    => 'Label',
                         'caption' => '• NEU: „📊 EMS-Bilanz“: Das EMS vergleicht jeden Tag die echten Netzkosten mit dem, was die reine Wechselrichter-Automatik gekostet hätte, und zeigt die Summe der letzten 30 Tage (Variable „EMS-Bilanz 30 Tage“). Braucht das Logging von Netz-, PV- und Akkuleistung sowie des Preises.'
@@ -4278,6 +4283,15 @@ class EMS extends IPSModule
                     'reason' => sprintf('Akku am Ziel (SOC=%.0f%%), Bezug %.2fct < Einspeisevergütung %.2fct -- Bereitschaft: PV-Überschuss (Ernte %.0fW) ins Netz, Lücken aus dem Netz%s', $soc, $price * 100, $ctx['feedTariff'] * 100, $pvW, $capped),
                     'price' => $price, 'soc' => round($soc, 1)), 'soc' => $soc);
             }
+            // 0.96.1 (Dietmar 07.11.2026): Die WR-Automatik laedt den Ueberschuss auch ueber dem Tagesziel weiter in den Akku,
+            // eingespeist wird erst bei vollem Akku. Die Simulation liess den SOC hier stehen und unterschaetzte damit den Akku
+            // fuer den Abend (Folgeentscheidungen wie Nachtfenster/Restwert rechneten mit zu wenig Energie).
+            if (!isset($ctx['feedInLimitW']) && $soc < 99.95) {
+                $soc = min(100.0, $soc + $surplusW / 1000.0 * 0.25 / max(0.001, $ctx['capKwh']) * 100.0);
+                return array('plan' => array('op' => EMS_OP_AUTO, 'gw' => GW_MODE_AUTO, 'power' => 0,
+                    'reason' => sprintf('Automatik: Akku über dem Tagesziel, PV-Überschuss %.0fW lädt ihn weiter (SOC %.0f%%), eingespeist wird erst bei vollem Akku', $surplusW, $soc),
+                    'price' => $price, 'soc' => round($soc, 1)), 'soc' => $soc);
+            }
             return array('plan' => array('op' => EMS_OP_AUTO, 'gw' => GW_MODE_AUTO, 'power' => 0,
                 'reason' => sprintf('Automatik: Akku am Ziel (SOC=%.0f%%), PV-Überschuss (Ernte %.0fW) wird von der WR-Automatik eingespeist%s', $soc, $pvW, $capped),
                 'price' => $price, 'soc' => round($soc, 1)), 'soc' => $soc);
@@ -5633,10 +5647,15 @@ class EMS extends IPSModule
             for ($i = $from; $i < $to; $i++) { if (isset($pr[$i]) && $pr[$i] !== null && (float)$pr[$i] < $feedTariff * $this->convEff() * $this->convEff()) { return true; } }
             return false;
         };
+        $this->forecastLearnRecord($pvLow192, $load192);
         if ($this->ReadPropertyBoolean('PLAN_NightGrid_NeedBased') && $this->nightWindowEndHour() > 0) {
             $nwEnd = $this->nightWindowEndHour() * 4;
-            $nightNeedToday = $resaleOk($price192, 0, $nwEnd) ? null : $this->nightNeedSoc($nwEnd, 96, $pvLow192, $load192, $ctx);
-            $nightNeedTomorrow = $resaleOk($price192, 96, 96 + $nwEnd) ? null : $this->nightNeedSoc(96 + $nwEnd, 192, $pvLow192, $load192, $ctx);
+            // 0.96.1: Bedarf mit der gelernten Prognose-Korrektur (PV und Last der letzten Tage gegen die Prognose), siehe forecastFactors()
+            $fcF = $this->forecastFactors();
+            $pvNeed = array_map(function ($w) use ($fcF) { return (float)$w * $fcF['pv']; }, $pvLow192);
+            $loadNeed = array_map(function ($w) use ($fcF) { return (float)$w * $fcF['load']; }, $load192);
+            $nightNeedToday = $resaleOk($price192, 0, $nwEnd) ? null : $this->nightNeedSoc($nwEnd, 96, $pvNeed, $loadNeed, $ctx);
+            $nightNeedTomorrow = $resaleOk($price192, 96, 96 + $nwEnd) ? null : $this->nightNeedSoc(96 + $nwEnd, 192, $pvNeed, $loadNeed, $ctx);
             if ($nightNeedToday !== null && $nightNeedToday < $ctx['socTargetNight']) {
                 $ctxNwToday['socTargetNight'] = $nightNeedToday; $ctxNwToday['nightNeedBased'] = true;
             }
@@ -6464,7 +6483,7 @@ class EMS extends IPSModule
     {
         $eta = $p['eta']; $cap = $p['capKwh']; $eMin = $cap * $p['socMinPct'] / 100.0; $feed = $p['feed'];
         $e = max($eMin, min($cap, $cap * $socStartPct / 100.0));
-        $ist = 0.0; $auto = 0.0; $imp = 0.0; $exp = 0.0;
+        $ist = 0.0; $auto = 0.0; $imp = 0.0; $exp = 0.0; $pvSum = 0.0; $loadSum = 0.0;
         $n = count($gridW);
         for ($k = 0; $k < $n; $k++) {
             $pk = (float)$price[$k];
@@ -6473,6 +6492,7 @@ class EMS extends IPSModule
             if ($g > 0) { $imp += $g; } else { $exp -= $g; }
             $pv = max(0.0, (float)$pvW[$k]) / 4000.0;
             $load = max(0.0, ((float)$pvW[$k] + (float)$batW[$k] - (float)$gridW[$k]) / 4000.0);
+            $pvSum += $pv; $loadSum += $load;
             $need = $load - $pv;
             if ($need < 0) {                                                        // Ueberschuss -> Akku (DC, ohne Wandlung)
                 $ch = min(-$need, $p['chKwh'], $cap - $e); $e += $ch; $need += $ch;
@@ -6482,6 +6502,7 @@ class EMS extends IPSModule
             $auto += $need > 0 ? $need * $pk : $need * $feed;
         }
         return array('ist' => round($ist, 2), 'auto' => round($auto, 2), 'imp' => round($imp, 1), 'exp' => round($exp, 1),
+                     'pv' => round($pvSum, 1), 'load' => round($loadSum, 1),
                      'endSocAuto' => round($e / $cap * 100, 1));
     }
 
@@ -6547,6 +6568,7 @@ class EMS extends IPSModule
             $key = date('Y-m-d', $day0);
             if (isset($hist[$key])) { continue; }
             $hist[$key] = $this->selfBalanceDay($day0);
+            if (isset($hist[$key]['pv'])) { $this->forecastLearnActual($key, (float)$hist[$key]['pv'], (float)$hist[$key]['load']); }
             $done++;
         }
         if ($done === 0) { return; }
@@ -6568,6 +6590,48 @@ class EMS extends IPSModule
         return $out;
     }
 
+    // ── Gelernte Prognose-Korrektur (0.96.1) ─────────────────────────────────
+    // Je Tag wird festgehalten, was die vorsichtige PV-Prognose (p10) und die Lastprognose fuer den Tag erwartet haben
+    // (erster Plan des Tages) und was tatsaechlich kam (Selbstbilanz). Die Faktoren Ist/Prognose der letzten 7 Tage
+    // korrigieren die Bedarfsrechnung des Nachtfensters. Gilt fuer jede Anlage mit ihren eigenen Messwerten.
+
+    private function forecastLearnRecord(array $pvLow192, array $load192): void
+    {
+        $key = date('Y-m-d');
+        $d = json_decode($this->ReadAttributeString('FcLearn'), true) ?: array();
+        if (isset($d[$key]['pvFc'])) { return; }
+        $pv = 0.0; $load = 0.0;
+        for ($i = 0; $i < 96; $i++) { $pv += (float)($pvLow192[$i] ?? 0) / 4000.0; $load += (float)($load192[$i] ?? 0) / 4000.0; }
+        if ($load <= 0.1) { return; }
+        $d[$key] = array_merge((array)($d[$key] ?? array()), array('pvFc' => round($pv, 1), 'loadFc' => round($load, 1)));
+        krsort($d);
+        $this->WriteAttributeString('FcLearn', json_encode(array_slice($d, 0, 30, true)));
+    }
+
+    private function forecastLearnActual(string $key, float $pv, float $load): void
+    {
+        $d = json_decode($this->ReadAttributeString('FcLearn'), true) ?: array();
+        if (!isset($d[$key]['pvFc'])) { return; }
+        $d[$key]['pvAct'] = round($pv, 1); $d[$key]['loadAct'] = round($load, 1);
+        $this->WriteAttributeString('FcLearn', json_encode($d));
+    }
+
+    /** Faktoren Ist/Prognose aus den letzten 7 vollstaendigen Tagen; mit weniger als 3 Tagen vorsichtige Vorgaben. */
+    private function forecastFactors(): array
+    {
+        $d = json_decode($this->ReadAttributeString('FcLearn'), true) ?: array();
+        krsort($d);
+        $pvF = 0.0; $pvA = 0.0; $ldF = 0.0; $ldA = 0.0; $n = 0;
+        foreach ($d as $r) {
+            if (!isset($r['pvAct'], $r['pvFc'], $r['loadAct'], $r['loadFc'])) { continue; }
+            $pvF += $r['pvFc']; $pvA += $r['pvAct']; $ldF += $r['loadFc']; $ldA += $r['loadAct'];
+            if (++$n >= 7) { break; }
+        }
+        if ($n < 3 || $ldF <= 0) { return array('pv' => 0.7, 'load' => 1.15, 'days' => $n, 'learned' => false); }
+        $pv = $pvF > 0.5 ? $pvA / $pvF : 1.0;
+        return array('pv' => round(max(0.2, min(1.3, $pv)), 3), 'load' => round(max(0.8, min(1.8, $ldA / $ldF)), 3), 'days' => $n, 'learned' => true);
+    }
+
     /** Selbstbilanz als JSON: je Tag Ist/Automatik und die 30-Tage-Summe. Vertrag 1.0, rein lesend. */
     public function GetSelfBalance(): string
     {
@@ -6576,6 +6640,7 @@ class EMS extends IPSModule
         $sum = $this->selfBalanceSum($hist, 30);
         return json_encode(array('contractVersion' => '1.0', 'unit' => 'EUR', 'days' => $hist,
             'sum30' => array('ist' => round($sum['ist'], 2), 'auto' => round($sum['auto'], 2), 'saved' => round($sum['auto'] - $sum['ist'], 2), 'days' => $sum['days']),
+            'forecastFactors' => $this->forecastFactors(),
             'assumptions' => array('etaPerConversion' => $this->convEff(), 'capKwh' => $this->batteryCapacityKwh(), 'feedTariffCt' => round($this->planFeedTariffEur() * 100, 2))),
             JSON_UNESCAPED_UNICODE);
     }
@@ -6609,6 +6674,10 @@ class EMS extends IPSModule
                 ? sprintf('%s: mit EMS %.2f €, Automatik %.2f € (%+.2f €), Bezug %.1f kWh, Einspeisung %.1f kWh', date('d.m.', strtotime($date)), $r['ist'], $r['auto'], $r['auto'] - $r['ist'], $r['imp'], $r['exp'])
                 : sprintf('%s: nicht auswertbar – %s', date('d.m.', strtotime($date)), $r['error'] ?? '?'));
         }
+        $f = $this->forecastFactors();
+        $items[] = array('type' => 'Label', 'caption' => $f['learned']
+            ? sprintf('Gelernte Prognose-Korrektur (letzte %d Tage): PV ×%.2f, Hauslast ×%.2f. Damit rechnet das Nachtfenster den Bedarf bis zur nächsten Nacht.', $f['days'], $f['pv'], $f['load'])
+            : sprintf('Prognose-Korrektur noch nicht gelernt (%d von 3 Tagen). Bis dahin vorsichtig: PV ×%.2f, Hauslast ×%.2f.', $f['days'], $f['pv'], $f['load']));
         $items[] = array('type' => 'Label', 'caption' => sprintf('Annahmen der Simulation: Wirkungsgrad je Wandlung %.0f %% (Einstellung im Bereich Batterie), Akku %.1f kWh, Einspeisevergütung %.2f ct. Die Automatik lädt nur aus PV-Überschuss und entlädt bei Bedarf.', $this->convEff() * 100, $this->batteryCapacityKwh(), $this->planFeedTariffEur() * 100));
         $items[] = array('type' => 'Button', 'caption' => '🔄 Letzte 30 Tage neu rechnen', 'onClick' => 'echo EMS_RecomputeSelfBalance($id);');
         return array('type' => 'ExpansionPanel', 'caption' => '📊 EMS-Bilanz (gespart oder verloren?)', 'expanded' => false, 'items' => $items);

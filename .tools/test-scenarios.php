@@ -3473,6 +3473,36 @@ check('Ueberschuss wird in der Automatik gespeichert und spaeter genutzt (guenst
 check('Ist rechnet Einspeisung mit Verguetung (1 kWh x 0,1836 Gutschrift)', abs($r3['ist'] - (0.50 - 0.1836)) < 0.01, json_encode($r3));
 check('Summe ueber Tage: nur Tage mit Werten, hoechstens N', call($ems, 'selfBalanceSum', [['2026-11-02' => ['ist' => 2, 'auto' => 1], '2026-11-01' => ['error' => 'x'], '2026-10-31' => ['ist' => 3, 'auto' => 5]], 30]) === ['ist' => 5.0, 'auto' => 6.0, 'days' => 2]);
 
+echo "\n8ah) Simulation ueber dem Tagesziel + gelernte Prognose-Korrektur (0.96.1, Dietmar 07.11.2026)\n";
+$ems = freshEms();
+$ctxT = ['enwgActive' => false, 'enwgStartH' => 0, 'enwgEndH' => 0, 'avgHouseW' => 1000.0, 'houseLoadSlots' => [1000.0],
+    'fcMinPower' => 100.0, 'socTargetDay' => 50.0, 'hystSoc' => 2.0, 'socMin' => 0.0, 'socReserve' => 10.0,
+    'socTargetNight' => 100.0, 'capKwh' => 40.0, 'chargeKw' => 25.0, 'dischargeKw' => 25.0, 'maxW' => 34500.0,
+    'feedTariff' => 0.1836, 'thCharge' => 0.15, 'thDischarge' => 0.25, 'spread' => 0.03, 'restwert' => false];
+$rT = call($ems, 'simulateDaySlot', [48, 0.44, 5000.0, 65.0, [], $ctxT, 0.0]); // SOC 65 % ueber Tagesziel 50 %, 4 kW Ueberschuss
+check('Ueber dem Tagesziel: Automatik laedt den Ueberschuss weiter (SOC steigt um 1 kWh = 2,5 %)', $rT['plan']['gw'] === GW_MODE_AUTO && abs($rT['soc'] - 67.5) < 0.05, json_encode($rT));
+$rF = call($ems, 'simulateDaySlot', [48, 0.44, 5000.0, 100.0, [], $ctxT, 0.0]);
+check('Voller Akku: Ueberschuss wird eingespeist, SOC bleibt 100', abs($rF['soc'] - 100.0) < 0.01 && strpos($rF['plan']['reason'], 'eingespeist') !== false, json_encode($rF));
+$f0 = call($ems, 'forecastFactors');
+check('Ohne Lerndaten vorsichtige Vorgaben (PV x0,7, Last x1,15)', $f0['pv'] == 0.7 && $f0['load'] == 1.15 && $f0['learned'] === false, json_encode($f0));
+$GLOBALS['ATTR'][EMS_IID]['FcLearn'] = json_encode([
+  '2026-11-06' => ['pvFc' => 10, 'loadFc' => 30, 'pvAct' => 4, 'loadAct' => 36],
+  '2026-11-05' => ['pvFc' => 10, 'loadFc' => 30, 'pvAct' => 5, 'loadAct' => 33],
+  '2026-11-04' => ['pvFc' => 10, 'loadFc' => 30, 'pvAct' => 6, 'loadAct' => 36],
+  '2026-11-07' => ['pvFc' => 10, 'loadFc' => 30]]);
+$f1 = call($ems, 'forecastFactors');
+check('Gelernt aus 3 vollstaendigen Tagen: PV 15/30 = 0,5, Last 105/90 = 1,167', $f1['learned'] === true && abs($f1['pv'] - 0.5) < 0.001 && abs($f1['load'] - 1.167) < 0.001 && $f1['days'] === 3, json_encode($f1));
+call($ems, 'forecastLearnActual', ['2026-11-07', 3.0, 40.0]);
+$fl = json_decode($GLOBALS['ATTR'][EMS_IID]['FcLearn'], true);
+check('Ist-Werte werden zum Tag mit Prognose eingetragen', $fl['2026-11-07']['pvAct'] == 3.0 && $fl['2026-11-07']['loadAct'] == 40.0);
+$GLOBALS['ATTR'][EMS_IID]['FcLearn'] = '{}';
+call($ems, 'forecastLearnRecord', [array_fill(0, 192, 2000.0), array_fill(0, 192, 1000.0)]);
+$fr = json_decode($GLOBALS['ATTR'][EMS_IID]['FcLearn'], true); $today = date('Y-m-d');
+check('Prognose des Tages wird beim ersten Plan festgehalten (PV 48 kWh, Last 24 kWh)', isset($fr[$today]) && $fr[$today]['pvFc'] == 48.0 && $fr[$today]['loadFc'] == 24.0, json_encode($fr));
+call($ems, 'forecastLearnRecord', [array_fill(0, 192, 500.0), array_fill(0, 192, 500.0)]);
+$fr2 = json_decode($GLOBALS['ATTR'][EMS_IID]['FcLearn'], true);
+check('Spaetere Plaene ueberschreiben die Tagesprognose nicht', $fr2[$today]['pvFc'] == 48.0);
+
 echo "\n20z) Bedarfsabsicherung und manuelle Plan-Eintraege (0.73.0/0.74.0, Dietmar 05.10.2026)\n";
 $ems = freshEms();
 $ctxA = ['avgHouseW' => 300.0, 'socMin' => 0.0, 'socReserve' => 10.0, 'capKwh' => 40.0, 'chargeKw' => 20.0, 'chargeCurve' => [],
