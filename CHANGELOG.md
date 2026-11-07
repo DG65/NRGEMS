@@ -2,6 +2,9 @@
 
 Ältere Versionen: [CHANGELOG-Archiv.md](CHANGELOG-Archiv.md)
 
+## 0.97.1 (2026-11-07)
+- **Faire Tagesbewertung in der EMS-Bilanz (Befund 17.10.2026):** Energie, die am Tagesende mehr oder weniger im Akku liegt als am Morgen, wird jetzt mit dem Tagesdurchschnittspreis × Wirkungsgrad bewertet, für das EMS (gemessener Ladestand) wie für die simulierte Automatik. Ein Tag, an dem das EMS den Akku schonte und das Auto aus dem Netz lud, erschien vorher als Verlust (17.10.: −5,38 €), obwohl die gesparte Akkuenergie an den Folgetagen genutzt wurde. Die Variable „EMS-Bilanz 30 Tage“ und die Summe im Formular nutzen diese Bewertung, `EMS_GetSelfBalance()` liefert zusätzlich `fair` je Tag und `savedFair`. Ohne geloggten Ladestand bleibt es bei der einfachen Rechnung. Vier neue Prüfungen, eine Mutation nachweislich rot.
+
 ## 0.97.0 (2026-11-07)
 - **EMS-Bilanz: wohin ging das Geld (Auftrag Dietmar 07.11.2026):** Je Tag und als 30-Tage-Summe schlüsselt die Selbstbilanz aus den gemessenen Flüssen auf: Netzladen (kWh, Ø Kaufpreis und Ø Preis, den der Akku an dem Tag ersetzte), Halten (Netzbezug, während der Akku ruhte und Ladung hatte), PV-Einspeisung trotz Platz im Akku (Ladestand unter 95 %, mit geschätztem entgangenem Betrag: Tagesschnitt des Bezugs × Wirkungsgrad minus Vergütung) und Entladen ins Netz. Damit lässt sich je Tag erkennen, welche Regel Geld gekostet hat. Auch in `EMS_GetSelfBalance()` (`cat` je Tag, `categories30`). Nach dem Update einmal „Letzte 30 Tage neu rechnen“. Sechs neue Prüfungen, eine Mutation nachweislich rot.
 

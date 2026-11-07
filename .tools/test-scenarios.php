@@ -3471,7 +3471,7 @@ check('Leerer Akku: Automatik kauft wie Ist (1x0,40 + 1x0,60 = 1,00)', abs($r2['
 $r3 = call($ems, 'selfBalanceCompute', [[8000, 0], [0, 0], [4000, -4000], [0.30, 0.50], 10.0, $par]);
 check('Ueberschuss wird in der Automatik gespeichert und spaeter genutzt (guenstiger als Ist)', $r3['auto'] < $r3['ist'], json_encode($r3));
 check('Ist rechnet Einspeisung mit Verguetung (1 kWh x 0,1836 Gutschrift)', abs($r3['ist'] - (0.50 - 0.1836)) < 0.01, json_encode($r3));
-check('Summe ueber Tage: nur Tage mit Werten, hoechstens N', call($ems, 'selfBalanceSum', [['2026-11-02' => ['ist' => 2, 'auto' => 1], '2026-11-01' => ['error' => 'x'], '2026-10-31' => ['ist' => 3, 'auto' => 5]], 30]) === ['ist' => 5.0, 'auto' => 6.0, 'days' => 2]);
+check('Summe ueber Tage: nur Tage mit Werten, hoechstens N', call($ems, 'selfBalanceSum', [['2026-11-02' => ['ist' => 2, 'auto' => 1], '2026-11-01' => ['error' => 'x'], '2026-10-31' => ['ist' => 3, 'auto' => 5]], 30]) === ['ist' => 5.0, 'auto' => 6.0, 'days' => 2, 'fair' => 0.0, 'fairDays' => 0]);
 
 echo "\n8ah) Simulation ueber dem Tagesziel + gelernte Prognose-Korrektur (0.96.1, Dietmar 07.11.2026)\n";
 $ems = freshEms();
@@ -3516,6 +3516,18 @@ check('Akku ins Netz: 0,75 kWh', abs($c['batExportKwh'] - 0.75) < 0.01, json_enc
 check('Klartext nennt alle vier Posten', substr_count(call($ems, 'selfBalanceCatText', [$c]), ' · ') === 3, call($ems, 'selfBalanceCatText', [$c]));
 $r2 = call($ems, 'selfBalanceCompute', [[0], [0], [-2000], [0.40], 50.0, $par]);
 check('Ohne Ladestand-Reihe kein Halten-Befund (keine Annahme)', $r2['cat']['holdKwh'] == 0.0, json_encode($r2['cat']));
+
+echo "\n8aj) Faire Tagesbewertung mit Akkuenergie (0.97.1)\n";
+$ems = freshEms();
+$par = ['eta' => 0.95, 'capKwh' => 40.0, 'socMinPct' => 0.0, 'feed' => 0.1836, 'chKwh' => 6.0, 'disKwh' => 6.0];
+// 2 Slots je 0,40 EUR, Haus 4 kW, keine PV. Ist: Akku schont (0 W), Haus aus Netz (2 kWh = 0,80 EUR), SOC bleibt 50.
+// Automatik: Akku deckt das Haus (2 kWh / 0,95 = 2,105 kWh aus dem Akku), Kosten 0, Akku leerer.
+$r = call($ems, 'selfBalanceCompute', [[0, 0], [0, 0], [-4000, -4000], [0.40, 0.40], 50.0, $par, [50, 50]]);
+check('Ohne Bewertung sieht Schonen wie -0,80 EUR aus', abs(($r['auto'] - $r['ist']) + 0.80) < 0.01, json_encode($r));
+check('Mit Bewertung der Akkuenergie (2,105 kWh x 0,38 EUR) nahezu ausgeglichen', abs($r['fair']) < 0.02, json_encode($r));
+$r2 = call($ems, 'selfBalanceCompute', [[0], [0], [-4000], [0.40], 50.0, $par]);
+check('Ohne Ladestand-Reihe keine faire Bewertung (null statt Annahme)', $r2['fair'] === null, json_encode($r2));
+check('Summe nutzt die faire Bewertung, wenn vorhanden', call($ems, 'selfBalanceSum', [['a' => ['ist' => 2, 'auto' => 1, 'fair' => 0.5], 'b' => ['ist' => 1, 'auto' => 1]], 30])['fair'] == 0.5);
 
 echo "\n20z) Bedarfsabsicherung und manuelle Plan-Eintraege (0.73.0/0.74.0, Dietmar 05.10.2026)\n";
 $ems = freshEms();

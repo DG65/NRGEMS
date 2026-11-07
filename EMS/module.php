@@ -41,7 +41,7 @@ define('EMS_LOG_VERBOSE',     2);
 // Formular-Konvention (siehe EMS/SUITE.md "Einheitliche Formular-Optik"):
 // Was-ist-Neu-Panel ist versionsscharf dismissible, Referenzmuster InverterHub.
 define('EMS_COLOR_AUTO', 0x2E8B3D); // Gruen: Wert wurde automatisch uebernommen (🔗-Zeilen im Formular)
-define('EMS_NEWS_VERSION', '0.97.0');
+define('EMS_NEWS_VERSION', '0.97.1');
 define('EMS_AI_DEFAULT_CLAUDE', 'claude-opus-5-5');
 define('EMS_AI_DEFAULT_OLLAMA', 'llama3.1');
 
@@ -808,6 +808,10 @@ class EMS extends IPSModule
                 'caption'  => '🆕 Neu in Version ' . EMS_NEWS_VERSION,
                 'expanded' => true,
                 'items'    => array(
+                    array(
+                        'type'    => 'Label',
+                        'caption' => '• KORRIGIERT: Faire Tagesbewertung in der EMS-Bilanz: Energie, die am Tagesende mehr oder weniger im Akku liegt als am Morgen, wird mit dem Tagespreis bewertet. Vorher sah ein Tag, an dem das EMS den Akku schonte, wie ein Verlust aus, obwohl die Energie an den Folgetagen genutzt wurde.'
+                    ),
                     array(
                         'type'    => 'Label',
                         'caption' => '• NEU: Die EMS-Bilanz zeigt je Tag und für 30 Tage, wohin das Geld ging: Netzladen (Menge, Ø Preis und der Preis, den der Akku ersetzte), Halten (Netzbezug bei ruhendem Akku), PV-Einspeisung trotz Platz im Akku (mit geschätztem entgangenem Betrag) und Entladen ins Netz. Nach dem Update einmal „Letzte 30 Tage neu rechnen“ drücken.'
@@ -6489,11 +6493,11 @@ class EMS extends IPSModule
         $cat = array('gridChargeKwh' => 0.0, 'gridChargeEur' => 0.0, 'holdKwh' => 0.0, 'holdEur' => 0.0,
                      'pvExportKwh' => 0.0, 'batExportKwh' => 0.0, 'dischargeKwh' => 0.0, 'dischargeValueEur' => 0.0);
         $eta = $p['eta']; $cap = $p['capKwh']; $eMin = $cap * $p['socMinPct'] / 100.0; $feed = $p['feed'];
-        $e = max($eMin, min($cap, $cap * $socStartPct / 100.0));
+        $e = max($eMin, min($cap, $cap * $socStartPct / 100.0)); $eAutoStart = $e; $priceSum = 0.0;
         $ist = 0.0; $auto = 0.0; $imp = 0.0; $exp = 0.0; $pvSum = 0.0; $loadSum = 0.0;
         $n = count($gridW);
         for ($k = 0; $k < $n; $k++) {
-            $pk = (float)$price[$k];
+            $pk = (float)$price[$k]; $priceSum += $pk;
             $g = -(float)$gridW[$k] / 4000.0;                                       // kWh, + = Bezug
             $ist += $g > 0 ? $g * $pk : $g * $feed;
             if ($g > 0) { $imp += $g; } else { $exp -= $g; }
@@ -6524,8 +6528,20 @@ class EMS extends IPSModule
         $avgImp = $imp > 0.01 ? (($ist + $exp * $feed) / $imp) : 0.0;
         $cat['pvExportLossEur'] = $cat['pvExportKwh'] * max(0.0, $avgImp * $eta - $feed);
         foreach ($cat as $kk => $vv) { $cat[$kk] = round($vv, 2); }
+        // 0.97.1: faire Tagesbewertung. Energie, die am Tagesende mehr (oder weniger) im Akku liegt als am Morgen, ist nicht
+        // verloren, sondern ersetzt spaeter Bezug. Bewertet mit dem Tagesdurchschnittspreis x Wirkungsgrad (eine Wandlung).
+        // Live-Fund 17.10.2026: Das EMS lud das Auto aus dem Netz und schonte den Akku, die Tagesbilanz zeigte -5,38 EUR,
+        // obwohl die gesparte Akkuenergie an den Folgetagen genutzt wurde.
+        $value = $n > 0 ? $priceSum / $n * $eta : 0.0;
+        $istStored = null;
+        if (!empty($socPct) && isset($socPct[0], $socPct[$n - 1])) {
+            $istStored = ((float)$socPct[$n - 1] - (float)$socPct[0]) / 100.0 * $cap;
+        }
+        $fair = $istStored === null ? null
+            : round(($auto - ($e - $eAutoStart) * $value) - ($ist - $istStored * $value), 2);
         return array('ist' => round($ist, 2), 'auto' => round($auto, 2), 'imp' => round($imp, 1), 'exp' => round($exp, 1),
                      'pv' => round($pvSum, 1), 'load' => round($loadSum, 1), 'cat' => $cat,
+                     'fair' => $fair, 'valueCt' => round($value * 100, 1),
                      'endSocAuto' => round($e / $cap * 100, 1));
     }
 
@@ -6607,7 +6623,7 @@ class EMS extends IPSModule
         $hist = array_slice($hist, 0, 60, true);
         $this->WriteAttributeString('SelfBalance', json_encode($hist));
         $sum = $this->selfBalanceSum($hist, 30);
-        if ($sum['days'] > 0) { $this->SetValue('EMS_SelfBalance30', round($sum['auto'] - $sum['ist'], 2)); }
+        if ($sum['days'] > 0) { $this->SetValue('EMS_SelfBalance30', round($sum['fairDays'] > 0 ? $sum['fair'] : $sum['auto'] - $sum['ist'], 2)); }
     }
 
     private function selfBalanceCatText(array $c): string
@@ -6638,11 +6654,12 @@ class EMS extends IPSModule
 
     private function selfBalanceSum(array $hist, int $days): array
     {
-        $out = array('ist' => 0.0, 'auto' => 0.0, 'days' => 0);
+        $out = array('ist' => 0.0, 'auto' => 0.0, 'days' => 0, 'fair' => 0.0, 'fairDays' => 0);
         foreach ($hist as $date => $r) {
             if ($out['days'] >= $days) { break; }
             if (!isset($r['ist'])) { continue; }
             $out['ist'] += $r['ist']; $out['auto'] += $r['auto']; $out['days']++;
+            if (isset($r['fair'])) { $out['fair'] += $r['fair']; $out['fairDays']++; }
         }
         return $out;
     }
@@ -6696,7 +6713,8 @@ class EMS extends IPSModule
         krsort($hist);
         $sum = $this->selfBalanceSum($hist, 30);
         return json_encode(array('contractVersion' => '1.0', 'unit' => 'EUR', 'days' => $hist,
-            'sum30' => array('ist' => round($sum['ist'], 2), 'auto' => round($sum['auto'], 2), 'saved' => round($sum['auto'] - $sum['ist'], 2), 'days' => $sum['days']),
+            'sum30' => array('ist' => round($sum['ist'], 2), 'auto' => round($sum['auto'], 2), 'saved' => round($sum['auto'] - $sum['ist'], 2),
+                             'savedFair' => round($sum['fair'], 2), 'days' => $sum['days'], 'fairDays' => $sum['fairDays']),
             'forecastFactors' => $this->forecastFactors(),
             'categories30' => $this->selfBalanceCatSum($hist, 30),
             'assumptions' => array('etaPerConversion' => $this->convEff(), 'capKwh' => $this->batteryCapacityKwh(), 'feedTariffCt' => round($this->planFeedTariffEur() * 100, 2))),
@@ -6710,7 +6728,7 @@ class EMS extends IPSModule
         $this->selfBalanceTick(30);
         $sum = $this->selfBalanceSum(json_decode($this->ReadAttributeString('SelfBalance'), true) ?: array(), 30);
         return $sum['days'] > 0
-            ? sprintf('%d Tage gerechnet: Ist %.2f €, reine WR-Automatik %.2f €, Unterschied %+.2f € (+ = EMS hat gespart).', $sum['days'], $sum['ist'], $sum['auto'], $sum['auto'] - $sum['ist'])
+            ? sprintf('%d Tage gerechnet: Ist %.2f €, reine WR-Automatik %.2f €, Unterschied %+.2f €, mit Bewertung der Akkuenergie %+.2f € (+ = EMS hat gespart).', $sum['days'], $sum['ist'], $sum['auto'], $sum['auto'] - $sum['ist'], $sum['fair'])
             : 'Keine Tage auswertbar, Gründe stehen im Bereich „📊 EMS-Bilanz“.';
     }
 
@@ -6723,15 +6741,15 @@ class EMS extends IPSModule
         if ($sum['days'] > 0) {
             $cs = $this->selfBalanceCatSum($hist, 30);
             if ($cs !== null) { $items[] = array('type' => 'Label', 'caption' => 'Wohin ging das Geld (30 Tage): ' . $this->selfBalanceCatText($cs)); }
-            $diff = $sum['auto'] - $sum['ist'];
-            $items[] = array('type' => 'Label', 'bold' => true, 'caption' => sprintf('%s Letzte %d Tage: mit EMS %.2f €, reine Automatik %.2f € → %s %.2f €',
+            $diff = $sum['fairDays'] > 0 ? $sum['fair'] : $sum['auto'] - $sum['ist'];
+            $items[] = array('type' => 'Label', 'bold' => true, 'caption' => sprintf('%s Letzte %d Tage: mit EMS %.2f €, reine Automatik %.2f € → %s %.2f € (Energie, die am Tagesende mehr oder weniger im Akku liegt, ist mit dem Tagespreis bewertet)',
                 $diff >= 0 ? '✅' : '⚠️', $sum['days'], $sum['ist'], $sum['auto'], $diff >= 0 ? 'gespart' : 'Mehrkosten', abs($diff)));
         }
         $n = 0;
         foreach ($hist as $date => $r) {
             if ($n++ >= 10) { break; }
             $items[] = array('type' => 'Label', 'caption' => isset($r['ist'])
-                ? sprintf('%s: mit EMS %.2f €, Automatik %.2f € (%+.2f €), Bezug %.1f kWh, Einspeisung %.1f kWh', date('d.m.', strtotime($date)), $r['ist'], $r['auto'], $r['auto'] - $r['ist'], $r['imp'], $r['exp'])
+                ? sprintf('%s: mit EMS %.2f €, Automatik %.2f €, Ergebnis %+.2f € inkl. Akkuenergie, Bezug %.1f kWh, Einspeisung %.1f kWh', date('d.m.', strtotime($date)), $r['ist'], $r['auto'], $r['fair'] ?? ($r['auto'] - $r['ist']), $r['imp'], $r['exp'])
                 : sprintf('%s: nicht auswertbar – %s', date('d.m.', strtotime($date)), $r['error'] ?? '?'));
             if (isset($r['cat'])) { $items[] = array('type' => 'Label', 'caption' => '      ' . $this->selfBalanceCatText($r['cat'])); }
         }
