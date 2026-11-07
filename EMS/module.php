@@ -41,7 +41,7 @@ define('EMS_LOG_VERBOSE',     2);
 // Formular-Konvention (siehe EMS/SUITE.md "Einheitliche Formular-Optik"):
 // Was-ist-Neu-Panel ist versionsscharf dismissible, Referenzmuster InverterHub.
 define('EMS_COLOR_AUTO', 0x2E8B3D); // Gruen: Wert wurde automatisch uebernommen (🔗-Zeilen im Formular)
-define('EMS_NEWS_VERSION', '0.97.1');
+define('EMS_NEWS_VERSION', '0.97.2');
 define('EMS_AI_DEFAULT_CLAUDE', 'claude-opus-5-5');
 define('EMS_AI_DEFAULT_OLLAMA', 'llama3.1');
 
@@ -808,6 +808,10 @@ class EMS extends IPSModule
                 'caption'  => '🆕 Neu in Version ' . EMS_NEWS_VERSION,
                 'expanded' => true,
                 'items'    => array(
+                    array(
+                        'type'    => 'Label',
+                        'caption' => '• NEU: Die EMS-Bilanz weist die Tibber-Grid-Rewards-Vergütung je Tag aus (aus der Tibber-Variable „RewardAllTime“, wenn sie geloggt wird). Sie verringert die echten Kosten; den Vergleich mit der Automatik ändert sie nicht, weil das Fahrzeug sie mit und ohne EMS bekommt.'
+                    ),
                     array(
                         'type'    => 'Label',
                         'caption' => '• KORRIGIERT: Faire Tagesbewertung in der EMS-Bilanz: Energie, die am Tagesende mehr oder weniger im Akku liegt als am Morgen, wird mit dem Tagespreis bewertet. Vorher sah ein Tag, an dem das EMS den Akku schonte, wie ein Verlust aus, obwohl die Energie an den Folgetagen genutzt wurde.'
@@ -6598,9 +6602,36 @@ class EMS extends IPSModule
             if (!empty($first)) { $socStart = (float)$first[0]['Value']; }
         }
         $lim = $this->getBatteryPowerLimitsKw($inv, (float)$this->ReadPropertyInteger('EMS_Max_Power_W'), $this->batteryCapacityKwh());
-        return $this->selfBalanceCompute($pv, $bat, $grid, $price, $socStart, array(
+        $res = $this->selfBalanceCompute($pv, $bat, $grid, $price, $socStart, array(
             'eta' => $this->convEff(), 'capKwh' => $this->batteryCapacityKwh(), 'socMinPct' => (float)$this->ReadPropertyInteger('BAT_SOC_Min'),
             'feed' => $this->planFeedTariffEur(), 'chKwh' => (float)$lim['chargeKw'] / 4.0, 'disKwh' => (float)($lim['dischargeKw'] ?? $lim['chargeKw']) / 4.0), $socSeries);
+        $reward = $this->gridRewardEarnedEur($archive, $day0, $day1);
+        if ($reward !== null) { $res['reward'] = $reward; }
+        return $res;
+    }
+
+    /**
+     * 0.97.2: Grid-Rewards-Verguetung eines Tages aus dem Archiv der Tibber-Variable RewardAllTime (laufende Summe, steigt nur).
+     * Differenz letzter Wert bis Tagesende minus letzter Wert vor Tagesbeginn; null, wenn die Variable fehlt oder nicht geloggt wird.
+     * Die Verguetung bekommt das Fahrzeug (Grid Rewards nur fuers Auto, 0.89.0) -- sie faellt mit und ohne EMS an und wird
+     * deshalb ausgewiesen, aendert aber den Vergleich EMS gegen Automatik nicht.
+     */
+    private function gridRewardEarnedEur(int $archive, int $day0, int $day1): ?float
+    {
+        $sum = null;
+        foreach (IPS_GetInstanceListByModuleID(GUID_TIBBERGRIDREWARD) as $tid) {
+            $vid = @IPS_GetObjectIDByIdent('RewardAllTime', $tid);
+            if (!$vid || !@AC_GetLoggingStatus($archive, $vid)) { continue; }
+            $endV = (array)@AC_GetLoggedValues($archive, $vid, $day0, $day1 - 1, 1);
+            if (empty($endV)) { $sum = ($sum ?? 0.0); continue; }
+            $startV = (array)@AC_GetLoggedValues($archive, $vid, 0, $day0 - 1, 1);
+            if (empty($startV)) {
+                $first = (array)@AC_GetLoggedValues($archive, $vid, $day0, $day1 - 1, 0);
+                $startV = array(end($first));
+            }
+            $sum = ($sum ?? 0.0) + max(0.0, (float)$endV[0]['Value'] - (float)$startV[0]['Value']);
+        }
+        return $sum === null ? null : round($sum, 2);
     }
 
     /** Je Aufruf hoechstens einen fehlenden Tag nachrechnen (bis 30 Tage zurueck), danach Summe aktualisieren. */
@@ -6654,12 +6685,13 @@ class EMS extends IPSModule
 
     private function selfBalanceSum(array $hist, int $days): array
     {
-        $out = array('ist' => 0.0, 'auto' => 0.0, 'days' => 0, 'fair' => 0.0, 'fairDays' => 0);
+        $out = array('ist' => 0.0, 'auto' => 0.0, 'days' => 0, 'fair' => 0.0, 'fairDays' => 0, 'reward' => 0.0);
         foreach ($hist as $date => $r) {
             if ($out['days'] >= $days) { break; }
             if (!isset($r['ist'])) { continue; }
             $out['ist'] += $r['ist']; $out['auto'] += $r['auto']; $out['days']++;
             if (isset($r['fair'])) { $out['fair'] += $r['fair']; $out['fairDays']++; }
+            if (isset($r['reward'])) { $out['reward'] += $r['reward']; }
         }
         return $out;
     }
@@ -6714,7 +6746,7 @@ class EMS extends IPSModule
         $sum = $this->selfBalanceSum($hist, 30);
         return json_encode(array('contractVersion' => '1.0', 'unit' => 'EUR', 'days' => $hist,
             'sum30' => array('ist' => round($sum['ist'], 2), 'auto' => round($sum['auto'], 2), 'saved' => round($sum['auto'] - $sum['ist'], 2),
-                             'savedFair' => round($sum['fair'], 2), 'days' => $sum['days'], 'fairDays' => $sum['fairDays']),
+                             'savedFair' => round($sum['fair'], 2), 'days' => $sum['days'], 'fairDays' => $sum['fairDays'], 'gridRewardsEur' => round($sum['reward'], 2)),
             'forecastFactors' => $this->forecastFactors(),
             'categories30' => $this->selfBalanceCatSum($hist, 30),
             'assumptions' => array('etaPerConversion' => $this->convEff(), 'capKwh' => $this->batteryCapacityKwh(), 'feedTariffCt' => round($this->planFeedTariffEur() * 100, 2))),
@@ -6740,6 +6772,7 @@ class EMS extends IPSModule
         $items = array(array('type' => 'Label', 'caption' => 'Das EMS vergleicht jeden Tag die tatsächlichen Netzkosten (Bezug × Preis minus Einspeisung × Vergütung, gemessen) mit dem, was der Wechselrichter allein in Automatik gekostet hätte (simuliert mit derselben Hauslast und PV). So sieht man, ob die Steuerung Geld bringt oder kostet.'));
         if ($sum['days'] > 0) {
             $cs = $this->selfBalanceCatSum($hist, 30);
+            if ($sum['reward'] > 0.004) { $items[] = array('type' => 'Label', 'caption' => sprintf('Tibber Grid Rewards (30 Tage, ab Beginn der Archivierung): %.2f € gutgeschrieben. Die Vergütung erhält das Fahrzeug mit und ohne EMS, sie verringert die echten Kosten, ändert aber den Vergleich nicht.', $sum['reward'])); }
             if ($cs !== null) { $items[] = array('type' => 'Label', 'caption' => 'Wohin ging das Geld (30 Tage): ' . $this->selfBalanceCatText($cs)); }
             $diff = $sum['fairDays'] > 0 ? $sum['fair'] : $sum['auto'] - $sum['ist'];
             $items[] = array('type' => 'Label', 'bold' => true, 'caption' => sprintf('%s Letzte %d Tage: mit EMS %.2f €, reine Automatik %.2f € → %s %.2f € (Energie, die am Tagesende mehr oder weniger im Akku liegt, ist mit dem Tagespreis bewertet)',
@@ -6749,7 +6782,8 @@ class EMS extends IPSModule
         foreach ($hist as $date => $r) {
             if ($n++ >= 10) { break; }
             $items[] = array('type' => 'Label', 'caption' => isset($r['ist'])
-                ? sprintf('%s: mit EMS %.2f €, Automatik %.2f €, Ergebnis %+.2f € inkl. Akkuenergie, Bezug %.1f kWh, Einspeisung %.1f kWh', date('d.m.', strtotime($date)), $r['ist'], $r['auto'], $r['fair'] ?? ($r['auto'] - $r['ist']), $r['imp'], $r['exp'])
+                ? sprintf('%s: mit EMS %.2f €, Automatik %.2f €, Ergebnis %+.2f € inkl. Akkuenergie, Bezug %.1f kWh, Einspeisung %.1f kWh%s', date('d.m.', strtotime($date)), $r['ist'], $r['auto'], $r['fair'] ?? ($r['auto'] - $r['ist']), $r['imp'], $r['exp'],
+                    !empty($r['reward']) ? sprintf(', Grid Rewards %.2f €', $r['reward']) : '')
                 : sprintf('%s: nicht auswertbar – %s', date('d.m.', strtotime($date)), $r['error'] ?? '?'));
             if (isset($r['cat'])) { $items[] = array('type' => 'Label', 'caption' => '      ' . $this->selfBalanceCatText($r['cat'])); }
         }

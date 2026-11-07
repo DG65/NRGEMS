@@ -2,6 +2,9 @@
 
 Ältere Versionen: [CHANGELOG-Archiv.md](CHANGELOG-Archiv.md)
 
+## 0.97.2 (2026-11-07)
+- **Grid-Rewards-Vergütung in der EMS-Bilanz (Auftrag Dietmar 07.11.2026):** Das Tibber-Modul liefert die Vergütung als laufende Summe (Variable „RewardAllTime“). Wird sie geloggt, rechnet die Selbstbilanz je Tag die Differenz als Grid-Rewards-Gutschrift aus und zeigt sie je Tag und als 30-Tage-Summe (`gridRewardsEur` in `EMS_GetSelfBalance()`). Die Vergütung bekommt das Fahrzeug mit und ohne EMS (Grid Rewards nur fürs Auto seit 0.89.0); sie senkt die echten Kosten, ändert den Vergleich EMS gegen Automatik aber nicht. Vor Beginn der Archivierung gibt es keine Tageswerte. Zwei neue Prüfungen, eine Mutation nachweislich rot.
+
 ## 0.97.1 (2026-11-07)
 - **Faire Tagesbewertung in der EMS-Bilanz (Befund 17.10.2026):** Energie, die am Tagesende mehr oder weniger im Akku liegt als am Morgen, wird jetzt mit dem Tagesdurchschnittspreis × Wirkungsgrad bewertet, für das EMS (gemessener Ladestand) wie für die simulierte Automatik. Ein Tag, an dem das EMS den Akku schonte und das Auto aus dem Netz lud, erschien vorher als Verlust (17.10.: −5,38 €), obwohl die gesparte Akkuenergie an den Folgetagen genutzt wurde. Die Variable „EMS-Bilanz 30 Tage“ und die Summe im Formular nutzen diese Bewertung, `EMS_GetSelfBalance()` liefert zusätzlich `fair` je Tag und `savedFair`. Ohne geloggten Ladestand bleibt es bei der einfachen Rechnung. Vier neue Prüfungen, eine Mutation nachweislich rot.
 

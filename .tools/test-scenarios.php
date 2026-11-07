@@ -3471,7 +3471,7 @@ check('Leerer Akku: Automatik kauft wie Ist (1x0,40 + 1x0,60 = 1,00)', abs($r2['
 $r3 = call($ems, 'selfBalanceCompute', [[8000, 0], [0, 0], [4000, -4000], [0.30, 0.50], 10.0, $par]);
 check('Ueberschuss wird in der Automatik gespeichert und spaeter genutzt (guenstiger als Ist)', $r3['auto'] < $r3['ist'], json_encode($r3));
 check('Ist rechnet Einspeisung mit Verguetung (1 kWh x 0,1836 Gutschrift)', abs($r3['ist'] - (0.50 - 0.1836)) < 0.01, json_encode($r3));
-check('Summe ueber Tage: nur Tage mit Werten, hoechstens N', call($ems, 'selfBalanceSum', [['2026-11-02' => ['ist' => 2, 'auto' => 1], '2026-11-01' => ['error' => 'x'], '2026-10-31' => ['ist' => 3, 'auto' => 5]], 30]) === ['ist' => 5.0, 'auto' => 6.0, 'days' => 2, 'fair' => 0.0, 'fairDays' => 0]);
+check('Summe ueber Tage: nur Tage mit Werten, hoechstens N', call($ems, 'selfBalanceSum', [['2026-11-02' => ['ist' => 2, 'auto' => 1], '2026-11-01' => ['error' => 'x'], '2026-10-31' => ['ist' => 3, 'auto' => 5]], 30]) === ['ist' => 5.0, 'auto' => 6.0, 'days' => 2, 'fair' => 0.0, 'fairDays' => 0, 'reward' => 0.0]);
 
 echo "\n8ah) Simulation ueber dem Tagesziel + gelernte Prognose-Korrektur (0.96.1, Dietmar 07.11.2026)\n";
 $ems = freshEms();
@@ -3528,6 +3528,11 @@ check('Mit Bewertung der Akkuenergie (2,105 kWh x 0,38 EUR) nahezu ausgeglichen'
 $r2 = call($ems, 'selfBalanceCompute', [[0], [0], [-4000], [0.40], 50.0, $par]);
 check('Ohne Ladestand-Reihe keine faire Bewertung (null statt Annahme)', $r2['fair'] === null, json_encode($r2));
 check('Summe nutzt die faire Bewertung, wenn vorhanden', call($ems, 'selfBalanceSum', [['a' => ['ist' => 2, 'auto' => 1, 'fair' => 0.5], 'b' => ['ist' => 1, 'auto' => 1]], 30])['fair'] == 0.5);
+
+echo "\n8ak) Grid-Rewards-Verguetung in der Bilanz (0.97.2)\n";
+$ems = freshEms();
+check('Summe zaehlt die Grid-Rewards-Verguetung je Tag zusammen', abs(call($ems, 'selfBalanceSum', [['a' => ['ist' => 1, 'auto' => 1, 'reward' => 0.25], 'b' => ['ist' => 1, 'auto' => 1, 'reward' => 0.5], 'c' => ['ist' => 1, 'auto' => 1]], 30])['reward'] - 0.75) < 0.001);
+check('Ohne Tibber-Instanz liefert die Verguetung null (keine Annahme)', call($ems, 'gridRewardEarnedEur', [1, strtotime('today'), strtotime('tomorrow')]) === null);
 
 echo "\n20z) Bedarfsabsicherung und manuelle Plan-Eintraege (0.73.0/0.74.0, Dietmar 05.10.2026)\n";
 $ems = freshEms();
