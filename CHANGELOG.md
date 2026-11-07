@@ -2,6 +2,9 @@
 
 Ältere Versionen: [CHANGELOG-Archiv.md](CHANGELOG-Archiv.md)
 
+## 0.97.0 (2026-11-07)
+- **EMS-Bilanz: wohin ging das Geld (Auftrag Dietmar 07.11.2026):** Je Tag und als 30-Tage-Summe schlüsselt die Selbstbilanz aus den gemessenen Flüssen auf: Netzladen (kWh, Ø Kaufpreis und Ø Preis, den der Akku an dem Tag ersetzte), Halten (Netzbezug, während der Akku ruhte und Ladung hatte), PV-Einspeisung trotz Platz im Akku (Ladestand unter 95 %, mit geschätztem entgangenem Betrag: Tagesschnitt des Bezugs × Wirkungsgrad minus Vergütung) und Entladen ins Netz. Damit lässt sich je Tag erkennen, welche Regel Geld gekostet hat. Auch in `EMS_GetSelfBalance()` (`cat` je Tag, `categories30`). Nach dem Update einmal „Letzte 30 Tage neu rechnen“. Sechs neue Prüfungen, eine Mutation nachweislich rot.
+
 ## 0.96.2 (2026-11-07)
 - **Selbstbilanz: Automatik trägt ihren eigenen Ladestand weiter (live-Fund 07.11.2026):** Die Simulation der reinen WR-Automatik startete jeden Tag mit dem echten Ladestand. Den hatte aber das EMS nachts mit gekauftem Strom gefüllt, die Automatik bekam diese Energie geschenkt (30 Tage: Automatik 53 € statt rund 120 €). Jetzt rechnet die Selbstbilanz vom ältesten Tag an und übernimmt jeweils den Ladestand der Automatik vom Vortag; nur der erste Tag startet mit dem echten Wert. Nach dem Update einmal „Letzte 30 Tage neu rechnen“ drücken.
 

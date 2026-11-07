@@ -3503,6 +3503,20 @@ call($ems, 'forecastLearnRecord', [array_fill(0, 192, 500.0), array_fill(0, 192,
 $fr2 = json_decode($GLOBALS['ATTR'][EMS_IID]['FcLearn'], true);
 check('Spaetere Plaene ueberschreiben die Tagesprognose nicht', $fr2[$today]['pvFc'] == 48.0);
 
+echo "\n8ai) Selbstbilanz: wohin ging das Geld (0.97.0)\n";
+$ems = freshEms();
+$par = ['eta' => 0.95, 'capKwh' => 40.0, 'socMinPct' => 10.0, 'feed' => 0.1836, 'chKwh' => 6.0, 'disKwh' => 6.0];
+// Slot0: Netzladen 8 kW bei 30 ct; Slot1: Halten (Akku 0 W, Haus 2 kW aus Netz) bei 40 ct; Slot2: PV 6 kW, Haus 1 kW, Akku 0 W, 5 kW Einspeisung bei SOC 60 %; Slot3: Akku entlaedt 4 kW, Haus 1 kW, 3 kW ins Netz
+$r = call($ems, 'selfBalanceCompute', [[0, 0, 6000, 0], [-8000, 0, 0, 4000], [-8000, -2000, 5000, 3000], [0.30, 0.40, 0.40, 0.50], 50.0, $par, [50, 70, 60, 60]]);
+$c = $r['cat'];
+check('Netzladen erkannt: 2 kWh zu 0,60 EUR', abs($c['gridChargeKwh'] - 2.0) < 0.01 && abs($c['gridChargeEur'] - 0.60) < 0.01, json_encode($c));
+check('Halten erkannt: 0,5 kWh zu 0,20 EUR', abs($c['holdKwh'] - 0.5) < 0.01 && abs($c['holdEur'] - 0.20) < 0.01, json_encode($c));
+check('PV-Einspeisung trotz Platz (SOC 60 %): 1,25 kWh, Verlust geschaetzt > 0', abs($c['pvExportKwh'] - 1.25) < 0.01 && $c['pvExportLossEur'] > 0, json_encode($c));
+check('Akku ins Netz: 0,75 kWh', abs($c['batExportKwh'] - 0.75) < 0.01, json_encode($c));
+check('Klartext nennt alle vier Posten', substr_count(call($ems, 'selfBalanceCatText', [$c]), ' · ') === 3, call($ems, 'selfBalanceCatText', [$c]));
+$r2 = call($ems, 'selfBalanceCompute', [[0], [0], [-2000], [0.40], 50.0, $par]);
+check('Ohne Ladestand-Reihe kein Halten-Befund (keine Annahme)', $r2['cat']['holdKwh'] == 0.0, json_encode($r2['cat']));
+
 echo "\n20z) Bedarfsabsicherung und manuelle Plan-Eintraege (0.73.0/0.74.0, Dietmar 05.10.2026)\n";
 $ems = freshEms();
 $ctxA = ['avgHouseW' => 300.0, 'socMin' => 0.0, 'socReserve' => 10.0, 'capKwh' => 40.0, 'chargeKw' => 20.0, 'chargeCurve' => [],

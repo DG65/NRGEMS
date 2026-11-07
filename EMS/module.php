@@ -41,7 +41,7 @@ define('EMS_LOG_VERBOSE',     2);
 // Formular-Konvention (siehe EMS/SUITE.md "Einheitliche Formular-Optik"):
 // Was-ist-Neu-Panel ist versionsscharf dismissible, Referenzmuster InverterHub.
 define('EMS_COLOR_AUTO', 0x2E8B3D); // Gruen: Wert wurde automatisch uebernommen (🔗-Zeilen im Formular)
-define('EMS_NEWS_VERSION', '0.96.2');
+define('EMS_NEWS_VERSION', '0.97.0');
 define('EMS_AI_DEFAULT_CLAUDE', 'claude-opus-5-5');
 define('EMS_AI_DEFAULT_OLLAMA', 'llama3.1');
 
@@ -808,6 +808,10 @@ class EMS extends IPSModule
                 'caption'  => '🆕 Neu in Version ' . EMS_NEWS_VERSION,
                 'expanded' => true,
                 'items'    => array(
+                    array(
+                        'type'    => 'Label',
+                        'caption' => '• NEU: Die EMS-Bilanz zeigt je Tag und für 30 Tage, wohin das Geld ging: Netzladen (Menge, Ø Preis und der Preis, den der Akku ersetzte), Halten (Netzbezug bei ruhendem Akku), PV-Einspeisung trotz Platz im Akku (mit geschätztem entgangenem Betrag) und Entladen ins Netz. Nach dem Update einmal „Letzte 30 Tage neu rechnen“ drücken.'
+                    ),
                     array(
                         'type'    => 'Label',
                         'caption' => '• KORRIGIERT: Nachtladen. Der Bedarf bis zur nächsten Nacht wird jetzt mit einer gelernten Prognose-Korrektur gerechnet (PV und Hauslast der letzten Tage gegen die Prognose); bis genug Tage gelernt sind, vorsichtig mit 70 % der PV und 115 % der Last. Außerdem rechnet der Plan richtig, dass die WR-Automatik den Akku auch über dem Tagesziel weiter mit PV-Überschuss lädt.'
@@ -6479,8 +6483,11 @@ class EMS extends IPSModule
     // Grundlage, damit das EMS sieht, ob seine Strategien Geld bringen. Rein lesend aus dem Archiv.
 
     /** Reine Rechnung je Tag. Leistungen in W je Viertelstunde (Netz: + = Einspeisung, Akku: + = Entladen). */
-    private function selfBalanceCompute(array $pvW, array $batW, array $gridW, array $price, float $socStartPct, array $p): array
+    private function selfBalanceCompute(array $pvW, array $batW, array $gridW, array $price, float $socStartPct, array $p, array $socPct = array()): array
     {
+        // 0.97.0: Aufschluesselung "wohin ging das Geld" aus den gemessenen Fluessen (W je Viertelstunde)
+        $cat = array('gridChargeKwh' => 0.0, 'gridChargeEur' => 0.0, 'holdKwh' => 0.0, 'holdEur' => 0.0,
+                     'pvExportKwh' => 0.0, 'batExportKwh' => 0.0, 'dischargeKwh' => 0.0, 'dischargeValueEur' => 0.0);
         $eta = $p['eta']; $cap = $p['capKwh']; $eMin = $cap * $p['socMinPct'] / 100.0; $feed = $p['feed'];
         $e = max($eMin, min($cap, $cap * $socStartPct / 100.0));
         $ist = 0.0; $auto = 0.0; $imp = 0.0; $exp = 0.0; $pvSum = 0.0; $loadSum = 0.0;
@@ -6493,6 +6500,18 @@ class EMS extends IPSModule
             $pv = max(0.0, (float)$pvW[$k]) / 4000.0;
             $load = max(0.0, ((float)$pvW[$k] + (float)$batW[$k] - (float)$gridW[$k]) / 4000.0);
             $pvSum += $pv; $loadSum += $load;
+            $b = (float)$batW[$k]; $pvw = max(0.0, (float)$pvW[$k]); $soc = isset($socPct[$k]) ? (float)$socPct[$k] : null;
+            if ($b < -300.0 && -$b > $pvw + 300.0) {                                  // Netzladen: Akku nimmt mehr auf als die PV liefert
+                $gk = (-$b - $pvw) / 4000.0; $cat['gridChargeKwh'] += $gk; $cat['gridChargeEur'] += $gk * $pk;
+            }
+            if ($g > 0.075 && abs($b) < 150.0 && $load > $pv && $soc !== null && $soc > $p['socMinPct'] + 5.0) { // Halten: Haus aus dem Netz, Akku ruht
+                $cat['holdKwh'] += $g; $cat['holdEur'] += $g * $pk;
+            }
+            if ($g < -0.05 && $b > -300.0 && $b <= 300.0 && $soc !== null && $soc < 95.0) {        // PV eingespeist, obwohl der Akku Platz hatte
+                $cat['pvExportKwh'] += -$g;
+            }
+            if ($b > 300.0 && $g < -0.05) { $cat['batExportKwh'] += min(-$g, $b / 4000.0); } // Akku entlaedt ins Netz
+            if ($b > 0.0) { $cat['dischargeKwh'] += $b / 4000.0; $cat['dischargeValueEur'] += $b / 4000.0 * $pk; }
             $need = $load - $pv;
             if ($need < 0) {                                                        // Ueberschuss -> Akku (DC, ohne Wandlung)
                 $ch = min(-$need, $p['chKwh'], $cap - $e); $e += $ch; $need += $ch;
@@ -6501,8 +6520,12 @@ class EMS extends IPSModule
             }
             $auto += $need > 0 ? $need * $pk : $need * $feed;
         }
+        // Schaetzung: verdraengte PV haette spaeter Bezug zum Tagesschnitt ersetzt (eine Wandlung), bekam nur die Verguetung
+        $avgImp = $imp > 0.01 ? (($ist + $exp * $feed) / $imp) : 0.0;
+        $cat['pvExportLossEur'] = $cat['pvExportKwh'] * max(0.0, $avgImp * $eta - $feed);
+        foreach ($cat as $kk => $vv) { $cat[$kk] = round($vv, 2); }
         return array('ist' => round($ist, 2), 'auto' => round($auto, 2), 'imp' => round($imp, 1), 'exp' => round($exp, 1),
-                     'pv' => round($pvSum, 1), 'load' => round($loadSum, 1),
+                     'pv' => round($pvSum, 1), 'load' => round($loadSum, 1), 'cat' => $cat,
                      'endSocAuto' => round($e / $cap * 100, 1));
     }
 
@@ -6535,6 +6558,8 @@ class EMS extends IPSModule
         list($grid, $m1) = $series($ids['grid']);
         list($pv, $m2) = $series($ids['pv']);
         list($bat, $m3) = $series($ids['bat']);
+        $socSeries = array();
+        if ((int)($inv['socID'] ?? 0) > 0 && @AC_GetLoggingStatus($archive, (int)$inv['socID'])) { list($socSeries) = $series((int)$inv['socID']); }
         foreach ((array)($inv['extraPvIDs'] ?? array()) as $xid) {
             if ((int)$xid > 0 && @AC_GetLoggingStatus($archive, (int)$xid)) { list($xs) = $series((int)$xid); for ($k = 0; $k < $n; $k++) { $pv[$k] += $xs[$k]; } }
         }
@@ -6559,7 +6584,7 @@ class EMS extends IPSModule
         $lim = $this->getBatteryPowerLimitsKw($inv, (float)$this->ReadPropertyInteger('EMS_Max_Power_W'), $this->batteryCapacityKwh());
         return $this->selfBalanceCompute($pv, $bat, $grid, $price, $socStart, array(
             'eta' => $this->convEff(), 'capKwh' => $this->batteryCapacityKwh(), 'socMinPct' => (float)$this->ReadPropertyInteger('BAT_SOC_Min'),
-            'feed' => $this->planFeedTariffEur(), 'chKwh' => (float)$lim['chargeKw'] / 4.0, 'disKwh' => (float)($lim['dischargeKw'] ?? $lim['chargeKw']) / 4.0));
+            'feed' => $this->planFeedTariffEur(), 'chKwh' => (float)$lim['chargeKw'] / 4.0, 'disKwh' => (float)($lim['dischargeKw'] ?? $lim['chargeKw']) / 4.0), $socSeries);
     }
 
     /** Je Aufruf hoechstens einen fehlenden Tag nachrechnen (bis 30 Tage zurueck), danach Summe aktualisieren. */
@@ -6583,6 +6608,32 @@ class EMS extends IPSModule
         $this->WriteAttributeString('SelfBalance', json_encode($hist));
         $sum = $this->selfBalanceSum($hist, 30);
         if ($sum['days'] > 0) { $this->SetValue('EMS_SelfBalance30', round($sum['auto'] - $sum['ist'], 2)); }
+    }
+
+    private function selfBalanceCatText(array $c): string
+    {
+        $dis = (float)($c['dischargeKwh'] ?? 0);
+        $parts = array();
+        if (($c['gridChargeKwh'] ?? 0) >= 0.5) {
+            $parts[] = sprintf('Netzladen %.1f kWh zu Ø %.1f ct%s', $c['gridChargeKwh'], $c['gridChargeEur'] / $c['gridChargeKwh'] * 100,
+                $dis >= 0.5 ? sprintf(' (Akku ersetzte Ø %.1f ct)', $c['dischargeValueEur'] / $dis * 100) : '');
+        }
+        if (($c['holdKwh'] ?? 0) >= 0.5) { $parts[] = sprintf('Halten %.1f kWh Netzbezug zu Ø %.1f ct', $c['holdKwh'], $c['holdEur'] / $c['holdKwh'] * 100); }
+        if (($c['pvExportKwh'] ?? 0) >= 0.5) { $parts[] = sprintf('PV eingespeist trotz Platz im Akku %.1f kWh (≈ %.2f € entgangen)', $c['pvExportKwh'], $c['pvExportLossEur'] ?? 0); }
+        if (($c['batExportKwh'] ?? 0) >= 0.5) { $parts[] = sprintf('Akku ins Netz entladen %.1f kWh', $c['batExportKwh']); }
+        return empty($parts) ? 'keine Auffälligkeiten' : implode(' · ', $parts);
+    }
+
+    private function selfBalanceCatSum(array $hist, int $days): ?array
+    {
+        $out = null; $n = 0;
+        foreach ($hist as $r) {
+            if ($n >= $days) { break; }
+            if (!isset($r['cat'])) { continue; }
+            $n++;
+            foreach ($r['cat'] as $k => $v) { $out[$k] = ($out[$k] ?? 0.0) + (float)$v; }
+        }
+        return $out;
     }
 
     private function selfBalanceSum(array $hist, int $days): array
@@ -6647,6 +6698,7 @@ class EMS extends IPSModule
         return json_encode(array('contractVersion' => '1.0', 'unit' => 'EUR', 'days' => $hist,
             'sum30' => array('ist' => round($sum['ist'], 2), 'auto' => round($sum['auto'], 2), 'saved' => round($sum['auto'] - $sum['ist'], 2), 'days' => $sum['days']),
             'forecastFactors' => $this->forecastFactors(),
+            'categories30' => $this->selfBalanceCatSum($hist, 30),
             'assumptions' => array('etaPerConversion' => $this->convEff(), 'capKwh' => $this->batteryCapacityKwh(), 'feedTariffCt' => round($this->planFeedTariffEur() * 100, 2))),
             JSON_UNESCAPED_UNICODE);
     }
@@ -6669,6 +6721,8 @@ class EMS extends IPSModule
         $sum = $this->selfBalanceSum($hist, 30);
         $items = array(array('type' => 'Label', 'caption' => 'Das EMS vergleicht jeden Tag die tatsächlichen Netzkosten (Bezug × Preis minus Einspeisung × Vergütung, gemessen) mit dem, was der Wechselrichter allein in Automatik gekostet hätte (simuliert mit derselben Hauslast und PV). So sieht man, ob die Steuerung Geld bringt oder kostet.'));
         if ($sum['days'] > 0) {
+            $cs = $this->selfBalanceCatSum($hist, 30);
+            if ($cs !== null) { $items[] = array('type' => 'Label', 'caption' => 'Wohin ging das Geld (30 Tage): ' . $this->selfBalanceCatText($cs)); }
             $diff = $sum['auto'] - $sum['ist'];
             $items[] = array('type' => 'Label', 'bold' => true, 'caption' => sprintf('%s Letzte %d Tage: mit EMS %.2f €, reine Automatik %.2f € → %s %.2f €',
                 $diff >= 0 ? '✅' : '⚠️', $sum['days'], $sum['ist'], $sum['auto'], $diff >= 0 ? 'gespart' : 'Mehrkosten', abs($diff)));
@@ -6679,6 +6733,7 @@ class EMS extends IPSModule
             $items[] = array('type' => 'Label', 'caption' => isset($r['ist'])
                 ? sprintf('%s: mit EMS %.2f €, Automatik %.2f € (%+.2f €), Bezug %.1f kWh, Einspeisung %.1f kWh', date('d.m.', strtotime($date)), $r['ist'], $r['auto'], $r['auto'] - $r['ist'], $r['imp'], $r['exp'])
                 : sprintf('%s: nicht auswertbar – %s', date('d.m.', strtotime($date)), $r['error'] ?? '?'));
+            if (isset($r['cat'])) { $items[] = array('type' => 'Label', 'caption' => '      ' . $this->selfBalanceCatText($r['cat'])); }
         }
         $f = $this->forecastFactors();
         $items[] = array('type' => 'Label', 'caption' => $f['learned']
