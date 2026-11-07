@@ -2,6 +2,9 @@
 
 Ältere Versionen: [CHANGELOG-Archiv.md](CHANGELOG-Archiv.md)
 
+## 0.96.2 (2026-11-07)
+- **Selbstbilanz: Automatik trägt ihren eigenen Ladestand weiter (live-Fund 07.11.2026):** Die Simulation der reinen WR-Automatik startete jeden Tag mit dem echten Ladestand. Den hatte aber das EMS nachts mit gekauftem Strom gefüllt, die Automatik bekam diese Energie geschenkt (30 Tage: Automatik 53 € statt rund 120 €). Jetzt rechnet die Selbstbilanz vom ältesten Tag an und übernimmt jeweils den Ladestand der Automatik vom Vortag; nur der erste Tag startet mit dem echten Wert. Nach dem Update einmal „Letzte 30 Tage neu rechnen“ drücken.
+
 ## 0.96.1 (2026-11-07)
 - **Nachtladen mit gelernter Prognose-Korrektur (Befund Dietmar 07.11.2026):** Zwei Nächte hintereinander hielt die Bedarfsregel aus 0.93.0 einen fast leeren Akku für ausreichend (Plan 07.→08.11.: nur auf 25 % laden bei 36 ct Nacht- und 60 ct Abendpreis, morgens dann Akku halten und zu 44 ct kaufen), weil die vorsichtige PV-Prognose (p10) und die Lastprognose zu optimistisch waren. Jetzt hält das EMS je Tag fest, was die Prognosen erwartet haben und was tatsächlich kam (aus der Selbstbilanz), und korrigiert die Bedarfsrechnung des Nachtfensters mit dem Verhältnis Ist/Prognose der letzten 7 Tage (PV 0,2–1,3, Last 0,8–1,8). Bis mindestens 3 Tage gelernt sind, gilt vorsichtig PV ×0,7 und Last ×1,15. Die Faktoren stehen im Bereich „📊 EMS-Bilanz“ und in `EMS_GetSelfBalance()`.
 - **Simulation über dem Tagesziel:** Liegt der Akku über dem Tagesziel, nahm der Plan an, der PV-Überschuss werde eingespeist, und ließ den Ladestand stehen. Die WR-Automatik lädt aber weiter bis voll. Der Plan rechnet jetzt so; der Akku war für den Abend sonst zu knapp gerechnet. Neun neue Prüfungen, zwei Mutationen nachweislich rot.

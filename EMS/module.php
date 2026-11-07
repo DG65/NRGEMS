@@ -41,7 +41,7 @@ define('EMS_LOG_VERBOSE',     2);
 // Formular-Konvention (siehe EMS/SUITE.md "Einheitliche Formular-Optik"):
 // Was-ist-Neu-Panel ist versionsscharf dismissible, Referenzmuster InverterHub.
 define('EMS_COLOR_AUTO', 0x2E8B3D); // Gruen: Wert wurde automatisch uebernommen (🔗-Zeilen im Formular)
-define('EMS_NEWS_VERSION', '0.96.1');
+define('EMS_NEWS_VERSION', '0.96.2');
 define('EMS_AI_DEFAULT_CLAUDE', 'claude-opus-5-5');
 define('EMS_AI_DEFAULT_OLLAMA', 'llama3.1');
 
@@ -6507,7 +6507,7 @@ class EMS extends IPSModule
     }
 
     /** Archivdaten eines Tages laden und rechnen; null + Grund, wenn Daten fehlen. */
-    private function selfBalanceDay(int $day0): array
+    private function selfBalanceDay(int $day0, ?float $autoStartSoc = null): array
     {
         $archive = $this->getArchiveInstanceId();
         $inv = $this->getInverterEntry();
@@ -6548,7 +6548,11 @@ class EMS extends IPSModule
             $price[$k] = $cur;
         }
         $socStart = 50.0;
-        if ((int)($inv['socID'] ?? 0) > 0) {
+        if ($autoStartSoc !== null) {
+            // 0.96.2: Die Automatik startet mit IHREM Ladestand vom Vortag, nicht mit dem echten (sonst bekaeme sie die
+            // Energie geschenkt, die das EMS nachts teuer gekauft hat -- live 07.11.: Automatik 53 statt ~120 EUR).
+            $socStart = $autoStartSoc;
+        } elseif ((int)($inv['socID'] ?? 0) > 0) {
             $first = (array)@AC_GetLoggedValues($archive, (int)$inv['socID'], $day0 - 3600, $day0, 1);
             if (!empty($first)) { $socStart = (float)$first[0]['Value']; }
         }
@@ -6563,11 +6567,13 @@ class EMS extends IPSModule
     {
         $hist = json_decode($this->ReadAttributeString('SelfBalance'), true) ?: array();
         $done = 0;
-        for ($d = 1; $d <= 30 && $done < $maxDays; $d++) {
+        // aeltester Tag zuerst, damit die Automatik-Simulation ihren Ladestand von Tag zu Tag weitertraegt
+        for ($d = 30; $d >= 1 && $done < $maxDays; $d--) {
             $day0 = strtotime("today -$d days");
             $key = date('Y-m-d', $day0);
             if (isset($hist[$key])) { continue; }
-            $hist[$key] = $this->selfBalanceDay($day0);
+            $prev = $hist[date('Y-m-d', strtotime("today -" . ($d + 1) . " days"))] ?? null;
+            $hist[$key] = $this->selfBalanceDay($day0, isset($prev['endSocAuto']) ? (float)$prev['endSocAuto'] : null);
             if (isset($hist[$key]['pv'])) { $this->forecastLearnActual($key, (float)$hist[$key]['pv'], (float)$hist[$key]['load']); }
             $done++;
         }
