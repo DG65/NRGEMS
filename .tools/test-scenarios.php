@@ -3456,6 +3456,23 @@ check('Antwort Ollama: message.content', call($ems, 'parseAiResponse', [2, 200, 
 $ctx = json_decode(call($ems, 'GetExplainContext'), true);
 check('Kontext enthaelt keinen Schluessel und die Vorzeichen-Erklaerung', strpos(json_encode($ctx), 'sk-test') === false && isset($ctx['hinweis_vorzeichen'], $ctx['anlage'], $ctx['plan_naechste_6h']), json_encode($ctx));
 
+echo "\n8ag) Selbstbilanz: Ist gegen reine WR-Automatik (0.96.0, Dietmar 07.11.2026)\n";
+$ems = freshEms();
+$par = ['eta' => 0.95, 'capKwh' => 40.0, 'socMinPct' => 10.0, 'feed' => 0.1836, 'chKwh' => 6.0, 'disKwh' => 6.0];
+// 4 Viertelstunden: Haus 4 kW, keine PV. Ist: Netzladen 8 kW (Netz -12 kW) in Slot 0 bei 10 ct, dann Akku deckt bei 50 ct.
+$r = call($ems, 'selfBalanceCompute', [[0,0,0,0], [-8000, 4000, 4000, 0], [-12000, 0, 0, -4000], [0.10, 0.50, 0.50, 0.50], 50.0, $par]);
+check('Ist = gemessener Bezug x Preis (3 kWh x 0,10 + 1 kWh x 0,50 = 0,80 EUR)', abs($r['ist'] - 0.80) < 0.01, json_encode($r));
+check('Automatik deckt das Haus aus dem Akku (50 % von 40 kWh reichen), Kosten 0', abs($r['auto']) < 0.01, json_encode($r));
+check('Bezug in kWh wird mitgezaehlt', abs($r['imp'] - 4.0) < 0.01, json_encode($r));
+// Akku leer (Start 10 %): Automatik muss alles kaufen
+$r2 = call($ems, 'selfBalanceCompute', [[0,0], [0,0], [-4000,-4000], [0.40, 0.60], 10.0, $par]);
+check('Leerer Akku: Automatik kauft wie Ist (1x0,40 + 1x0,60 = 1,00)', abs($r2['auto'] - 1.00) < 0.01 && abs($r2['ist'] - 1.00) < 0.01, json_encode($r2));
+// PV-Ueberschuss: Automatik speichert ohne Wandlungsverlust, Ist hat eingespeist
+$r3 = call($ems, 'selfBalanceCompute', [[8000, 0], [0, 0], [4000, -4000], [0.30, 0.50], 10.0, $par]);
+check('Ueberschuss wird in der Automatik gespeichert und spaeter genutzt (guenstiger als Ist)', $r3['auto'] < $r3['ist'], json_encode($r3));
+check('Ist rechnet Einspeisung mit Verguetung (1 kWh x 0,1836 Gutschrift)', abs($r3['ist'] - (0.50 - 0.1836)) < 0.01, json_encode($r3));
+check('Summe ueber Tage: nur Tage mit Werten, hoechstens N', call($ems, 'selfBalanceSum', [['2026-11-02' => ['ist' => 2, 'auto' => 1], '2026-11-01' => ['error' => 'x'], '2026-10-31' => ['ist' => 3, 'auto' => 5]], 30]) === ['ist' => 5.0, 'auto' => 6.0, 'days' => 2]);
+
 echo "\n20z) Bedarfsabsicherung und manuelle Plan-Eintraege (0.73.0/0.74.0, Dietmar 05.10.2026)\n";
 $ems = freshEms();
 $ctxA = ['avgHouseW' => 300.0, 'socMin' => 0.0, 'socReserve' => 10.0, 'capKwh' => 40.0, 'chargeKw' => 20.0, 'chargeCurve' => [],

@@ -41,7 +41,7 @@ define('EMS_LOG_VERBOSE',     2);
 // Formular-Konvention (siehe EMS/SUITE.md "Einheitliche Formular-Optik"):
 // Was-ist-Neu-Panel ist versionsscharf dismissible, Referenzmuster InverterHub.
 define('EMS_COLOR_AUTO', 0x2E8B3D); // Gruen: Wert wurde automatisch uebernommen (🔗-Zeilen im Formular)
-define('EMS_NEWS_VERSION', '0.95.0');
+define('EMS_NEWS_VERSION', '0.96.0');
 define('EMS_AI_DEFAULT_CLAUDE', 'claude-opus-5-5');
 define('EMS_AI_DEFAULT_OLLAMA', 'llama3.1');
 
@@ -603,6 +603,10 @@ class EMS extends IPSModule
         $this->RegisterPropertyString('AI_Model', '');                          // leer = Standardmodell des Anbieters
         $this->RegisterPropertyString('AI_OllamaUrl', 'http://localhost:11434');
         $this->RegisterAttributeString('AI_ApiKey', '');                        // Zugangsdaten im Attribut, nie als Property (Verbund-Regel)
+
+        // ── Selbstbilanz (0.96.0, Dietmar 07.11.2026: "du lernst nicht aus der Vergangenheit") ──
+        $this->RegisterAttributeString('SelfBalance', '{}');                   // {"Y-m-d": {ist, auto, imp, exp}} je Tag, 60 Tage
+        $this->RegisterVariableFloat('EMS_SelfBalance30', 'EMS-Bilanz 30 Tage gegenüber WR-Automatik (EUR, + = gespart)', '', 110);
     }
 
     public function Destroy()
@@ -787,6 +791,7 @@ class EMS extends IPSModule
         ));
 
         // 0a. Logging nur auf Klick (Symcon-Review 30.10.2026), erscheint nur, solange etwas fehlt
+        $form['elements'][] = $this->selfBalancePanel();
         $archPanel = $this->archivingPanel();
         if ($archPanel !== null) { array_unshift($form['elements'], $archPanel); }
 
@@ -802,6 +807,10 @@ class EMS extends IPSModule
                 'caption'  => '🆕 Neu in Version ' . EMS_NEWS_VERSION,
                 'expanded' => true,
                 'items'    => array(
+                    array(
+                        'type'    => 'Label',
+                        'caption' => '• NEU: „📊 EMS-Bilanz“: Das EMS vergleicht jeden Tag die echten Netzkosten mit dem, was die reine Wechselrichter-Automatik gekostet hätte, und zeigt die Summe der letzten 30 Tage (Variable „EMS-Bilanz 30 Tage“). Braucht das Logging von Netz-, PV- und Akkuleistung sowie des Preises.'
+                    ),
                     array(
                         'type'    => 'Label',
                         'caption' => '• NEU: KI-Assistent (optional, standardmäßig aus): Unter „🤖 KI-Assistent“ beantwortet Claude (eigener Schlüssel) oder ein lokales Ollama-Modell Fragen wie „Warum lädt der Akku gerade?“ aus Tagesplan, Preisen und Messwerten. Die KI erklärt nur, sie steuert nichts.'
@@ -1439,6 +1448,7 @@ class EMS extends IPSModule
         // Diagnose-/Melde-Vorgang, keine Steuerentscheidung, siehe
         // checkFederationHealthAlarm(). Fehler hier duerfen NICHT den
         // ConsecutiveErrors-Fallback-Mechanismus fuer echte Steuerfehler ausloesen.
+        try { $this->selfBalanceTick(); } catch (Throwable $e) { $this->emsLog(EMS_LOG_BASIC, 'Selbstbilanz übersprungen: ' . $e->getMessage()); }
         try {
             $this->Discover(); // ruft GetFederationHealth() intern auf
             $this->checkFederationHealthAlarm();
@@ -6268,7 +6278,7 @@ class EMS extends IPSModule
      */
     private function archivingIdents(): array
     {
-        return array('EMS_HousePower', 'EMS_GridRewards', 'EMS_Mode', 'EMS_ExportOverlapToday_Wh', 'EMS_ExportOverlapToday_Min', 'EMS_BatCostCt', 'EMS_BatCostOppCt');
+        return array('EMS_TibberPrice', 'EMS_HousePower', 'EMS_GridRewards', 'EMS_Mode', 'EMS_ExportOverlapToday_Wh', 'EMS_ExportOverlapToday_Min', 'EMS_BatCostCt', 'EMS_BatCostOppCt');
     }
 
     /** Variablen aus archivingIdents(), die noch nicht geloggt werden (Variablen-IDs). */
@@ -6442,6 +6452,166 @@ class EMS extends IPSModule
         $out = trim($out);
         if (($d['stop_reason'] ?? '') === 'max_tokens') { $out .= ' …(gekürzt)'; }
         return $out !== '' ? $out : 'Die KI hat keine Antwort geliefert.';
+    }
+
+    // ── Selbstbilanz ─────────────────────────────────────────────────────────
+    // Jeden Tag: was hat das Netz mit EMS gekostet (Ist, gemessen am Netzzaehler) und was haette die reine
+    // WR-Automatik gekostet (simuliert mit derselben Hauslast/PV und den Wirkungsgrad-Annahmen des EMS)?
+    // Grundlage, damit das EMS sieht, ob seine Strategien Geld bringen. Rein lesend aus dem Archiv.
+
+    /** Reine Rechnung je Tag. Leistungen in W je Viertelstunde (Netz: + = Einspeisung, Akku: + = Entladen). */
+    private function selfBalanceCompute(array $pvW, array $batW, array $gridW, array $price, float $socStartPct, array $p): array
+    {
+        $eta = $p['eta']; $cap = $p['capKwh']; $eMin = $cap * $p['socMinPct'] / 100.0; $feed = $p['feed'];
+        $e = max($eMin, min($cap, $cap * $socStartPct / 100.0));
+        $ist = 0.0; $auto = 0.0; $imp = 0.0; $exp = 0.0;
+        $n = count($gridW);
+        for ($k = 0; $k < $n; $k++) {
+            $pk = (float)$price[$k];
+            $g = -(float)$gridW[$k] / 4000.0;                                       // kWh, + = Bezug
+            $ist += $g > 0 ? $g * $pk : $g * $feed;
+            if ($g > 0) { $imp += $g; } else { $exp -= $g; }
+            $pv = max(0.0, (float)$pvW[$k]) / 4000.0;
+            $load = max(0.0, ((float)$pvW[$k] + (float)$batW[$k] - (float)$gridW[$k]) / 4000.0);
+            $need = $load - $pv;
+            if ($need < 0) {                                                        // Ueberschuss -> Akku (DC, ohne Wandlung)
+                $ch = min(-$need, $p['chKwh'], $cap - $e); $e += $ch; $need += $ch;
+            } else {                                                                // Bedarf -> Akku (eine Wandlung)
+                $dis = max(0.0, min($need / $eta, $p['disKwh'], $e - $eMin)); $e -= $dis; $need -= $dis * $eta;
+            }
+            $auto += $need > 0 ? $need * $pk : $need * $feed;
+        }
+        return array('ist' => round($ist, 2), 'auto' => round($auto, 2), 'imp' => round($imp, 1), 'exp' => round($exp, 1),
+                     'endSocAuto' => round($e / $cap * 100, 1));
+    }
+
+    /** Archivdaten eines Tages laden und rechnen; null + Grund, wenn Daten fehlen. */
+    private function selfBalanceDay(int $day0): array
+    {
+        $archive = $this->getArchiveInstanceId();
+        $inv = $this->getInverterEntry();
+        if ($archive <= 0 || !function_exists('AC_GetAggregatedValues')) { return array('error' => 'Kein Archiv gefunden.'); }
+        if ($inv === null || (int)($inv['gridPowerID'] ?? 0) <= 0 || (int)($inv['pvPowerID'] ?? 0) <= 0 || (int)($inv['batPowerID'] ?? 0) <= 0) {
+            return array('error' => 'Netz-, PV- oder Akkuleistung des Wechselrichters nicht verfügbar.');
+        }
+        $ids = array('grid' => (int)$inv['gridPowerID'], 'pv' => (int)$inv['pvPowerID'], 'bat' => (int)$inv['batPowerID']);
+        foreach ($ids as $name => $vid) {
+            if (!@AC_GetLoggingStatus($archive, $vid)) { return array('error' => sprintf('Variable #%d (%s) wird nicht geloggt.', $vid, $name)); }
+        }
+        $priceId = $this->GetIDForIdent('EMS_TibberPrice');
+        if (!@AC_GetLoggingStatus($archive, $priceId)) { return array('error' => 'Der Preis (Tibber Preis) wird nicht geloggt.'); }
+        $n = 96; $day1 = $day0 + 86400; $n = (int)round(($day1 - $day0) / 900); // Zeitumstellung: 92/100 Viertelstunden
+        $series = function (int $vid) use ($archive, $day0, $day1, $n) {
+            $sum = array_fill(0, $n, 0.0); $cnt = array_fill(0, $n, 0);
+            foreach ((array)@AC_GetAggregatedValues($archive, $vid, 5, $day0, $day1 - 1, 0) as $x) {
+                $k = intdiv((int)$x['TimeStamp'] - $day0, 900);
+                if ($k >= 0 && $k < $n) { $sum[$k] += (float)$x['Avg']; $cnt[$k]++; }
+            }
+            $miss = 0;
+            for ($k = 0; $k < $n; $k++) { if ($cnt[$k] > 0) { $sum[$k] /= $cnt[$k]; } else { $miss++; } }
+            return array($sum, $miss);
+        };
+        list($grid, $m1) = $series($ids['grid']);
+        list($pv, $m2) = $series($ids['pv']);
+        list($bat, $m3) = $series($ids['bat']);
+        foreach ((array)($inv['extraPvIDs'] ?? array()) as $xid) {
+            if ((int)$xid > 0 && @AC_GetLoggingStatus($archive, (int)$xid)) { list($xs) = $series((int)$xid); for ($k = 0; $k < $n; $k++) { $pv[$k] += $xs[$k]; } }
+        }
+        if (max($m1, $m2, $m3) > 8) { return array('error' => 'Zu viele Lücken im Archiv (mehr als 2 Stunden).'); }
+        $log = array_reverse((array)@AC_GetLoggedValues($archive, $priceId, $day0 - 86400, $day1, 0));
+        $price = array(); $j = 0; $cur = null;
+        for ($k = 0; $k < $n; $k++) {
+            $ts = $day0 + $k * 900 + 450;
+            while ($j < count($log) && (int)$log[$j]['TimeStamp'] <= $ts) { $cur = (float)$log[$j]['Value']; $j++; }
+            if ($cur === null) { return array('error' => 'Für den Tagesbeginn liegt kein Preis im Archiv.'); }
+            $price[$k] = $cur;
+        }
+        $socStart = 50.0;
+        if ((int)($inv['socID'] ?? 0) > 0) {
+            $first = (array)@AC_GetLoggedValues($archive, (int)$inv['socID'], $day0 - 3600, $day0, 1);
+            if (!empty($first)) { $socStart = (float)$first[0]['Value']; }
+        }
+        $lim = $this->getBatteryPowerLimitsKw($inv, (float)$this->ReadPropertyInteger('EMS_Max_Power_W'), $this->batteryCapacityKwh());
+        return $this->selfBalanceCompute($pv, $bat, $grid, $price, $socStart, array(
+            'eta' => $this->convEff(), 'capKwh' => $this->batteryCapacityKwh(), 'socMinPct' => (float)$this->ReadPropertyInteger('BAT_SOC_Min'),
+            'feed' => $this->planFeedTariffEur(), 'chKwh' => (float)$lim['chargeKw'] / 4.0, 'disKwh' => (float)($lim['dischargeKw'] ?? $lim['chargeKw']) / 4.0));
+    }
+
+    /** Je Aufruf hoechstens einen fehlenden Tag nachrechnen (bis 30 Tage zurueck), danach Summe aktualisieren. */
+    private function selfBalanceTick(int $maxDays = 1): void
+    {
+        $hist = json_decode($this->ReadAttributeString('SelfBalance'), true) ?: array();
+        $done = 0;
+        for ($d = 1; $d <= 30 && $done < $maxDays; $d++) {
+            $day0 = strtotime("today -$d days");
+            $key = date('Y-m-d', $day0);
+            if (isset($hist[$key])) { continue; }
+            $hist[$key] = $this->selfBalanceDay($day0);
+            $done++;
+        }
+        if ($done === 0) { return; }
+        krsort($hist);
+        $hist = array_slice($hist, 0, 60, true);
+        $this->WriteAttributeString('SelfBalance', json_encode($hist));
+        $sum = $this->selfBalanceSum($hist, 30);
+        if ($sum['days'] > 0) { $this->SetValue('EMS_SelfBalance30', round($sum['auto'] - $sum['ist'], 2)); }
+    }
+
+    private function selfBalanceSum(array $hist, int $days): array
+    {
+        $out = array('ist' => 0.0, 'auto' => 0.0, 'days' => 0);
+        foreach ($hist as $date => $r) {
+            if ($out['days'] >= $days) { break; }
+            if (!isset($r['ist'])) { continue; }
+            $out['ist'] += $r['ist']; $out['auto'] += $r['auto']; $out['days']++;
+        }
+        return $out;
+    }
+
+    /** Selbstbilanz als JSON: je Tag Ist/Automatik und die 30-Tage-Summe. Vertrag 1.0, rein lesend. */
+    public function GetSelfBalance(): string
+    {
+        $hist = json_decode($this->ReadAttributeString('SelfBalance'), true) ?: array();
+        krsort($hist);
+        $sum = $this->selfBalanceSum($hist, 30);
+        return json_encode(array('contractVersion' => '1.0', 'unit' => 'EUR', 'days' => $hist,
+            'sum30' => array('ist' => round($sum['ist'], 2), 'auto' => round($sum['auto'], 2), 'saved' => round($sum['auto'] - $sum['ist'], 2), 'days' => $sum['days']),
+            'assumptions' => array('etaPerConversion' => $this->convEff(), 'capKwh' => $this->batteryCapacityKwh(), 'feedTariffCt' => round($this->planFeedTariffEur() * 100, 2))),
+            JSON_UNESCAPED_UNICODE);
+    }
+
+    /** Verwirft die gespeicherte Bilanz und rechnet die letzten Tage neu (je Klick bis zu 30 Tage). */
+    public function RecomputeSelfBalance(): string
+    {
+        $this->WriteAttributeString('SelfBalance', '{}');
+        $this->selfBalanceTick(30);
+        $sum = $this->selfBalanceSum(json_decode($this->ReadAttributeString('SelfBalance'), true) ?: array(), 30);
+        return $sum['days'] > 0
+            ? sprintf('%d Tage gerechnet: Ist %.2f €, reine WR-Automatik %.2f €, Unterschied %+.2f € (+ = EMS hat gespart).', $sum['days'], $sum['ist'], $sum['auto'], $sum['auto'] - $sum['ist'])
+            : 'Keine Tage auswertbar, Gründe stehen im Bereich „📊 EMS-Bilanz“.';
+    }
+
+    private function selfBalancePanel(): array
+    {
+        $hist = json_decode($this->ReadAttributeString('SelfBalance'), true) ?: array();
+        krsort($hist);
+        $sum = $this->selfBalanceSum($hist, 30);
+        $items = array(array('type' => 'Label', 'caption' => 'Das EMS vergleicht jeden Tag die tatsächlichen Netzkosten (Bezug × Preis minus Einspeisung × Vergütung, gemessen) mit dem, was der Wechselrichter allein in Automatik gekostet hätte (simuliert mit derselben Hauslast und PV). So sieht man, ob die Steuerung Geld bringt oder kostet.'));
+        if ($sum['days'] > 0) {
+            $diff = $sum['auto'] - $sum['ist'];
+            $items[] = array('type' => 'Label', 'bold' => true, 'caption' => sprintf('%s Letzte %d Tage: mit EMS %.2f €, reine Automatik %.2f € → %s %.2f €',
+                $diff >= 0 ? '✅' : '⚠️', $sum['days'], $sum['ist'], $sum['auto'], $diff >= 0 ? 'gespart' : 'Mehrkosten', abs($diff)));
+        }
+        $n = 0;
+        foreach ($hist as $date => $r) {
+            if ($n++ >= 10) { break; }
+            $items[] = array('type' => 'Label', 'caption' => isset($r['ist'])
+                ? sprintf('%s: mit EMS %.2f €, Automatik %.2f € (%+.2f €), Bezug %.1f kWh, Einspeisung %.1f kWh', date('d.m.', strtotime($date)), $r['ist'], $r['auto'], $r['auto'] - $r['ist'], $r['imp'], $r['exp'])
+                : sprintf('%s: nicht auswertbar – %s', date('d.m.', strtotime($date)), $r['error'] ?? '?'));
+        }
+        $items[] = array('type' => 'Label', 'caption' => sprintf('Annahmen der Simulation: Wirkungsgrad je Wandlung %.0f %% (Einstellung im Bereich Batterie), Akku %.1f kWh, Einspeisevergütung %.2f ct. Die Automatik lädt nur aus PV-Überschuss und entlädt bei Bedarf.', $this->convEff() * 100, $this->batteryCapacityKwh(), $this->planFeedTariffEur() * 100));
+        $items[] = array('type' => 'Button', 'caption' => '🔄 Letzte 30 Tage neu rechnen', 'onClick' => 'echo EMS_RecomputeSelfBalance($id);');
+        return array('type' => 'ExpansionPanel', 'caption' => '📊 EMS-Bilanz (gespart oder verloren?)', 'expanded' => false, 'items' => $items);
     }
 
     /** Schaltet das Logging auf ausdruecklichen Klick ein, nie etwas aus. */
