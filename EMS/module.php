@@ -43,6 +43,7 @@ define('EMS_LOG_VERBOSE',     2);
 define('EMS_COLOR_AUTO', 0x2E8B3D); // Gruen: Wert wurde automatisch uebernommen (🔗-Zeilen im Formular)
 // Quelltexte englisch, deutsche Fassung in locale.json; newsBanner() uebersetzt je Zeile.
 define('EMS_NEWS_VERSIONS', array(
+    '0.98.0' => array('NEW: The module is bilingual (German/English). Step 1: the configuration form, the panel names and the variable names follow the Symcon language setting. Status texts and the reasons in the day plan follow in the next versions.'),
     '0.97.4' => array(
         'FIXED: "What\'s new" now only shows the changes since the last confirmed version instead of the whole list.',
         '🪟 NEW: Choose the form layout yourself: in the section "🪟 Form: layout" you define per section whether it is expanded, collapsed or hidden when the form opens and where it appears.',

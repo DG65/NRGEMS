@@ -543,7 +543,8 @@
             "Collapsed": "Zugeklappt",
             "🙈 Hidden": "🙈 Ausgeblendet",
             "Position": "Position",
-            "↩️ Reset to default": "↩️ Auf Standard zurücksetzen"
+            "↩️ Reset to default": "↩️ Auf Standard zurücksetzen",
+            "NEW: The module is bilingual (German/English). Step 1: the configuration form, the panel names and the variable names follow the Symcon language setting. Status texts and the reasons in the day plan follow in the next versions.": "NEU: Das Modul ist zweisprachig (Deutsch/Englisch). Schritt 1: Das Formular, die Bereichsnamen und die Variablennamen folgen der Spracheinstellung von Symcon. Statustexte und die Begründungen im Tagesplan folgen in den nächsten Versionen."
         }
     }
 }
