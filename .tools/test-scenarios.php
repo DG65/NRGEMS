@@ -879,6 +879,20 @@ check('Referenz Ersatzpreis: es gibt einen Nicht-Ladeslot im Fenster (Testvoraus
 check('Referenz Ersatzpreis (Nutzer ohne Verguetung): uebriger Slot im Fenster (12 ct < 36 ct x 0,95 - 3 ct = 31,2 ct) -> Akku halten, Haus aus dem Netz, Begruendung nennt den Ersatzpreis', ($hU = call($ems, 'nightWindowSlot', [$slU, 0.12, 60.0, $nwU, $ctxU])) !== null && $hU['plan']['op'] === EMS_OP_HOLD && $hU['plan']['gw'] === GW_MODE_STANDBY && strpos($hU['plan']['reason'], 'Ersatzpreis') !== false, json_encode($hU['plan'] ?? null));
 check('Referenz Ersatzpreis: Grenze 31,2 ct (31 ct noch halten, 32 ct schon Akku)', call($ems, 'nightWindowSlot', [$slU, 0.31, 60.0, $nwU, $ctxU]) !== null && call($ems, 'nightWindowSlot', [$slU, 0.32, 60.0, $nwU, $ctxU]) === null);
 check('Referenz Ersatzpreis ohne Preisvergleichswert: kein Halten', call($ems, 'nightWindowSlot', [$slU, 0.12, 60.0, $nwU, array_merge($ctxU, ['replacePrice' => null])]) === null);
+// 0.97.4: "Was ist Neu" nur seit der zuletzt bestaetigten Version (SUITE.md NEWS_VERSIONS)
+$labels = function ($panel) { return $panel === null ? array() : array_values(array_filter(array_map(function ($i) { return $i['type'] === 'Label' ? $i['caption'] : null; }, $panel['items']))); };
+attr('SeenNews', '0.97.2');
+$nb = call($ems, 'newsBanner');
+check('News: gesehen 0.97.2 -> nur 0.97.4 und 0.97.3, neueste oben', $nb !== null && $nb['caption'] === '🆕 Neu bis Version 0.97.4' && count(array_filter($labels($nb), function ($c) { return strpos($c, 'Version ') === 0; })) === 2 && strpos($labels($nb)[0], 'Version 0.97.4') === 0, json_encode($labels($nb), JSON_UNESCAPED_UNICODE));
+attr('SeenNews', '0.97.3');
+$nb = call($ems, 'newsBanner');
+check('News: gesehen 0.97.3 -> genau eine Zeile, ohne Versionsueberschrift', $nb !== null && count($labels($nb)) === 1, json_encode($labels($nb), JSON_UNESCAPED_UNICODE));
+attr('SeenNews', '0.97.4-beta.1');
+check('News: gesehen 0.97.4-beta.1 (Beta-Zusatz) -> nichts Neues', call($ems, 'newsBanner') === null);
+attr('SeenNews', '');
+$nb = call($ems, 'newsBanner');
+check('News: Neuinstallation (nichts gesehen) -> alles, inkl. Altblock', $nb !== null && count($labels($nb)) > 50);
+attr('SeenNews', '0.97.2');
 // 0.93.0: Nachtfenster nach Bedarf bis zur naechsten Nacht (Befund Pauls Anlage 25.10.2026)
 prop('BAT_SOC_Safety_Margin_Pct', 10);
 $ctxN = array_merge($ctxU, ['capKwh' => 100.0, 'socMin' => 10.0, 'socReserve' => 10.0, 'avgHouseW' => 500.0, 'dischargeKw' => 10.0, 'houseLoadSlots' => []]);

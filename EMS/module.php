@@ -41,7 +41,69 @@ define('EMS_LOG_VERBOSE',     2);
 // Formular-Konvention (siehe EMS/SUITE.md "Einheitliche Formular-Optik"):
 // Was-ist-Neu-Panel ist versionsscharf dismissible, Referenzmuster InverterHub.
 define('EMS_COLOR_AUTO', 0x2E8B3D); // Gruen: Wert wurde automatisch uebernommen (🔗-Zeilen im Formular)
-define('EMS_NEWS_VERSION', '0.97.3');
+define('EMS_NEWS_VERSIONS', array(
+    '0.97.4' => array('KORRIGIERT: „Was ist neu“ zeigt nur noch die Neuerungen seit der zuletzt bestätigten Version statt der ganzen Liste.'),
+    '0.97.3' => array('KORRIGIERT: Nachtladen. Weil die Preise der übernächsten Nacht beim Planen unbekannt sind, lädt das Nachtfenster jetzt bis zum Nachtziel (Standard 100 %) und lässt nur so viel Platz frei, wie der PV-Überschuss am Folgetag laut vorsichtiger Prognose sicher einlädt. Im Winter heißt das voll laden, im Sommer entsprechend weniger. Vorher reichte der Bedarf bis zur nächsten Nacht. Auswertung von 30 Nächten: Eine kWh zu viel kostet etwa 3 ct Wandlungsverlust, eine zu wenig am Folgetag im Schnitt 13 ct.'),
+    '0.97.2' => array('NEU: Die EMS-Bilanz weist die Tibber-Grid-Rewards-Vergütung je Tag aus (aus der Tibber-Variable „RewardAllTime“, wenn sie geloggt wird). Sie verringert die echten Kosten; den Vergleich mit der Automatik ändert sie nicht, weil das Fahrzeug sie mit und ohne EMS bekommt.'),
+    '0.97.1' => array('KORRIGIERT: Faire Tagesbewertung in der EMS-Bilanz: Energie, die am Tagesende mehr oder weniger im Akku liegt als am Morgen, wird mit dem Tagespreis bewertet. Vorher sah ein Tag, an dem das EMS den Akku schonte, wie ein Verlust aus, obwohl die Energie an den Folgetagen genutzt wurde.'),
+    '0.97.0' => array('NEU: Die EMS-Bilanz zeigt je Tag und für 30 Tage, wohin das Geld ging: Netzladen (Menge, Ø Preis und der Preis, den der Akku ersetzte), Halten (Netzbezug bei ruhendem Akku), PV-Einspeisung trotz Platz im Akku (mit geschätztem entgangenem Betrag) und Entladen ins Netz. Nach dem Update einmal „Letzte 30 Tage neu rechnen“ drücken.'),
+    '0.96.1' => array('KORRIGIERT: Nachtladen. Der Bedarf bis zur nächsten Nacht wird jetzt mit einer gelernten Prognose-Korrektur gerechnet (PV und Hauslast der letzten Tage gegen die Prognose); bis genug Tage gelernt sind, vorsichtig mit 70 % der PV und 115 % der Last. Außerdem rechnet der Plan richtig, dass die WR-Automatik den Akku auch über dem Tagesziel weiter mit PV-Überschuss lädt.'),
+    '0.96.0' => array('NEU: „📊 EMS-Bilanz“: Das EMS vergleicht jeden Tag die echten Netzkosten mit dem, was die reine Wechselrichter-Automatik gekostet hätte, und zeigt die Summe der letzten 30 Tage (Variable „EMS-Bilanz 30 Tage“). Braucht das Logging von Netz-, PV- und Akkuleistung sowie des Preises.'),
+    '0.95.0' => array('NEU: KI-Assistent (optional, standardmäßig aus): Unter „🤖 KI-Assistent“ beantwortet Claude (eigener Schlüssel) oder ein lokales Ollama-Modell Fragen wie „Warum lädt der Akku gerade?“ aus Tagesplan, Preisen und Messwerten. Die KI erklärt nur, sie steuert nichts.'),
+    '0.94.1' => array('KORRIGIERT: Bei PV-Überschuss lädt der Akku wieder über die Automatik des Wechselrichters statt per „Laden - Solar“. Die PV versorgt zuerst das Haus, nur der Rest geht in den Akku. Vorher konnte der Akku die ganze PV ziehen, während das Haus teuren Netzstrom bezog.'),
+    // bis 0.94.0 gewachsene Liste, rueckwirkend nicht je Zeile einer Version zuordenbar (SUITE.md NEWS_VERSIONS)
+    '0.94.0' => array(
+        'GEÄNDERT: EMS schaltet das Logging seiner Variablen nicht mehr selbst ein. Fehlt es, erscheint im Formular „📈 Logging für den Tagesplan“ mit einem Knopf. Eingeschaltetes Logging bleibt, wie es ist.',
+        'NEU: Nachtfenster nach Bedarf: EMS hält und lädt nachts nur so viel, wie der Akku bis zur nächsten Nacht braucht. Volles Laden bleibt, wenn Nachtstrom inklusive Verlust unter der Einspeisevergütung liegt.',
+        'NEU: Ladeziel der Wallbox mit Frist je Wochentag (Tabelle unter dem Ladeziel).',
+        'GEÄNDERT: Tibber Grid Rewards betrifft nur das Auto. Während eines Grid-Rewards-Ereignisses folgt der Hausakku jetzt weiter seinem Tagesplan (z. B. Nachtladen), die Wallbox bleibt unangetastet.',
+        'NEU: Ganz oben gibt es jetzt „🚗 Wallboxen bedienen“: Ladeart, Ladeziel, Frist, Jetzt 1 Stunde laden, Übersteuerung beenden und Ladeziel löschen, mit dem Plan je Wallbox. Wirkt sofort, ohne „Änderungen übernehmen“.',
+        'GEÄNDERT: „Akku halten“ nutzt jetzt die Batterie-Bereitschaft des Wechselrichters (GoodWe-Modus 8): Der Akku ruht, die PV versorgt das Haus und speist ein, Lücken kommen aus dem Netz. Kostet Netzstrom weniger als die Einspeisevergütung, hält EMS den Akku auch bei vollem Akku und PV-Überschuss.',
+        'NEU: Zeitvariable Netzentgelte (z. B. §14a Modul 3) lassen sich im Bereich „Tibber & Tarif“ als Stufen eintragen, für Preisquellen ohne Netzentgelt (Symcon-Strompreis, eigene Preise). Bei Tibber sind sie schon im Preis. Fehlen Preise (Quelle ausgefallen), plant EMS mit dem Vortag bzw. dem heutigen Verlauf weiter, aber ohne Vorentladen ins Netz.',
+        'NEU: Je Wallbox zeigt die Variable „Wallbox n: Plan (was als Nächstes passiert)“ im Klartext, was die Wallbox tun wird. Im WebFront und in der App lassen sich Ladeart (neu auch „Aus“), Ladeziel und Frist ändern, dazu „Jetzt 1 Stunde laden“. Änderungen dort ändern die Einstellungen hier direkt.',
+        'NEU: Wallboxen über ChargerHub verbinden sich jetzt vollständig automatisch, auch Status und Fehler (ein Wallbox-Fehler sperrt die Freigabe). Im Panel „Wallboxen“ steht je Wert, woher er kommt (🔗 automatisch, ✏️ eigene Variable, ⚠️ nicht verbunden), mit aktuellem Wert; leere manuelle Felder werden ausgeblendet.',
+        'NEU: Ladeziel mit Frist je Wallbox (Panel „Wallboxen“): z. B. 20 kWh bis 07:00. EMS lädt in den günstigsten Viertelstunden bis zur Frist und überstimmt dabei die Ladeart, danach gilt sie wieder. Reicht die Zeit nicht, lädt EMS sofort und warnt. Standard aus; braucht ChargerHub ab 0.9.128.',
+        'NEU: Bei einer Wallbox, die EMS nur beobachtet, nennt die Statuszeile im Panel „Wallboxen“ jetzt, wer sie laut ChargerHub regelt und warum (nur Anzeige, ab ChargerHub 0.9.126).',
+        'NEU: Wallbox-Ladearten je Wallbox: Manuell (feste Stromstärke), Nur PV, PV-Anteil und Hybrid, mit Stromsollwert statt Ein/Aus und Phasenwahl (Panel „Wallboxen“, je Wallbox „Ladeart“). Standard bleibt Preisgesteuert, bestehende Anlagen ändern sich nicht. Netzbetreiber-Sperre und Batterie-Boost haben Vorrang, Smart Charging bleibt unangetastet.',
+        'NEU: Beim Solis kann EMS jetzt auf Vorgabe entladen (Zwangsentladen, nur ins Haus: Hauslast minus PV minus 150 W Reserve). Speist der Wechselrichter dabei mehr als 200 W ein, senkt EMS die Vorgabe sofort. Heute wirkt das beim Batterie-Boost; der Tagesplan fordert selbst kein Entladen an, die Automatik des Solis deckt das Haus ohnehin aus dem Batteriespeicher.',
+        'NEU: Panel „🩺 Konfigurationsprüfung“ zeigt, was in Ihrer Einrichtung still schiefgehen kann (unbekannter Preis, veraltete Messwerte, fehlgeschlagene Schreibzugriffe, Batteriekapazität auf dem Standardwert, feste Preisschwellen, Netzanschluss-Standard). Der aktuelle Preis kommt jetzt automatisch aus der Preiskurve, auch ohne verknüpfte Preisvariable.',
+        'NEU: Eine neue EMS-Instanz läuft nach der ersten Aktivierung zuerst im Trockenlauf (nichts wird geschrieben), bis Sie in der Konfigurationsprüfung „Jetzt live schalten“ wählen. Bestehende Instanzen bleiben unverändert.',
+        'GEÄNDERT: „Akku halten“ beim Solis wirkt nur unter dem Reserve-SOC des Geräts (bei Paul 80 %). Darüber, und bei PV-Überschuss, bleibt der Wechselrichter in Automatik; die Statuszeile nennt den Grund.',
+        'GEÄNDERT: Beim Solis nimmt EMS nur noch einen Zwangsmodus zurück, den es selbst gesetzt hat. Ein von außen gesetzter Zwangsmodus (Skript, App, Portal) bleibt in jedem Zustand unangetastet, auch im Trockenlauf.',
+        'NEU: Beim Solis kann EMS jetzt auch „Akku halten“ (Haus aus dem Netz, Akku wird nicht entladen), über die Entladesperre des InverterHub (Speicherbetrieb 17, nie 49/51). EMS merkt Ihren Speicherbetrieb und stellt ihn wieder her, prüft nach dem Schreiben, hält nur ohne PV-Überschuss und gibt die Sperre frei, wenn EMS ausfällt.',
+        'NEU: Solis-Wechselrichter lassen sich jetzt steuern, minimal: Netzladen per Zwangsladen (Leistung begrenzt auf die Ladegrenze des Geräts), sonst Automatik. Der Zwangsmodus wird im Takt des Fernsteuer-Zeitlimits neu geschrieben. Akku halten und Entladen kamen mit späteren Versionen dazu.',
+        'NEU: Die manuellen Tagesplan-Einträge lassen sich jetzt auch von außen bearbeiten (EMS_GetManualPlan / EMS_SetManualPlan), z. B. im Editor des PV-Monitors. Die Eingaben werden geprüft, bei einem Fehler wird nichts geändert.',
+        'NEU: Manuelle Tagesplan-Einträge nehmen jetzt auch das Datum TT.MM.JJJJ, und unter der Liste steht je Zeile, ob und wann der Eintrag wirkt oder warum er ignoriert wird (z. B. Datum in der Vergangenheit).',
+        'NEU: Gibt es keinen Tagesplan, nennt EMS jetzt den Grund (z. B. „Preisoptimierung ausgeschaltet“, „keine Viertelstunden-Preise“). Das Dashboard kann ihn anzeigen (EMS_GetDayPlan Vertrag 1.3, planAvailable und reason).',
+        'NEU: Die Preisschwellen (Laden, Entladen) rechnen bei „0 = automatisch“ jetzt wirtschaftlich: nie lockerer, als es sich nach Einspeisevergütung bzw. Ersatzpreis, Verlusten, Verschleiß und Mindestspanne lohnt. Unter jeder Schwelle steht der wirksame Wert mit Herkunft.',
+        'GEÄNDERT: Nachtfenster mit der Preisreferenz „erwarteter Ersatz-Bezugspreis“: Zwischen den Ladeviertelstunden versorgt jetzt das Netz das Haus (Akku halten), wenn der Bezug unter dem erwarteten späteren Preis liegt, statt den Akku nachts leerzuziehen. Der gespeicherte Strom steht dadurch in den teuren Stunden zur Verfügung.',
+        'NEU: Im Verbund-Status steht jetzt in einer Zeile, welche Messpunkte des Wechselrichters EMS gefunden hat (PV, Netz, Batterie, SOC, AC-Leistung), ob EMS steuern darf oder nur beobachtet und ob EMS deaktiviert ist.',
+        'GEÄNDERT: Läuft ein Grid Reward und das Auto lädt, hat jetzt auch das GEPLANTE Netzladen der Batterie Vorrang (nicht nur bei negativem Preis). Vorher blendete Grid Rewards den Tagesplan aus, die Batterie blieb dann leer, obwohl der Plan sie in der günstigen Nacht nachladen wollte. Das Auto wird weiter von Tibber gesteuert und läuft obendrauf, bei Ladestopp (Knappheit im Netz) entsteht kein zusätzlicher Netzbezug.',
+        'NEU: Netzbezug-Ausblick für andere Module (EMS_GetGridImportOutlook): EMS rechnet für ein Zeitfenster aus PV-Prognose, Lastprognose, Batterie und geplantem Netzladen, ob Netzbezug entsteht und zu welchem Preis, und was eine Laständerung (z. B. eine gesperrte Wärmepumpe) davon vermeiden würde. Reiner Ratgeber, EMS schaltet dadurch nichts. Erster Nutzer ist die Preis-Sperre der HeishaMon-Heizungs-Automatik.',
+        'NEU: Erreicht der Netzbezugsmodus (Modus 9) beim Laden eines Autos seinen Sollwert nicht und speist die Hausbatterie dabei spürbar ins Auto (beobachtet bei einphasig ladendem Auto mit etwa 3,6 kW), wechselt EMS nach 90 Sekunden für 15 Minuten auf „Laden aus PV“ (Modus 2). Danach wird Modus 9 neu versucht. Das Haus läuft in dieser Zeit aus dem Netz, die Batterie wird nicht entladen.',
+        'GEÄNDERT: Lädt ein Auto bei fast vollem Akku (ab 95 %) im Smart Charging oder Grid Reward, hält EMS jetzt auch dann die Wechselrichter-Einstellung „Laden aus PV“ (Modus 2), wenn die gemessene PV gerade gedrosselt oder von einer Wolke verdeckt ist. Dafür zählt zusätzlich die PV-Prognose der laufenden Viertelstunde, und nach erkanntem Überschuss gilt eine Haltezeit von zehn Minuten. Vorher konnte der Netzbezugsmodus (Modus 9) die PV auf unter 1 kW drosseln und sich selbst festhalten (Beobachtung vom 10.10.).',
+        'GEÄNDERT: Die Absicherung rechnet jetzt den Bedarf statt eines festen Prozentwerts: SOC-Verlauf mit vorsichtiger PV-Prognose und Lastprognose (mit Wärmepumpe über die Außentemperatur) bis zur PV-Übernahme am nächsten Tag. Fehlt Energie, kauft der Plan nur so viel in den günstigsten Viertelstunden vor dem Engpass, wie wirklich fehlt. Der frühere Mindest-SOC ist nur noch eine optionale untere Grenze zur Abendstunde (Standard aus).',
+        'NEU: Manuelle Einträge im Tagesplan (Liste im Panel „Tagesplan“): Netz laden, Akku halten oder Automatik für ein Zeitfenster, einmalig mit Datum oder täglich. Sie haben Vorrang vor der automatischen Planung, nicht vor §14a-Vorgaben des Netzbetreibers und nicht vor Grid Rewards.',
+        'NEU: Bei Smart Charging und Grid Reward (Überschuss) kommt nur noch das Auto aus dem Netz, der Hausverbrauch aus PV und Batterie: EMS regelt dazu den Netzbezug auf die gemessene Auto-Leistung minus 200 W (Wechselrichter-Modus Stromeinkauf). Ist die Batterie fast voll und PV im Überschuss, oder steht sie an der Reserve, bleibt es beim bisherigen Verhalten (Haus aus dem Netz, Batterie nur aus PV). Abschaltbar im Panel „Wallboxen“. Noch nicht an einem echten Ladevorgang beobachtet.',
+        'NEU: Läuft ein Grid Reward bei Überschuss im Netz und der Bezugspreis ist negativ, hat der Tagesplan Vorrang: Die Batterie wird dann aus dem Netz geladen (man wird dafür bezahlt), das Auto läuft obendrauf. Bei Ladestopp wegen Knappheit bleibt es bei der Grid-Rewards-Automatik.',
+        'GEÄNDERT: Grid Rewards: Während Tibber das Auto lädt, bestellt EMS keinen Netzeinkauf-Sollwert mehr. Der hatte die Batterie zusätzlich mit etwa 10 kW aus dem Netz geladen und den Netzbezug auf bis zu 20 kW getrieben. Jetzt lädt die Batterie nur noch aus PV und entlädt nicht, das Auto kommt aus dem Netz. Pausiert Tibber das Laden (Knappheit im Netz), fährt EMS die Wechselrichter-Automatik, damit das Haus aus PV und Batterie läuft und das Netz entlastet.',
+        'NEU: Lädt ein Auto an einer Wallbox im Modus Smart Charging, schont EMS jetzt die Hausbatterie: Sie lädt dann nur noch aus PV und entlädt nicht, Haus und Auto kommen aus PV bzw. Netz. Abschaltbar im Panel „Wallboxen“. Gilt nur, wenn EMS sonst die Wechselrichter-Automatik fährt; Grid Rewards, Netzbetreiber, Boost und Plan-Sollwerte haben Vorrang.',
+        'NEU: Smart Charging wird automatisch erkannt: Wähle im Panel „Wallboxen“ je Wallbox einmal das Tibber-Fahrzeug aus (EMS rät die Zuordnung nie). Meldet Tibber für dieses Fahrzeug Smart Charging, überlässt EMS die Wallbox Tibber (kein Sperren, kein Erzwingen). Meldet Tibber das Fahrzeug kurz nicht, gilt der zuletzt bekannte Stand. Braucht das Tibber-Modul ab Version 2.9.2.',
+        'NEU: Wallbox-Modus je Wallbox im Panel „Wallboxen“: Smart Charging (Tibber hat die Hoheit, EMS sperrt und erzwingt nichts), EMS steuert (Freigabe nach Preis und PV-Überschuss) oder nur beobachten. „Automatisch“ erkennt, ob EMS die Wallbox schalten darf. Hat EMS eine Wallbox früher selbst gesperrt, gibt es sie im Modus Smart Charging einmal wieder frei. Grid Rewards sperrt die Wallbox außerdem nicht mehr.',
+        'NEU: „Mittagsspitze aufnehmen“ (Netzdienlich-Baustein B1) lädt die Batterie jetzt gezielt im stärksten PV-Fenster des Tages statt möglichst spät: Vorher gesperrt (Überschuss ins Netz), sobald genug Reserve bis zum Fensterbeginn erwartet wird; ab dem Fenster immer freigegeben. Neu einstellbar im Panel „Netzdienliche Bausteine“, welcher Anteil vom Tagesmaximum als „Spitze“ zählt. Zusätzlich neu: Ist der Einkaufspreis (inkl. Wandlungsverlust und Zykluskosten) gerade günstiger als die Einspeisevergütung, sperrt EMS unabhängig von der Uhrzeit immer — Zwischenspeichern lohnt sich dann nicht.',
+        'NEU: Fehlbetrag zwischen PV und Hausverbrauch kommt jetzt bevorzugt aus dem Netz statt aus der Batterie, sofern der aktuelle Strompreis mit 5 % Sicherheitsabstand unter den eigenen Zykluskosten liegt. Die Batterie lädt dabei weiter ausschließlich aus der PV. Vermeidet unnötige Wandlungsverluste und Zyklen, ohne die Zykluskosten-Angabe im Panel „Batterie“ ändert sich am Verhalten nichts.',
+        'NEU: Verbund-Gesundheit unterscheidet jetzt schlafende Tesla-Fahrzeuge (über Tessie) von einem echten Verbindungsproblem: Ein Fahrzeug ohne Telemetrie, das laut Tessie schläft, gilt als gesund und wird gesondert als „schläft“ genannt, statt als auffällig.',
+        'NEU: Ladekurve genauer: Neben der Meldung des Batteriemanagements lernt das EMS die tatsächlich beobachtete Ladeleistung je Ladestand und plant die Nachtladung damit. Ist das Nachtziel erreicht, lädt das EMS bei einem kleinen Rückgang im selben Nachtfenster nicht mehr neu.',
+        'NEU: Verschleißkosten aus Anschaffungspreis und Zyklenzahl: Preis des Speichers und Herstellerzyklen im Panel „Batterie“ eintragen, das EMS berechnet die Kosten je kWh selbst und zieht sie bei Netzladen, Vorentladen und Restwert ab. Ein direkt eingetragener Wert in ct/kWh gilt weiter vorrangig.',
+        'NEU: Restwert der Batterieenergie (Beta, Schalter im Panel „Tibber & Tarif“, standardmäßig aus): Ist die gespeicherte Energie später mehr wert als der Netzbezug jetzt, bleibt der Akku geschont und das Haus läuft aus dem Netz. Rechnet vorsichtig mit ausbleibender PV (p10), damit die teuren Zeiten morgens und abends aus günstig gekauftem Strom gedeckt werden können. Wirkt vor allem bei kleinen Speichern und dynamischem Tarif.',
+        'NEU: Preisquelle ohne Tibber: Wer den Symcon-Strompreis (Anbieter aWATTar, EPEX Spot oder Tibber) installiert hat, bekommt den Tagesplan aus dessen Preisen. Bei mehreren Instanzen die richtige im Panel „Tibber & Tarif“ wählen. Der Preis enthält die dort eingestellten Aufschläge.',
+        'NEU: Ladeleistung nach Ladestand: Das EMS lernt die vom Batteriemanagement gemeldete Ladegrenze je 5-Prozent-Stufe aus dem laufenden Betrieb und plant die Nachtladung damit. Kein Archiv und keine bestimmte Hardware nötig.',
+        'NEU: Zusammenhängende Ladefenster: Die günstigsten Viertelstunden werden bevorzugt am Stück gewählt, damit es weniger Umschaltungen gibt. Im Plan steht je Ladefenster die geschätzte Ersparnis (Planzahl, keine Abrechnung).',
+        'NEU: Trockenlauf: Das EMS rechnet und zeigt seine Entscheidungen, schreibt aber nichts an Wechselrichter und Wallboxen. Kann das EMS an einem Gerät nichts schreiben, steht im Status „nur beobachtend“ mit Grund statt „OK“.',
+        'NEU: Wirkungsgrad einstellbar (Wandlungsverlust beim Laden aus dem Netz und beim Entladen fürs Haus), Zykluskosten je kWh und eine Preisreferenz für die Grenze, ab der Netzladen lohnt. Alle Werte sind einstellbar und nie fest auf eine bestimmte Anlage zugeschnitten.',
+        'NEU: Wallbox-Mindestleistung aus der gemeldeten Phasenzahl (sofern die Wallbox sie meldet); eine eingetragene Mindestleistung geht immer vor. Steuerfehler lösen den Rückfall in die Wechselrichter-Automatik jetzt nach Ausfallzeit statt nach einer Fehlerzahl aus.',
+    ),
+));
 define('EMS_AI_DEFAULT_CLAUDE', 'claude-opus-5-5');
 define('EMS_AI_DEFAULT_OLLAMA', 'llama3.1');
 
@@ -800,250 +862,9 @@ class EMS extends IPSModule
         $wbPanel = $this->wallboxControlPanel();
         if ($wbPanel !== null) { array_unshift($form['elements'], $wbPanel); }
 
-        // 1. "Was ist Neu" — aufgeklappt, pro Version dismissible
-        if ($this->ReadAttributeString('SeenNews') !== EMS_NEWS_VERSION) {
-            array_unshift($form['elements'], array(
-                'type'     => 'ExpansionPanel',
-                'name'     => 'NewsPanel',
-                'caption'  => '🆕 Neu in Version ' . EMS_NEWS_VERSION,
-                'expanded' => true,
-                'items'    => array(
-                    array(
-                        'type'    => 'Label',
-                        'caption' => '• KORRIGIERT: Nachtladen. Weil die Preise der übernächsten Nacht beim Planen unbekannt sind, lädt das Nachtfenster jetzt bis zum Nachtziel (Standard 100 %) und lässt nur so viel Platz frei, wie der PV-Überschuss am Folgetag laut vorsichtiger Prognose sicher einlädt. Im Winter heißt das voll laden, im Sommer entsprechend weniger. Vorher reichte der Bedarf bis zur nächsten Nacht. Auswertung von 30 Nächten: Eine kWh zu viel kostet etwa 3 ct Wandlungsverlust, eine zu wenig am Folgetag im Schnitt 13 ct.'
-                    ),
-                    array(
-                        'type'    => 'Label',
-                        'caption' => '• NEU: Die EMS-Bilanz weist die Tibber-Grid-Rewards-Vergütung je Tag aus (aus der Tibber-Variable „RewardAllTime“, wenn sie geloggt wird). Sie verringert die echten Kosten; den Vergleich mit der Automatik ändert sie nicht, weil das Fahrzeug sie mit und ohne EMS bekommt.'
-                    ),
-                    array(
-                        'type'    => 'Label',
-                        'caption' => '• KORRIGIERT: Faire Tagesbewertung in der EMS-Bilanz: Energie, die am Tagesende mehr oder weniger im Akku liegt als am Morgen, wird mit dem Tagespreis bewertet. Vorher sah ein Tag, an dem das EMS den Akku schonte, wie ein Verlust aus, obwohl die Energie an den Folgetagen genutzt wurde.'
-                    ),
-                    array(
-                        'type'    => 'Label',
-                        'caption' => '• NEU: Die EMS-Bilanz zeigt je Tag und für 30 Tage, wohin das Geld ging: Netzladen (Menge, Ø Preis und der Preis, den der Akku ersetzte), Halten (Netzbezug bei ruhendem Akku), PV-Einspeisung trotz Platz im Akku (mit geschätztem entgangenem Betrag) und Entladen ins Netz. Nach dem Update einmal „Letzte 30 Tage neu rechnen“ drücken.'
-                    ),
-                    array(
-                        'type'    => 'Label',
-                        'caption' => '• KORRIGIERT: Nachtladen. Der Bedarf bis zur nächsten Nacht wird jetzt mit einer gelernten Prognose-Korrektur gerechnet (PV und Hauslast der letzten Tage gegen die Prognose); bis genug Tage gelernt sind, vorsichtig mit 70 % der PV und 115 % der Last. Außerdem rechnet der Plan richtig, dass die WR-Automatik den Akku auch über dem Tagesziel weiter mit PV-Überschuss lädt.'
-                    ),
-                    array(
-                        'type'    => 'Label',
-                        'caption' => '• NEU: „📊 EMS-Bilanz“: Das EMS vergleicht jeden Tag die echten Netzkosten mit dem, was die reine Wechselrichter-Automatik gekostet hätte, und zeigt die Summe der letzten 30 Tage (Variable „EMS-Bilanz 30 Tage“). Braucht das Logging von Netz-, PV- und Akkuleistung sowie des Preises.'
-                    ),
-                    array(
-                        'type'    => 'Label',
-                        'caption' => '• NEU: KI-Assistent (optional, standardmäßig aus): Unter „🤖 KI-Assistent“ beantwortet Claude (eigener Schlüssel) oder ein lokales Ollama-Modell Fragen wie „Warum lädt der Akku gerade?“ aus Tagesplan, Preisen und Messwerten. Die KI erklärt nur, sie steuert nichts.'
-                    ),
-                    array(
-                        'type'    => 'Label',
-                        'caption' => '• KORRIGIERT: Bei PV-Überschuss lädt der Akku wieder über die Automatik des Wechselrichters statt per „Laden - Solar“. Die PV versorgt zuerst das Haus, nur der Rest geht in den Akku. Vorher konnte der Akku die ganze PV ziehen, während das Haus teuren Netzstrom bezog.'
-                    ),
-                    array(
-                        'type'    => 'Label',
-                        'caption' => '• GEÄNDERT: EMS schaltet das Logging seiner Variablen nicht mehr selbst ein. Fehlt es, erscheint im Formular „📈 Logging für den Tagesplan“ mit einem Knopf. Eingeschaltetes Logging bleibt, wie es ist.'
-                    ),
-                    array(
-                        'type'    => 'Label',
-                        'caption' => '• NEU: Nachtfenster nach Bedarf: EMS hält und lädt nachts nur so viel, wie der Akku bis zur nächsten Nacht braucht. Volles Laden bleibt, wenn Nachtstrom inklusive Verlust unter der Einspeisevergütung liegt.'
-                    ),
-                    array(
-                        'type'    => 'Label',
-                        'caption' => '• NEU: Ladeziel der Wallbox mit Frist je Wochentag (Tabelle unter dem Ladeziel).'
-                    ),
-                    array(
-                        'type'    => 'Label',
-                        'caption' => '• GEÄNDERT: Tibber Grid Rewards betrifft nur das Auto. Während eines Grid-Rewards-Ereignisses folgt der Hausakku jetzt weiter seinem Tagesplan (z. B. Nachtladen), die Wallbox bleibt unangetastet.'
-                    ),
-                    array(
-                        'type'    => 'Label',
-                        'caption' => '• NEU: Ganz oben gibt es jetzt „🚗 Wallboxen bedienen“: Ladeart, Ladeziel, Frist, Jetzt 1 Stunde laden, Übersteuerung beenden und Ladeziel löschen, mit dem Plan je Wallbox. Wirkt sofort, ohne „Änderungen übernehmen“.'
-                    ),
-                    array(
-                        'type'    => 'Label',
-                        'caption' => '• GEÄNDERT: „Akku halten“ nutzt jetzt die Batterie-Bereitschaft des Wechselrichters (GoodWe-Modus 8): Der Akku ruht, die PV versorgt das Haus und speist ein, Lücken kommen aus dem Netz. Kostet Netzstrom weniger als die Einspeisevergütung, hält EMS den Akku auch bei vollem Akku und PV-Überschuss.'
-                    ),
-                    array(
-                        'type'    => 'Label',
-                        'caption' => '• NEU: Zeitvariable Netzentgelte (z. B. §14a Modul 3) lassen sich im Bereich „Tibber & Tarif“ als Stufen eintragen, für Preisquellen ohne Netzentgelt (Symcon-Strompreis, eigene Preise). Bei Tibber sind sie schon im Preis. Fehlen Preise (Quelle ausgefallen), plant EMS mit dem Vortag bzw. dem heutigen Verlauf weiter, aber ohne Vorentladen ins Netz.'
-                    ),
-                    array(
-                        'type'    => 'Label',
-                        'caption' => '• NEU: Je Wallbox zeigt die Variable „Wallbox n: Plan (was als Nächstes passiert)“ im Klartext, was die Wallbox tun wird. Im WebFront und in der App lassen sich Ladeart (neu auch „Aus“), Ladeziel und Frist ändern, dazu „Jetzt 1 Stunde laden“. Änderungen dort ändern die Einstellungen hier direkt.'
-                    ),
-                    array(
-                        'type'    => 'Label',
-                        'caption' => '• NEU: Wallboxen über ChargerHub verbinden sich jetzt vollständig automatisch, auch Status und Fehler (ein Wallbox-Fehler sperrt die Freigabe). Im Panel „Wallboxen“ steht je Wert, woher er kommt (🔗 automatisch, ✏️ eigene Variable, ⚠️ nicht verbunden), mit aktuellem Wert; leere manuelle Felder werden ausgeblendet.'
-                    ),
-                    array(
-                        'type'    => 'Label',
-                        'caption' => '• NEU: Ladeziel mit Frist je Wallbox (Panel „Wallboxen“): z. B. 20 kWh bis 07:00. EMS lädt in den günstigsten Viertelstunden bis zur Frist und überstimmt dabei die Ladeart, danach gilt sie wieder. Reicht die Zeit nicht, lädt EMS sofort und warnt. Standard aus; braucht ChargerHub ab 0.9.128.'
-                    ),
-                    array(
-                        'type'    => 'Label',
-                        'caption' => '• NEU: Bei einer Wallbox, die EMS nur beobachtet, nennt die Statuszeile im Panel „Wallboxen“ jetzt, wer sie laut ChargerHub regelt und warum (nur Anzeige, ab ChargerHub 0.9.126).'
-                    ),
-                    array(
-                        'type'    => 'Label',
-                        'caption' => '• NEU: Wallbox-Ladearten je Wallbox: Manuell (feste Stromstärke), Nur PV, PV-Anteil und Hybrid, mit Stromsollwert statt Ein/Aus und Phasenwahl (Panel „Wallboxen“, je Wallbox „Ladeart“). Standard bleibt Preisgesteuert, bestehende Anlagen ändern sich nicht. Netzbetreiber-Sperre und Batterie-Boost haben Vorrang, Smart Charging bleibt unangetastet.'
-                    ),
-                    array(
-                        'type'    => 'Label',
-                        'caption' => '• NEU: Beim Solis kann EMS jetzt auf Vorgabe entladen (Zwangsentladen, nur ins Haus: Hauslast minus PV minus 150 W Reserve). Speist der Wechselrichter dabei mehr als 200 W ein, senkt EMS die Vorgabe sofort. Heute wirkt das beim Batterie-Boost; der Tagesplan fordert selbst kein Entladen an, die Automatik des Solis deckt das Haus ohnehin aus dem Batteriespeicher.'
-                    ),
-                    array(
-                        'type'    => 'Label',
-                        'caption' => '• NEU: Panel „🩺 Konfigurationsprüfung“ zeigt, was in Ihrer Einrichtung still schiefgehen kann (unbekannter Preis, veraltete Messwerte, fehlgeschlagene Schreibzugriffe, Batteriekapazität auf dem Standardwert, feste Preisschwellen, Netzanschluss-Standard). Der aktuelle Preis kommt jetzt automatisch aus der Preiskurve, auch ohne verknüpfte Preisvariable.'
-                    ),
-                    array(
-                        'type'    => 'Label',
-                        'caption' => '• NEU: Eine neue EMS-Instanz läuft nach der ersten Aktivierung zuerst im Trockenlauf (nichts wird geschrieben), bis Sie in der Konfigurationsprüfung „Jetzt live schalten“ wählen. Bestehende Instanzen bleiben unverändert.'
-                    ),
-                    array(
-                        'type'    => 'Label',
-                        'caption' => '• GEÄNDERT: „Akku halten“ beim Solis wirkt nur unter dem Reserve-SOC des Geräts (bei Paul 80 %). Darüber, und bei PV-Überschuss, bleibt der Wechselrichter in Automatik; die Statuszeile nennt den Grund.'
-                    ),
-                    array(
-                        'type'    => 'Label',
-                        'caption' => '• GEÄNDERT: Beim Solis nimmt EMS nur noch einen Zwangsmodus zurück, den es selbst gesetzt hat. Ein von außen gesetzter Zwangsmodus (Skript, App, Portal) bleibt in jedem Zustand unangetastet, auch im Trockenlauf.'
-                    ),
-                    array(
-                        'type'    => 'Label',
-                        'caption' => '• NEU: Beim Solis kann EMS jetzt auch „Akku halten“ (Haus aus dem Netz, Akku wird nicht entladen), über die Entladesperre des InverterHub (Speicherbetrieb 17, nie 49/51). EMS merkt Ihren Speicherbetrieb und stellt ihn wieder her, prüft nach dem Schreiben, hält nur ohne PV-Überschuss und gibt die Sperre frei, wenn EMS ausfällt.'
-                    ),
-                    array(
-                        'type'    => 'Label',
-                        'caption' => '• NEU: Solis-Wechselrichter lassen sich jetzt steuern, minimal: Netzladen per Zwangsladen (Leistung begrenzt auf die Ladegrenze des Geräts), sonst Automatik. Der Zwangsmodus wird im Takt des Fernsteuer-Zeitlimits neu geschrieben. Akku halten und Entladen kamen mit späteren Versionen dazu.'
-                    ),
-                    array(
-                        'type'    => 'Label',
-                        'caption' => '• NEU: Die manuellen Tagesplan-Einträge lassen sich jetzt auch von außen bearbeiten (EMS_GetManualPlan / EMS_SetManualPlan), z. B. im Editor des PV-Monitors. Die Eingaben werden geprüft, bei einem Fehler wird nichts geändert.'
-                    ),
-                    array(
-                        'type'    => 'Label',
-                        'caption' => '• NEU: Manuelle Tagesplan-Einträge nehmen jetzt auch das Datum TT.MM.JJJJ, und unter der Liste steht je Zeile, ob und wann der Eintrag wirkt oder warum er ignoriert wird (z. B. Datum in der Vergangenheit).'
-                    ),
-                    array(
-                        'type'    => 'Label',
-                        'caption' => '• NEU: Gibt es keinen Tagesplan, nennt EMS jetzt den Grund (z. B. „Preisoptimierung ausgeschaltet“, „keine Viertelstunden-Preise“). Das Dashboard kann ihn anzeigen (EMS_GetDayPlan Vertrag 1.3, planAvailable und reason).'
-                    ),
-                    array(
-                        'type'    => 'Label',
-                        'caption' => '• NEU: Die Preisschwellen (Laden, Entladen) rechnen bei „0 = automatisch“ jetzt wirtschaftlich: nie lockerer, als es sich nach Einspeisevergütung bzw. Ersatzpreis, Verlusten, Verschleiß und Mindestspanne lohnt. Unter jeder Schwelle steht der wirksame Wert mit Herkunft.'
-                    ),
-                    array(
-                        'type'    => 'Label',
-                        'caption' => '• GEÄNDERT: Nachtfenster mit der Preisreferenz „erwarteter Ersatz-Bezugspreis“: Zwischen den Ladeviertelstunden versorgt jetzt das Netz das Haus (Akku halten), wenn der Bezug unter dem erwarteten späteren Preis liegt, statt den Akku nachts leerzuziehen. Der gespeicherte Strom steht dadurch in den teuren Stunden zur Verfügung.'
-                    ),
-                    array(
-                        'type'    => 'Label',
-                        'caption' => '• NEU: Im Verbund-Status steht jetzt in einer Zeile, welche Messpunkte des Wechselrichters EMS gefunden hat (PV, Netz, Batterie, SOC, AC-Leistung), ob EMS steuern darf oder nur beobachtet und ob EMS deaktiviert ist.'
-                    ),
-                    array(
-                        'type'    => 'Label',
-                        'caption' => '• GEÄNDERT: Läuft ein Grid Reward und das Auto lädt, hat jetzt auch das GEPLANTE Netzladen der Batterie Vorrang (nicht nur bei negativem Preis). Vorher blendete Grid Rewards den Tagesplan aus, die Batterie blieb dann leer, obwohl der Plan sie in der günstigen Nacht nachladen wollte. Das Auto wird weiter von Tibber gesteuert und läuft obendrauf, bei Ladestopp (Knappheit im Netz) entsteht kein zusätzlicher Netzbezug.'
-                    ),
-                    array(
-                        'type'    => 'Label',
-                        'caption' => '• NEU: Netzbezug-Ausblick für andere Module (EMS_GetGridImportOutlook): EMS rechnet für ein Zeitfenster aus PV-Prognose, Lastprognose, Batterie und geplantem Netzladen, ob Netzbezug entsteht und zu welchem Preis, und was eine Laständerung (z. B. eine gesperrte Wärmepumpe) davon vermeiden würde. Reiner Ratgeber, EMS schaltet dadurch nichts. Erster Nutzer ist die Preis-Sperre der HeishaMon-Heizungs-Automatik.'
-                    ),
-                    array(
-                        'type'    => 'Label',
-                        'caption' => '• NEU: Erreicht der Netzbezugsmodus (Modus 9) beim Laden eines Autos seinen Sollwert nicht und speist die Hausbatterie dabei spürbar ins Auto (beobachtet bei einphasig ladendem Auto mit etwa 3,6 kW), wechselt EMS nach 90 Sekunden für 15 Minuten auf „Laden aus PV“ (Modus 2). Danach wird Modus 9 neu versucht. Das Haus läuft in dieser Zeit aus dem Netz, die Batterie wird nicht entladen.'
-                    ),
-                    array(
-                        'type'    => 'Label',
-                        'caption' => '• GEÄNDERT: Lädt ein Auto bei fast vollem Akku (ab 95 %) im Smart Charging oder Grid Reward, hält EMS jetzt auch dann die Wechselrichter-Einstellung „Laden aus PV“ (Modus 2), wenn die gemessene PV gerade gedrosselt oder von einer Wolke verdeckt ist. Dafür zählt zusätzlich die PV-Prognose der laufenden Viertelstunde, und nach erkanntem Überschuss gilt eine Haltezeit von zehn Minuten. Vorher konnte der Netzbezugsmodus (Modus 9) die PV auf unter 1 kW drosseln und sich selbst festhalten (Beobachtung vom 10.10.).'
-                    ),
-                    array(
-                        'type'    => 'Label',
-                        'caption' => '• GEÄNDERT: Die Absicherung rechnet jetzt den Bedarf statt eines festen Prozentwerts: SOC-Verlauf mit vorsichtiger PV-Prognose und Lastprognose (mit Wärmepumpe über die Außentemperatur) bis zur PV-Übernahme am nächsten Tag. Fehlt Energie, kauft der Plan nur so viel in den günstigsten Viertelstunden vor dem Engpass, wie wirklich fehlt. Der frühere Mindest-SOC ist nur noch eine optionale untere Grenze zur Abendstunde (Standard aus).'
-                    ),
-                    array(
-                        'type'    => 'Label',
-                        'caption' => '• NEU: Manuelle Einträge im Tagesplan (Liste im Panel „Tagesplan“): Netz laden, Akku halten oder Automatik für ein Zeitfenster, einmalig mit Datum oder täglich. Sie haben Vorrang vor der automatischen Planung, nicht vor §14a-Vorgaben des Netzbetreibers und nicht vor Grid Rewards.'
-                    ),
-                    array(
-                        'type'    => 'Label',
-                        'caption' => '• NEU: Bei Smart Charging und Grid Reward (Überschuss) kommt nur noch das Auto aus dem Netz, der Hausverbrauch aus PV und Batterie: EMS regelt dazu den Netzbezug auf die gemessene Auto-Leistung minus 200 W (Wechselrichter-Modus Stromeinkauf). Ist die Batterie fast voll und PV im Überschuss, oder steht sie an der Reserve, bleibt es beim bisherigen Verhalten (Haus aus dem Netz, Batterie nur aus PV). Abschaltbar im Panel „Wallboxen“. Noch nicht an einem echten Ladevorgang beobachtet.'
-                    ),
-                    array(
-                        'type'    => 'Label',
-                        'caption' => '• NEU: Läuft ein Grid Reward bei Überschuss im Netz und der Bezugspreis ist negativ, hat der Tagesplan Vorrang: Die Batterie wird dann aus dem Netz geladen (man wird dafür bezahlt), das Auto läuft obendrauf. Bei Ladestopp wegen Knappheit bleibt es bei der Grid-Rewards-Automatik.'
-                    ),
-                    array(
-                        'type'    => 'Label',
-                        'caption' => '• GEÄNDERT: Grid Rewards: Während Tibber das Auto lädt, bestellt EMS keinen Netzeinkauf-Sollwert mehr. Der hatte die Batterie zusätzlich mit etwa 10 kW aus dem Netz geladen und den Netzbezug auf bis zu 20 kW getrieben. Jetzt lädt die Batterie nur noch aus PV und entlädt nicht, das Auto kommt aus dem Netz. Pausiert Tibber das Laden (Knappheit im Netz), fährt EMS die Wechselrichter-Automatik, damit das Haus aus PV und Batterie läuft und das Netz entlastet.'
-                    ),
-                    array(
-                        'type'    => 'Label',
-                        'caption' => '• NEU: Lädt ein Auto an einer Wallbox im Modus Smart Charging, schont EMS jetzt die Hausbatterie: Sie lädt dann nur noch aus PV und entlädt nicht, Haus und Auto kommen aus PV bzw. Netz. Abschaltbar im Panel „Wallboxen“. Gilt nur, wenn EMS sonst die Wechselrichter-Automatik fährt; Grid Rewards, Netzbetreiber, Boost und Plan-Sollwerte haben Vorrang.'
-                    ),
-                    array(
-                        'type'    => 'Label',
-                        'caption' => '• NEU: Smart Charging wird automatisch erkannt: Wähle im Panel „Wallboxen“ je Wallbox einmal das Tibber-Fahrzeug aus (EMS rät die Zuordnung nie). Meldet Tibber für dieses Fahrzeug Smart Charging, überlässt EMS die Wallbox Tibber (kein Sperren, kein Erzwingen). Meldet Tibber das Fahrzeug kurz nicht, gilt der zuletzt bekannte Stand. Braucht das Tibber-Modul ab Version 2.9.2.'
-                    ),
-                    array(
-                        'type'    => 'Label',
-                        'caption' => '• NEU: Wallbox-Modus je Wallbox im Panel „Wallboxen“: Smart Charging (Tibber hat die Hoheit, EMS sperrt und erzwingt nichts), EMS steuert (Freigabe nach Preis und PV-Überschuss) oder nur beobachten. „Automatisch“ erkennt, ob EMS die Wallbox schalten darf. Hat EMS eine Wallbox früher selbst gesperrt, gibt es sie im Modus Smart Charging einmal wieder frei. Grid Rewards sperrt die Wallbox außerdem nicht mehr.'
-                    ),
-                    array(
-                        'type'    => 'Label',
-                        'caption' => '• NEU: „Mittagsspitze aufnehmen“ (Netzdienlich-Baustein B1) lädt die Batterie jetzt gezielt im stärksten PV-Fenster des Tages statt möglichst spät: Vorher gesperrt (Überschuss ins Netz), sobald genug Reserve bis zum Fensterbeginn erwartet wird; ab dem Fenster immer freigegeben. Neu einstellbar im Panel „Netzdienliche Bausteine“, welcher Anteil vom Tagesmaximum als „Spitze“ zählt. Zusätzlich neu: Ist der Einkaufspreis (inkl. Wandlungsverlust und Zykluskosten) gerade günstiger als die Einspeisevergütung, sperrt EMS unabhängig von der Uhrzeit immer — Zwischenspeichern lohnt sich dann nicht.'
-                    ),
-                    array(
-                        'type'    => 'Label',
-                        'caption' => '• NEU: Fehlbetrag zwischen PV und Hausverbrauch kommt jetzt bevorzugt aus dem Netz statt aus der Batterie, sofern der aktuelle Strompreis mit 5 % Sicherheitsabstand unter den eigenen Zykluskosten liegt. Die Batterie lädt dabei weiter ausschließlich aus der PV. Vermeidet unnötige Wandlungsverluste und Zyklen, ohne die Zykluskosten-Angabe im Panel „Batterie“ ändert sich am Verhalten nichts.'
-                    ),
-                    array(
-                        'type'    => 'Label',
-                        'caption' => '• NEU: Verbund-Gesundheit unterscheidet jetzt schlafende Tesla-Fahrzeuge (über Tessie) von einem echten Verbindungsproblem: Ein Fahrzeug ohne Telemetrie, das laut Tessie schläft, gilt als gesund und wird gesondert als „schläft“ genannt, statt als auffällig.'
-                    ),
-                    array(
-                        'type'    => 'Label',
-                        'caption' => '• NEU: Ladekurve genauer: Neben der Meldung des Batteriemanagements lernt das EMS die tatsächlich beobachtete Ladeleistung je Ladestand und plant die Nachtladung damit. Ist das Nachtziel erreicht, lädt das EMS bei einem kleinen Rückgang im selben Nachtfenster nicht mehr neu.'
-                    ),
-                    array(
-                        'type'    => 'Label',
-                        'caption' => '• NEU: Verschleißkosten aus Anschaffungspreis und Zyklenzahl: Preis des Speichers und Herstellerzyklen im Panel „Batterie“ eintragen, das EMS berechnet die Kosten je kWh selbst und zieht sie bei Netzladen, Vorentladen und Restwert ab. Ein direkt eingetragener Wert in ct/kWh gilt weiter vorrangig.'
-                    ),
-                    array(
-                        'type'    => 'Label',
-                        'caption' => '• NEU: Restwert der Batterieenergie (Beta, Schalter im Panel „Tibber & Tarif“, standardmäßig aus): Ist die gespeicherte Energie später mehr wert als der Netzbezug jetzt, bleibt der Akku geschont und das Haus läuft aus dem Netz. Rechnet vorsichtig mit ausbleibender PV (p10), damit die teuren Zeiten morgens und abends aus günstig gekauftem Strom gedeckt werden können. Wirkt vor allem bei kleinen Speichern und dynamischem Tarif.'
-                    ),
-                    array(
-                        'type'    => 'Label',
-                        'caption' => '• NEU: Preisquelle ohne Tibber: Wer den Symcon-Strompreis (Anbieter aWATTar, EPEX Spot oder Tibber) installiert hat, bekommt den Tagesplan aus dessen Preisen. Bei mehreren Instanzen die richtige im Panel „Tibber & Tarif“ wählen. Der Preis enthält die dort eingestellten Aufschläge.'
-                    ),
-                    array(
-                        'type'    => 'Label',
-                        'caption' => '• NEU: Ladeleistung nach Ladestand: Das EMS lernt die vom Batteriemanagement gemeldete Ladegrenze je 5-Prozent-Stufe aus dem laufenden Betrieb und plant die Nachtladung damit. Kein Archiv und keine bestimmte Hardware nötig.'
-                    ),
-                    array(
-                        'type'    => 'Label',
-                        'caption' => '• NEU: Zusammenhängende Ladefenster: Die günstigsten Viertelstunden werden bevorzugt am Stück gewählt, damit es weniger Umschaltungen gibt. Im Plan steht je Ladefenster die geschätzte Ersparnis (Planzahl, keine Abrechnung).'
-                    ),
-                    array(
-                        'type'    => 'Label',
-                        'caption' => '• NEU: Trockenlauf: Das EMS rechnet und zeigt seine Entscheidungen, schreibt aber nichts an Wechselrichter und Wallboxen. Kann das EMS an einem Gerät nichts schreiben, steht im Status „nur beobachtend“ mit Grund statt „OK“.'
-                    ),
-                    array(
-                        'type'    => 'Label',
-                        'caption' => '• NEU: Wirkungsgrad einstellbar (Wandlungsverlust beim Laden aus dem Netz und beim Entladen fürs Haus), Zykluskosten je kWh und eine Preisreferenz für die Grenze, ab der Netzladen lohnt. Alle Werte sind einstellbar und nie fest auf eine bestimmte Anlage zugeschnitten.'
-                    ),
-                    array(
-                        'type'    => 'Label',
-                        'caption' => '• NEU: Wallbox-Mindestleistung aus der gemeldeten Phasenzahl (sofern die Wallbox sie meldet); eine eingetragene Mindestleistung geht immer vor. Steuerfehler lösen den Rückfall in die Wechselrichter-Automatik jetzt nach Ausfallzeit statt nach einer Fehlerzahl aus.'
-                    ),
-                    array(
-                        'type'    => 'Button',
-                        'caption' => 'Verstanden – nicht mehr anzeigen',
-                        'onClick' => 'EMS_AckNews($id);'
-                    ),
-                )
-            ));
-        }
+        // 1. "Was ist Neu" — nur die Versionen seit der zuletzt bestaetigten (SUITE.md NEWS_VERSIONS, 0.97.4)
+        $newsPanel = $this->newsBanner();
+        if ($newsPanel !== null) { array_unshift($form['elements'], $newsPanel); }
 
         // 3b. Status-Zeile ueber dem manuellen PT15M-Fallback-Feld einfuegen —
         // zeigt live, ob/wie das Feld gerade automatisch ueberholt ist
@@ -1434,9 +1255,42 @@ class EMS extends IPSModule
         $this->UpdateFormField('CycleCostStatusLabel', 'caption', $this->cycleCostText($manualCt, $priceEur, $cycles));
     }
 
+    /** Reine Versionszahl ohne Beta-/Build-Zusatz ("0.97.4-beta.1" -> "0.97.4"). */
+    private function baseVersion(string $v): string
+    {
+        return preg_replace('/-.*$/', '', $v) ?? $v;
+    }
+
+    /**
+     * "Was ist Neu": nur Versionen NEUER als die zuletzt bestaetigte (Attribut SeenNews), gruppiert nach Version
+     * (SUITE.md NEWS_VERSIONS, Dietmar 08.11.2026: EMS zeigte bei jedem Update die ganze Liste). null = nichts Neues.
+     */
+    private function newsBanner(): ?array
+    {
+        $seen = $this->baseVersion((string)$this->ReadAttributeString('SeenNews'));
+        $pending = array();
+        foreach (EMS_NEWS_VERSIONS as $ver => $lines) {
+            if ($seen === '' || version_compare($ver, $seen, '>')) { $pending[$ver] = $lines; }
+        }
+        if (count($pending) === 0) { return null; }
+        uksort($pending, 'version_compare');
+        $pending = array_reverse($pending, true); // neueste oben
+        $items = array();
+        $multi = count($pending) > 1;
+        foreach ($pending as $ver => $lines) {
+            if ($multi) { $items[] = array('type' => 'Label', 'caption' => 'Version ' . $ver . ':'); }
+            foreach ($lines as $line) { $items[] = array('type' => 'Label', 'caption' => '• ' . $line); }
+        }
+        $items[] = array('type' => 'Button', 'caption' => 'Verstanden – nicht mehr anzeigen', 'onClick' => 'EMS_AckNews($id);');
+        return array('type' => 'ExpansionPanel', 'name' => 'NewsPanel', 'caption' => '🆕 Neu bis Version ' . array_key_first($pending),
+            'expanded' => true, 'items' => $items);
+    }
+
     public function AckNews()
     {
-        $this->WriteAttributeString('SeenNews', EMS_NEWS_VERSION);
+        // installierte Bibliotheksversion merken, nicht nur den letzten Eintrag (SUITE.md NEWS_VERSIONS)
+        $ver = $this->baseVersion((string)$this->getOwnVersion());
+        $this->WriteAttributeString('SeenNews', $ver !== '' ? $ver : (string)array_key_first(EMS_NEWS_VERSIONS));
         $this->UpdateFormField('NewsPanel', 'visible', false);
     }
 
@@ -1455,7 +1309,7 @@ class EMS extends IPSModule
     private function getOwnVersion()
     {
         $lib = @IPS_GetLibrary('{90286A25-E6C9-4A66-BD4E-0CFB707C2C6C}');
-        return $lib['Version'] ?? EMS_NEWS_VERSION;
+        return $lib['Version'] ?? (string)array_key_first(EMS_NEWS_VERSIONS);
     }
 
     // ----------------------------------------------------------------

@@ -2,6 +2,9 @@
 
 Ältere Versionen: [CHANGELOG-Archiv.md](CHANGELOG-Archiv.md)
 
+## 0.97.4 (2026-11-08)
+- **„Was ist neu“ nur seit der zuletzt gesehenen Version (Befund Dietmar 08.11.2026, SUITE.md `NEWS_VERSIONS`):** Das Panel zeigte bei jedem Update die ganze, über Monate gewachsene Liste. Jetzt hängt jede Zeile an ihrer Version; gezeigt werden nur die Versionen, die neuer sind als die zuletzt mit „Verstanden“ bestätigte, gruppiert und die neueste oben. „Verstanden“ merkt sich die installierte Version (ohne Beta-Zusatz). Die Einträge vor 0.94.1 bilden einen gemeinsamen Altblock. Vier neue Prüfungen, eine Mutation nachweislich rot.
+
 ## 0.97.3 (2026-11-08)
 - **Nachtladen bis voll statt nur bis zum Bedarf der nächsten Nacht (Auftrag Dietmar 08.11.2026):** Die Bedarfsregel aus 0.93.0 lud nur so viel, wie der Akku bis zur nächsten Nacht abgibt, und setzte damit voraus, dass die nächste Nacht wieder günstig ist. Deren Preise sind beim Planen aber unbekannt. Auswertung der Preise von 30 Nächten (08.10.–07.11.2026): Das Nachtminimum sprang in 8 von 30 Fällen um 8–16 ct zur Folgenacht, der Folgetag lag immer 6–23 ct (typisch 13 ct) über dem Nachtminimum, der Wandlungsverlust kostet nur etwa 3 ct. Jetzt ist der Bedarf nur noch die Untergrenze; geladen wird bis zum Nachtziel, abzüglich des Platzes, den der PV-Überschuss des Folgetags (vorsichtige Prognose mit gelernter Korrektur) sicher füllt. Im Winter heißt das voll, im Sommer weniger.
 - **Begründungstext Halten:** nennt den eingestellten Wandlungsverlust statt fest „5 %“.
