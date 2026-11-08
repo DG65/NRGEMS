@@ -18,7 +18,7 @@ trait EMSFormLayout
 {
     /**
      * @param array $elements Elemente des Formulars (oberste Ebene)
-     * @param array $panels   Beginn der Panel-Caption => stabiler Schluessel
+     * @param array $panels   Panel-name => stabiler Schluessel (nie die Caption: die ist uebersetzt)
      * @return array [head, bundles] bundles: key => ['panel' => ..., 'rest' => [...]], in Standardreihenfolge
      */
     private function formLayoutSplit(array $elements, array $panels): array
@@ -29,14 +29,9 @@ trait EMSFormLayout
         foreach ($elements as $el) {
             $key = null;
             if (is_array($el) && ($el['type'] ?? '') === 'ExpansionPanel') {
-                $cap = (string) ($el['caption'] ?? '');
-                foreach ($panels as $prefix => $k) {
-                    // ganze Caption oder Caption mit Zusatz in Klammern/nach Gedankenstrich -- "🚗 Wallboxen" darf nicht "🚗 Wallboxen bedienen" treffen
-                    $prefix = (string) $prefix;
-                    if ($cap === $prefix || str_starts_with($cap, $prefix . ' (') || str_starts_with($cap, $prefix . ' —')) {
-                        $key = $k;
-                        break;
-                    }
+                $name = (string) ($el['name'] ?? '');
+                if ($name !== '' && isset($panels[$name])) {
+                    $key = $panels[$name];
                 }
             }
             if ($key !== null) {
@@ -115,7 +110,8 @@ trait EMSFormLayout
         $rows = [];
         $hidden = [];
         foreach ($layout as $key => $l) {
-            $name = $this->formLayoutPanelName($bundles[$key]['panel']);
+            // Listenzelle: die Konsole uebersetzt sie nicht (SUITE.md Store-Punkt 25), deshalb selbst
+            $name = $this->t($this->formLayoutPanelName($bundles[$key]['panel']));
             $rows[] = ['Key' => $key, 'Panel' => $name, 'Opened' => $l['open'] === 'open', 'Closed' => $l['open'] === 'closed',
                 'Hidden' => $l['open'] === 'hidden', 'Pos' => $l['pos']];
             if ($l['open'] === 'hidden') {
@@ -123,39 +119,40 @@ trait EMSFormLayout
             }
         }
         $hiddenLine = $hidden
-            ? [['type' => 'Label', 'caption' => '🙈 Ausgeblendet: ' . implode(', ', $hidden) . ' — zum Wiederzeigen den Haken bei „Ausgeblendet“ entfernen. Ausgeblendete Bereiche arbeiten weiter, nur die Anzeige fehlt.']]
+            ? [['type' => 'Label', 'caption' => sprintf($this->t('🙈 Hidden: %s — to show it again, untick "Hidden". Hidden sections keep working, only the display is missing.'), implode(', ', $hidden))]]
             : [];
         return [
-            'type' => 'ExpansionPanel', 'expanded' => false,
-            'caption' => '🪟  Formular: Aufbau' . ($hidden ? ' (' . count($hidden) . ' ausgeblendet)' : ''),
+            'type' => 'ExpansionPanel', 'name' => 'PanelFormLayout', 'expanded' => false,
+            'caption' => $hidden ? sprintf($this->t('🪟  Form: layout (%d hidden)'), count($hidden)) : '🪟  Form: layout',
             'items' => array_merge($hiddenLine, [
-                ['type' => 'Label', 'caption' => 'Hier legst du fest, welche Bereiche beim Öffnen des Formulars aufgeklappt sind und in welcher Reihenfolge sie stehen. Symcon merkt sich das Auf- und Zuklappen nicht selbst, deshalb gilt die Einstellung hier jedes Mal beim Öffnen. Sie wirkt nach „Übernehmen“ beim nächsten Öffnen des Formulars.'],
-                ['type' => 'Label', 'caption' => 'Kein Haken heißt „Standard“: wie das Modul es vorsieht. Wer „Zugeklappt“ wählt, sieht dann auch Neues dort nicht sofort. Die Position ist eine Zahl; bei gleicher Zahl bleibt die Standardreihenfolge. „Ausgeblendet“ nimmt einen Bereich aus der Anzeige, ohne dass er etwas verliert: seine Einstellungen bleiben erhalten und wirken weiter (gedacht für Bereiche, die man selten braucht). Zum Wiederzeigen den Haken bei „Ausgeblendet“ entfernen oder „Auf Standard zurücksetzen“ klicken. Sind mehrere Haken gesetzt, gilt „Ausgeblendet“ vor „Zugeklappt“ vor „Aufgeklappt“. Die Bereiche oben (Zweck, Neu, Dokumentation) und unten (Rückmeldungen, Über dieses Modul) bleiben, wo sie sind, und lassen sich nicht ausblenden.'],
+                ['type' => 'Label', 'caption' => 'Here you define which sections are expanded when the form opens and in which order they appear. Symcon does not remember expanding and collapsing itself, so the setting here applies every time the form opens. It takes effect after "Apply" the next time the form is opened.'],
+                ['type' => 'Label', 'caption' => 'No tick means "Default": as the module intends. If you choose "Collapsed", you will not see new items there immediately. The position is a number; with equal numbers the default order is kept. "Hidden" removes a section from the display without it losing anything: its settings are kept and remain in effect (intended for sections you rarely need). To show it again, untick "Hidden" or click "Reset to default". If several ticks are set, "Hidden" takes precedence over "Collapsed" over "Expanded". The sections at the top (purpose, new, documentation) and at the bottom (feedback, about this module) stay where they are and cannot be hidden.'],
                 [
-                    'type' => 'List', 'name' => 'FormLayout', 'caption' => 'Bereiche', 'rowCount' => count($rows), 'add' => false, 'delete' => false,
+                    'type' => 'List', 'name' => 'FormLayout', 'caption' => 'Sections', 'rowCount' => count($rows), 'add' => false, 'delete' => false,
                     'loadValuesFromConfiguration' => false,
                     'values' => $rows,
                     'columns' => [
-                        ['caption' => 'Bereich', 'name' => 'Panel', 'width' => 'auto', 'add' => ''],
-                        ['caption' => 'Schlüssel', 'name' => 'Key', 'width' => '0px', 'visible' => false, 'add' => '', 'save' => true],
-                        ['caption' => 'Aufgeklappt', 'name' => 'Opened', 'width' => '110px', 'add' => false, 'edit' => ['type' => 'CheckBox']],
-                        ['caption' => 'Zugeklappt', 'name' => 'Closed', 'width' => '110px', 'add' => false, 'edit' => ['type' => 'CheckBox']],
-                        ['caption' => '🙈 Ausgeblendet', 'name' => 'Hidden', 'width' => '130px', 'add' => false, 'edit' => ['type' => 'CheckBox']],
+                        ['caption' => 'Section', 'name' => 'Panel', 'width' => 'auto', 'add' => ''],
+                        ['caption' => 'Key', 'name' => 'Key', 'width' => '0px', 'visible' => false, 'add' => '', 'save' => true],
+                        ['caption' => 'Expanded', 'name' => 'Opened', 'width' => '110px', 'add' => false, 'edit' => ['type' => 'CheckBox']],
+                        ['caption' => 'Collapsed', 'name' => 'Closed', 'width' => '110px', 'add' => false, 'edit' => ['type' => 'CheckBox']],
+                        ['caption' => '🙈 Hidden', 'name' => 'Hidden', 'width' => '130px', 'add' => false, 'edit' => ['type' => 'CheckBox']],
                         ['caption' => 'Position', 'name' => 'Pos', 'width' => '100px', 'add' => 1, 'edit' => ['type' => 'NumberSpinner', 'minimum' => 1, 'maximum' => 99]],
                     ],
                 ],
-                ['type' => 'Button', 'caption' => '↩️ Auf Standard zurücksetzen', 'onClick' => 'echo ' . 'EMS_ResetFormLayout($id);'],
+                ['type' => 'Button', 'caption' => '↩️ Reset to default', 'onClick' => 'echo ' . 'EMS_ResetFormLayout($id);'],
             ]),
         ];
     }
 
     /** Setzt Aufklapp-Zustand und Reihenfolge im offenen Formular auf den Standard (gilt nach "Uebernehmen"). */
-    private function formLayoutReset(array $panels): string
+    private function formLayoutReset(array $panels, array $titles): string
     {
         $rows = [];
         $i = 0;
-        foreach ($panels as $prefix => $key) {
-            $rows[] = ['Key' => $key, 'Panel' => $this->formLayoutPanelName(['caption' => (string) $prefix]), 'Opened' => false, 'Closed' => false, 'Hidden' => false, 'Pos' => ++$i];
+        foreach ($panels as $key) {
+            // Listenzelle: selbst uebersetzen (die Konsole uebersetzt nur Beschriftungen, keine Zellinhalte)
+            $rows[] = ['Key' => $key, 'Panel' => $this->t((string) ($titles[$key] ?? $key)), 'Opened' => false, 'Closed' => false, 'Hidden' => false, 'Pos' => ++$i];
         }
         $this->UpdateFormField('FormLayout', 'values', json_encode($rows, JSON_UNESCAPED_UNICODE));
         return 'ℹ️ Auf Standard gesetzt. Zum Speichern unten „Übernehmen“ klicken.';

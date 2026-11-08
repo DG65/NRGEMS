@@ -41,71 +41,72 @@ define('EMS_LOG_VERBOSE',     2);
 // Formular-Konvention (siehe EMS/SUITE.md "Einheitliche Formular-Optik"):
 // Was-ist-Neu-Panel ist versionsscharf dismissible, Referenzmuster InverterHub.
 define('EMS_COLOR_AUTO', 0x2E8B3D); // Gruen: Wert wurde automatisch uebernommen (🔗-Zeilen im Formular)
+// Quelltexte englisch, deutsche Fassung in locale.json; newsBanner() uebersetzt je Zeile.
 define('EMS_NEWS_VERSIONS', array(
     '0.97.4' => array(
-        'KORRIGIERT: „Was ist neu“ zeigt nur noch die Neuerungen seit der zuletzt bestätigten Version statt der ganzen Liste.',
-        '🪟 NEU: Formular-Aufbau selbst wählen: Im Bereich „🪟 Formular: Aufbau“ legen Sie je Bereich fest, ob er beim Öffnen aufgeklappt, zugeklappt oder ausgeblendet ist und an welcher Stelle er steht.',
-        'NEU: Fehlt Logging, steht der Bereich „📈 Logging fehlt“ aufgeklappt ganz oben und nennt die Variablen mit Namen. Er umfasst jetzt auch die Messpunkte des Wechselrichters (Netz, PV, Akku, Ladestand), die die EMS-Bilanz braucht; derselbe Knopf steht auch in der EMS-Bilanz.',
+        'FIXED: "What\'s new" now only shows the changes since the last confirmed version instead of the whole list.',
+        '🪟 NEW: Choose the form layout yourself: in the section "🪟 Form: layout" you define per section whether it is expanded, collapsed or hidden when the form opens and where it appears.',
+        'NEW: If logging is missing, the section "📈 Logging missing" appears expanded at the very top and lists the variables by name. It now also covers the inverter measuring points (grid, PV, battery, state of charge) that the EMS balance needs; the same button is also available in the EMS balance.',
     ),
-    '0.97.3' => array('KORRIGIERT: Nachtladen. Weil die Preise der übernächsten Nacht beim Planen unbekannt sind, lädt das Nachtfenster jetzt bis zum Nachtziel (Standard 100 %) und lässt nur so viel Platz frei, wie der PV-Überschuss am Folgetag laut vorsichtiger Prognose sicher einlädt. Im Winter heißt das voll laden, im Sommer entsprechend weniger. Vorher reichte der Bedarf bis zur nächsten Nacht. Auswertung von 30 Nächten: Eine kWh zu viel kostet etwa 3 ct Wandlungsverlust, eine zu wenig am Folgetag im Schnitt 13 ct.'),
-    '0.97.2' => array('NEU: Die EMS-Bilanz weist die Tibber-Grid-Rewards-Vergütung je Tag aus (aus der Tibber-Variable „RewardAllTime“, wenn sie geloggt wird). Sie verringert die echten Kosten; den Vergleich mit der Automatik ändert sie nicht, weil das Fahrzeug sie mit und ohne EMS bekommt.'),
-    '0.97.1' => array('KORRIGIERT: Faire Tagesbewertung in der EMS-Bilanz: Energie, die am Tagesende mehr oder weniger im Akku liegt als am Morgen, wird mit dem Tagespreis bewertet. Vorher sah ein Tag, an dem das EMS den Akku schonte, wie ein Verlust aus, obwohl die Energie an den Folgetagen genutzt wurde.'),
-    '0.97.0' => array('NEU: Die EMS-Bilanz zeigt je Tag und für 30 Tage, wohin das Geld ging: Netzladen (Menge, Ø Preis und der Preis, den der Akku ersetzte), Halten (Netzbezug bei ruhendem Akku), PV-Einspeisung trotz Platz im Akku (mit geschätztem entgangenem Betrag) und Entladen ins Netz. Nach dem Update einmal „Letzte 30 Tage neu rechnen“ drücken.'),
-    '0.96.1' => array('KORRIGIERT: Nachtladen. Der Bedarf bis zur nächsten Nacht wird jetzt mit einer gelernten Prognose-Korrektur gerechnet (PV und Hauslast der letzten Tage gegen die Prognose); bis genug Tage gelernt sind, vorsichtig mit 70 % der PV und 115 % der Last. Außerdem rechnet der Plan richtig, dass die WR-Automatik den Akku auch über dem Tagesziel weiter mit PV-Überschuss lädt.'),
-    '0.96.0' => array('NEU: „📊 EMS-Bilanz“: Das EMS vergleicht jeden Tag die echten Netzkosten mit dem, was die reine Wechselrichter-Automatik gekostet hätte, und zeigt die Summe der letzten 30 Tage (Variable „EMS-Bilanz 30 Tage“). Braucht das Logging von Netz-, PV- und Akkuleistung sowie des Preises.'),
-    '0.95.0' => array('NEU: KI-Assistent (optional, standardmäßig aus): Unter „🤖 KI-Assistent“ beantwortet Claude (eigener Schlüssel) oder ein lokales Ollama-Modell Fragen wie „Warum lädt der Akku gerade?“ aus Tagesplan, Preisen und Messwerten. Die KI erklärt nur, sie steuert nichts.'),
-    '0.94.1' => array('KORRIGIERT: Bei PV-Überschuss lädt der Akku wieder über die Automatik des Wechselrichters statt per „Laden - Solar“. Die PV versorgt zuerst das Haus, nur der Rest geht in den Akku. Vorher konnte der Akku die ganze PV ziehen, während das Haus teuren Netzstrom bezog.'),
+    '0.97.3' => array('FIXED: Night charging. Because the prices of the night after next are unknown at planning time, the night window now charges up to the night target (default 100 %) and only leaves as much room free as the PV surplus will safely charge the next day according to the conservative forecast. In winter this means a full charge, in summer correspondingly less. Previously the demand until the next night was sufficient. Evaluation of 30 nights: one kWh too much costs about 3 ct of conversion loss, one too little costs 13 ct on average the next day.'),
+    '0.97.2' => array('NEW: The EMS balance shows the Tibber Grid Rewards remuneration per day (from the Tibber variable "RewardAllTime" if it is logged). It reduces the real costs; it does not change the comparison with automatic mode, because the vehicle receives it with or without EMS.'),
+    '0.97.1' => array('FIXED: Fair daily valuation in the EMS balance: energy left in the battery at the end of the day, more or less than in the morning, is valued at the day\'s price. Previously a day on which the EMS spared the battery looked like a loss, although the energy was used on the following days.'),
+    '0.97.0' => array('NEW: The EMS balance shows per day and for 30 days where the money went: grid charging (amount, average price and the price the battery replaced), holding (grid import while the battery rests), PV feed-in despite free battery capacity (with an estimated lost amount) and discharging into the grid. After the update, press "Recalculate the last 30 days" once.'),
+    '0.96.1' => array('FIXED: Night charging. The demand until the next night is now calculated with a learned forecast correction (PV and house load of the last days against the forecast); until enough days have been learned, conservatively with 70 % of PV and 115 % of load. In addition, the plan now correctly accounts for the inverter\'s automatic mode continuing to charge the battery with PV surplus above the daily target.'),
+    '0.96.0' => array('NEW: "📊 EMS balance": every day the EMS compares the real grid costs with what the inverter\'s automatic mode alone would have cost and shows the total of the last 30 days (variable "EMS balance 30 days"). Requires logging of grid, PV and battery power as well as the price.'),
+    '0.95.0' => array('NEW: AI assistant (optional, off by default): under "🤖 AI assistant", Claude (own key) or a local Ollama model answers questions such as "Why is the battery charging right now?" from the day plan, prices and measurements. The AI only explains, it controls nothing.'),
+    '0.94.1' => array('FIXED: With PV surplus the battery charges via the inverter\'s automatic mode again instead of "Charge - solar". PV supplies the house first, only the rest goes into the battery. Previously the battery could draw all of the PV while the house took expensive grid power.'),
     // bis 0.94.0 gewachsene Liste, rueckwirkend nicht je Zeile einer Version zuordenbar (SUITE.md NEWS_VERSIONS)
     '0.94.0' => array(
-        'GEÄNDERT: EMS schaltet das Logging seiner Variablen nicht mehr selbst ein. Fehlt es, erscheint im Formular „📈 Logging für den Tagesplan“ mit einem Knopf. Eingeschaltetes Logging bleibt, wie es ist.',
-        'NEU: Nachtfenster nach Bedarf: EMS hält und lädt nachts nur so viel, wie der Akku bis zur nächsten Nacht braucht. Volles Laden bleibt, wenn Nachtstrom inklusive Verlust unter der Einspeisevergütung liegt.',
-        'NEU: Ladeziel der Wallbox mit Frist je Wochentag (Tabelle unter dem Ladeziel).',
-        'GEÄNDERT: Tibber Grid Rewards betrifft nur das Auto. Während eines Grid-Rewards-Ereignisses folgt der Hausakku jetzt weiter seinem Tagesplan (z. B. Nachtladen), die Wallbox bleibt unangetastet.',
-        'NEU: Ganz oben gibt es jetzt „🚗 Wallboxen bedienen“: Ladeart, Ladeziel, Frist, Jetzt 1 Stunde laden, Übersteuerung beenden und Ladeziel löschen, mit dem Plan je Wallbox. Wirkt sofort, ohne „Änderungen übernehmen“.',
-        'GEÄNDERT: „Akku halten“ nutzt jetzt die Batterie-Bereitschaft des Wechselrichters (GoodWe-Modus 8): Der Akku ruht, die PV versorgt das Haus und speist ein, Lücken kommen aus dem Netz. Kostet Netzstrom weniger als die Einspeisevergütung, hält EMS den Akku auch bei vollem Akku und PV-Überschuss.',
-        'NEU: Zeitvariable Netzentgelte (z. B. §14a Modul 3) lassen sich im Bereich „Tibber & Tarif“ als Stufen eintragen, für Preisquellen ohne Netzentgelt (Symcon-Strompreis, eigene Preise). Bei Tibber sind sie schon im Preis. Fehlen Preise (Quelle ausgefallen), plant EMS mit dem Vortag bzw. dem heutigen Verlauf weiter, aber ohne Vorentladen ins Netz.',
-        'NEU: Je Wallbox zeigt die Variable „Wallbox n: Plan (was als Nächstes passiert)“ im Klartext, was die Wallbox tun wird. Im WebFront und in der App lassen sich Ladeart (neu auch „Aus“), Ladeziel und Frist ändern, dazu „Jetzt 1 Stunde laden“. Änderungen dort ändern die Einstellungen hier direkt.',
-        'NEU: Wallboxen über ChargerHub verbinden sich jetzt vollständig automatisch, auch Status und Fehler (ein Wallbox-Fehler sperrt die Freigabe). Im Panel „Wallboxen“ steht je Wert, woher er kommt (🔗 automatisch, ✏️ eigene Variable, ⚠️ nicht verbunden), mit aktuellem Wert; leere manuelle Felder werden ausgeblendet.',
-        'NEU: Ladeziel mit Frist je Wallbox (Panel „Wallboxen“): z. B. 20 kWh bis 07:00. EMS lädt in den günstigsten Viertelstunden bis zur Frist und überstimmt dabei die Ladeart, danach gilt sie wieder. Reicht die Zeit nicht, lädt EMS sofort und warnt. Standard aus; braucht ChargerHub ab 0.9.128.',
-        'NEU: Bei einer Wallbox, die EMS nur beobachtet, nennt die Statuszeile im Panel „Wallboxen“ jetzt, wer sie laut ChargerHub regelt und warum (nur Anzeige, ab ChargerHub 0.9.126).',
-        'NEU: Wallbox-Ladearten je Wallbox: Manuell (feste Stromstärke), Nur PV, PV-Anteil und Hybrid, mit Stromsollwert statt Ein/Aus und Phasenwahl (Panel „Wallboxen“, je Wallbox „Ladeart“). Standard bleibt Preisgesteuert, bestehende Anlagen ändern sich nicht. Netzbetreiber-Sperre und Batterie-Boost haben Vorrang, Smart Charging bleibt unangetastet.',
-        'NEU: Beim Solis kann EMS jetzt auf Vorgabe entladen (Zwangsentladen, nur ins Haus: Hauslast minus PV minus 150 W Reserve). Speist der Wechselrichter dabei mehr als 200 W ein, senkt EMS die Vorgabe sofort. Heute wirkt das beim Batterie-Boost; der Tagesplan fordert selbst kein Entladen an, die Automatik des Solis deckt das Haus ohnehin aus dem Batteriespeicher.',
-        'NEU: Panel „🩺 Konfigurationsprüfung“ zeigt, was in Ihrer Einrichtung still schiefgehen kann (unbekannter Preis, veraltete Messwerte, fehlgeschlagene Schreibzugriffe, Batteriekapazität auf dem Standardwert, feste Preisschwellen, Netzanschluss-Standard). Der aktuelle Preis kommt jetzt automatisch aus der Preiskurve, auch ohne verknüpfte Preisvariable.',
-        'NEU: Eine neue EMS-Instanz läuft nach der ersten Aktivierung zuerst im Trockenlauf (nichts wird geschrieben), bis Sie in der Konfigurationsprüfung „Jetzt live schalten“ wählen. Bestehende Instanzen bleiben unverändert.',
-        'GEÄNDERT: „Akku halten“ beim Solis wirkt nur unter dem Reserve-SOC des Geräts (bei Paul 80 %). Darüber, und bei PV-Überschuss, bleibt der Wechselrichter in Automatik; die Statuszeile nennt den Grund.',
-        'GEÄNDERT: Beim Solis nimmt EMS nur noch einen Zwangsmodus zurück, den es selbst gesetzt hat. Ein von außen gesetzter Zwangsmodus (Skript, App, Portal) bleibt in jedem Zustand unangetastet, auch im Trockenlauf.',
-        'NEU: Beim Solis kann EMS jetzt auch „Akku halten“ (Haus aus dem Netz, Akku wird nicht entladen), über die Entladesperre des InverterHub (Speicherbetrieb 17, nie 49/51). EMS merkt Ihren Speicherbetrieb und stellt ihn wieder her, prüft nach dem Schreiben, hält nur ohne PV-Überschuss und gibt die Sperre frei, wenn EMS ausfällt.',
-        'NEU: Solis-Wechselrichter lassen sich jetzt steuern, minimal: Netzladen per Zwangsladen (Leistung begrenzt auf die Ladegrenze des Geräts), sonst Automatik. Der Zwangsmodus wird im Takt des Fernsteuer-Zeitlimits neu geschrieben. Akku halten und Entladen kamen mit späteren Versionen dazu.',
-        'NEU: Die manuellen Tagesplan-Einträge lassen sich jetzt auch von außen bearbeiten (EMS_GetManualPlan / EMS_SetManualPlan), z. B. im Editor des PV-Monitors. Die Eingaben werden geprüft, bei einem Fehler wird nichts geändert.',
-        'NEU: Manuelle Tagesplan-Einträge nehmen jetzt auch das Datum TT.MM.JJJJ, und unter der Liste steht je Zeile, ob und wann der Eintrag wirkt oder warum er ignoriert wird (z. B. Datum in der Vergangenheit).',
-        'NEU: Gibt es keinen Tagesplan, nennt EMS jetzt den Grund (z. B. „Preisoptimierung ausgeschaltet“, „keine Viertelstunden-Preise“). Das Dashboard kann ihn anzeigen (EMS_GetDayPlan Vertrag 1.3, planAvailable und reason).',
-        'NEU: Die Preisschwellen (Laden, Entladen) rechnen bei „0 = automatisch“ jetzt wirtschaftlich: nie lockerer, als es sich nach Einspeisevergütung bzw. Ersatzpreis, Verlusten, Verschleiß und Mindestspanne lohnt. Unter jeder Schwelle steht der wirksame Wert mit Herkunft.',
-        'GEÄNDERT: Nachtfenster mit der Preisreferenz „erwarteter Ersatz-Bezugspreis“: Zwischen den Ladeviertelstunden versorgt jetzt das Netz das Haus (Akku halten), wenn der Bezug unter dem erwarteten späteren Preis liegt, statt den Akku nachts leerzuziehen. Der gespeicherte Strom steht dadurch in den teuren Stunden zur Verfügung.',
-        'NEU: Im Verbund-Status steht jetzt in einer Zeile, welche Messpunkte des Wechselrichters EMS gefunden hat (PV, Netz, Batterie, SOC, AC-Leistung), ob EMS steuern darf oder nur beobachtet und ob EMS deaktiviert ist.',
-        'GEÄNDERT: Läuft ein Grid Reward und das Auto lädt, hat jetzt auch das GEPLANTE Netzladen der Batterie Vorrang (nicht nur bei negativem Preis). Vorher blendete Grid Rewards den Tagesplan aus, die Batterie blieb dann leer, obwohl der Plan sie in der günstigen Nacht nachladen wollte. Das Auto wird weiter von Tibber gesteuert und läuft obendrauf, bei Ladestopp (Knappheit im Netz) entsteht kein zusätzlicher Netzbezug.',
-        'NEU: Netzbezug-Ausblick für andere Module (EMS_GetGridImportOutlook): EMS rechnet für ein Zeitfenster aus PV-Prognose, Lastprognose, Batterie und geplantem Netzladen, ob Netzbezug entsteht und zu welchem Preis, und was eine Laständerung (z. B. eine gesperrte Wärmepumpe) davon vermeiden würde. Reiner Ratgeber, EMS schaltet dadurch nichts. Erster Nutzer ist die Preis-Sperre der HeishaMon-Heizungs-Automatik.',
-        'NEU: Erreicht der Netzbezugsmodus (Modus 9) beim Laden eines Autos seinen Sollwert nicht und speist die Hausbatterie dabei spürbar ins Auto (beobachtet bei einphasig ladendem Auto mit etwa 3,6 kW), wechselt EMS nach 90 Sekunden für 15 Minuten auf „Laden aus PV“ (Modus 2). Danach wird Modus 9 neu versucht. Das Haus läuft in dieser Zeit aus dem Netz, die Batterie wird nicht entladen.',
-        'GEÄNDERT: Lädt ein Auto bei fast vollem Akku (ab 95 %) im Smart Charging oder Grid Reward, hält EMS jetzt auch dann die Wechselrichter-Einstellung „Laden aus PV“ (Modus 2), wenn die gemessene PV gerade gedrosselt oder von einer Wolke verdeckt ist. Dafür zählt zusätzlich die PV-Prognose der laufenden Viertelstunde, und nach erkanntem Überschuss gilt eine Haltezeit von zehn Minuten. Vorher konnte der Netzbezugsmodus (Modus 9) die PV auf unter 1 kW drosseln und sich selbst festhalten (Beobachtung vom 10.10.).',
-        'GEÄNDERT: Die Absicherung rechnet jetzt den Bedarf statt eines festen Prozentwerts: SOC-Verlauf mit vorsichtiger PV-Prognose und Lastprognose (mit Wärmepumpe über die Außentemperatur) bis zur PV-Übernahme am nächsten Tag. Fehlt Energie, kauft der Plan nur so viel in den günstigsten Viertelstunden vor dem Engpass, wie wirklich fehlt. Der frühere Mindest-SOC ist nur noch eine optionale untere Grenze zur Abendstunde (Standard aus).',
-        'NEU: Manuelle Einträge im Tagesplan (Liste im Panel „Tagesplan“): Netz laden, Akku halten oder Automatik für ein Zeitfenster, einmalig mit Datum oder täglich. Sie haben Vorrang vor der automatischen Planung, nicht vor §14a-Vorgaben des Netzbetreibers und nicht vor Grid Rewards.',
-        'NEU: Bei Smart Charging und Grid Reward (Überschuss) kommt nur noch das Auto aus dem Netz, der Hausverbrauch aus PV und Batterie: EMS regelt dazu den Netzbezug auf die gemessene Auto-Leistung minus 200 W (Wechselrichter-Modus Stromeinkauf). Ist die Batterie fast voll und PV im Überschuss, oder steht sie an der Reserve, bleibt es beim bisherigen Verhalten (Haus aus dem Netz, Batterie nur aus PV). Abschaltbar im Panel „Wallboxen“. Noch nicht an einem echten Ladevorgang beobachtet.',
-        'NEU: Läuft ein Grid Reward bei Überschuss im Netz und der Bezugspreis ist negativ, hat der Tagesplan Vorrang: Die Batterie wird dann aus dem Netz geladen (man wird dafür bezahlt), das Auto läuft obendrauf. Bei Ladestopp wegen Knappheit bleibt es bei der Grid-Rewards-Automatik.',
-        'GEÄNDERT: Grid Rewards: Während Tibber das Auto lädt, bestellt EMS keinen Netzeinkauf-Sollwert mehr. Der hatte die Batterie zusätzlich mit etwa 10 kW aus dem Netz geladen und den Netzbezug auf bis zu 20 kW getrieben. Jetzt lädt die Batterie nur noch aus PV und entlädt nicht, das Auto kommt aus dem Netz. Pausiert Tibber das Laden (Knappheit im Netz), fährt EMS die Wechselrichter-Automatik, damit das Haus aus PV und Batterie läuft und das Netz entlastet.',
-        'NEU: Lädt ein Auto an einer Wallbox im Modus Smart Charging, schont EMS jetzt die Hausbatterie: Sie lädt dann nur noch aus PV und entlädt nicht, Haus und Auto kommen aus PV bzw. Netz. Abschaltbar im Panel „Wallboxen“. Gilt nur, wenn EMS sonst die Wechselrichter-Automatik fährt; Grid Rewards, Netzbetreiber, Boost und Plan-Sollwerte haben Vorrang.',
-        'NEU: Smart Charging wird automatisch erkannt: Wähle im Panel „Wallboxen“ je Wallbox einmal das Tibber-Fahrzeug aus (EMS rät die Zuordnung nie). Meldet Tibber für dieses Fahrzeug Smart Charging, überlässt EMS die Wallbox Tibber (kein Sperren, kein Erzwingen). Meldet Tibber das Fahrzeug kurz nicht, gilt der zuletzt bekannte Stand. Braucht das Tibber-Modul ab Version 2.9.2.',
-        'NEU: Wallbox-Modus je Wallbox im Panel „Wallboxen“: Smart Charging (Tibber hat die Hoheit, EMS sperrt und erzwingt nichts), EMS steuert (Freigabe nach Preis und PV-Überschuss) oder nur beobachten. „Automatisch“ erkennt, ob EMS die Wallbox schalten darf. Hat EMS eine Wallbox früher selbst gesperrt, gibt es sie im Modus Smart Charging einmal wieder frei. Grid Rewards sperrt die Wallbox außerdem nicht mehr.',
-        'NEU: „Mittagsspitze aufnehmen“ (Netzdienlich-Baustein B1) lädt die Batterie jetzt gezielt im stärksten PV-Fenster des Tages statt möglichst spät: Vorher gesperrt (Überschuss ins Netz), sobald genug Reserve bis zum Fensterbeginn erwartet wird; ab dem Fenster immer freigegeben. Neu einstellbar im Panel „Netzdienliche Bausteine“, welcher Anteil vom Tagesmaximum als „Spitze“ zählt. Zusätzlich neu: Ist der Einkaufspreis (inkl. Wandlungsverlust und Zykluskosten) gerade günstiger als die Einspeisevergütung, sperrt EMS unabhängig von der Uhrzeit immer — Zwischenspeichern lohnt sich dann nicht.',
-        'NEU: Fehlbetrag zwischen PV und Hausverbrauch kommt jetzt bevorzugt aus dem Netz statt aus der Batterie, sofern der aktuelle Strompreis mit 5 % Sicherheitsabstand unter den eigenen Zykluskosten liegt. Die Batterie lädt dabei weiter ausschließlich aus der PV. Vermeidet unnötige Wandlungsverluste und Zyklen, ohne die Zykluskosten-Angabe im Panel „Batterie“ ändert sich am Verhalten nichts.',
-        'NEU: Verbund-Gesundheit unterscheidet jetzt schlafende Tesla-Fahrzeuge (über Tessie) von einem echten Verbindungsproblem: Ein Fahrzeug ohne Telemetrie, das laut Tessie schläft, gilt als gesund und wird gesondert als „schläft“ genannt, statt als auffällig.',
-        'NEU: Ladekurve genauer: Neben der Meldung des Batteriemanagements lernt das EMS die tatsächlich beobachtete Ladeleistung je Ladestand und plant die Nachtladung damit. Ist das Nachtziel erreicht, lädt das EMS bei einem kleinen Rückgang im selben Nachtfenster nicht mehr neu.',
-        'NEU: Verschleißkosten aus Anschaffungspreis und Zyklenzahl: Preis des Speichers und Herstellerzyklen im Panel „Batterie“ eintragen, das EMS berechnet die Kosten je kWh selbst und zieht sie bei Netzladen, Vorentladen und Restwert ab. Ein direkt eingetragener Wert in ct/kWh gilt weiter vorrangig.',
-        'NEU: Restwert der Batterieenergie (Beta, Schalter im Panel „Tibber & Tarif“, standardmäßig aus): Ist die gespeicherte Energie später mehr wert als der Netzbezug jetzt, bleibt der Akku geschont und das Haus läuft aus dem Netz. Rechnet vorsichtig mit ausbleibender PV (p10), damit die teuren Zeiten morgens und abends aus günstig gekauftem Strom gedeckt werden können. Wirkt vor allem bei kleinen Speichern und dynamischem Tarif.',
-        'NEU: Preisquelle ohne Tibber: Wer den Symcon-Strompreis (Anbieter aWATTar, EPEX Spot oder Tibber) installiert hat, bekommt den Tagesplan aus dessen Preisen. Bei mehreren Instanzen die richtige im Panel „Tibber & Tarif“ wählen. Der Preis enthält die dort eingestellten Aufschläge.',
-        'NEU: Ladeleistung nach Ladestand: Das EMS lernt die vom Batteriemanagement gemeldete Ladegrenze je 5-Prozent-Stufe aus dem laufenden Betrieb und plant die Nachtladung damit. Kein Archiv und keine bestimmte Hardware nötig.',
-        'NEU: Zusammenhängende Ladefenster: Die günstigsten Viertelstunden werden bevorzugt am Stück gewählt, damit es weniger Umschaltungen gibt. Im Plan steht je Ladefenster die geschätzte Ersparnis (Planzahl, keine Abrechnung).',
-        'NEU: Trockenlauf: Das EMS rechnet und zeigt seine Entscheidungen, schreibt aber nichts an Wechselrichter und Wallboxen. Kann das EMS an einem Gerät nichts schreiben, steht im Status „nur beobachtend“ mit Grund statt „OK“.',
-        'NEU: Wirkungsgrad einstellbar (Wandlungsverlust beim Laden aus dem Netz und beim Entladen fürs Haus), Zykluskosten je kWh und eine Preisreferenz für die Grenze, ab der Netzladen lohnt. Alle Werte sind einstellbar und nie fest auf eine bestimmte Anlage zugeschnitten.',
-        'NEU: Wallbox-Mindestleistung aus der gemeldeten Phasenzahl (sofern die Wallbox sie meldet); eine eingetragene Mindestleistung geht immer vor. Steuerfehler lösen den Rückfall in die Wechselrichter-Automatik jetzt nach Ausfallzeit statt nach einer Fehlerzahl aus.',
+        'CHANGED: EMS no longer enables logging of its variables by itself. If it is missing, "📈 Logging for the day plan" appears in the form with a button. Logging that is already enabled stays as it is.',
+        'NEW: Night window based on demand: at night EMS only holds and charges as much as the battery needs until the next night. Full charging remains if night power including losses is below the feed-in tariff.',
+        'NEW: Wallbox charging target with a deadline per weekday (table below the charging target).',
+        'CHANGED: Tibber Grid Rewards only affects the car. During a Grid Rewards event the house battery now keeps following its day plan (e.g. night charging), the wallbox remains untouched.',
+        'NEW: At the very top there is now "🚗 Operate wallboxes": charging mode, charging target, deadline, charge now for 1 hour, end override and delete charging target, with the plan per wallbox. Takes effect immediately, without "Apply changes".',
+        'CHANGED: "Hold battery" now uses the inverter\'s battery standby (GoodWe mode 8): the battery rests, PV supplies the house and feeds in, gaps are covered from the grid. If grid power costs less than the feed-in tariff, EMS holds the battery even when it is full and there is PV surplus.',
+        'NEW: Time-variable grid fees (e.g. §14a module 3) can be entered as levels in the section "Tibber & tariff", for price sources without grid fees (Symcon electricity price, own prices). With Tibber they are already included in the price. If prices are missing (source failed), EMS keeps planning with the previous day or today\'s curve, but without pre-discharging into the grid.',
+        'NEW: Per wallbox, the variable "Wallbox n: plan (what happens next)" shows in plain text what the wallbox will do. In the WebFront and the app, the charging mode (now also "Off"), charging target and deadline can be changed, plus "Charge now for 1 hour". Changes there directly change the settings here.',
+        'NEW: Wallboxes via ChargerHub now connect fully automatically, including status and errors (a wallbox error blocks enabling). In the panel "Wallboxes" each value shows where it comes from (🔗 automatic, ✏️ own variable, ⚠️ not connected) with the current value; empty manual fields are hidden.',
+        'NEW: Charging target with deadline per wallbox (panel "Wallboxes"): e.g. 20 kWh by 07:00. EMS charges in the cheapest quarter-hours until the deadline and overrides the charging mode while doing so; afterwards the mode applies again. If the time is not sufficient, EMS charges immediately and warns. Off by default; requires ChargerHub from 0.9.128.',
+        'NEW: For a wallbox that EMS only monitors, the status line in the panel "Wallboxes" now states who controls it according to ChargerHub and why (display only, from ChargerHub 0.9.126).',
+        'NEW: Wallbox charging modes per wallbox: manual (fixed current), PV only, PV share and hybrid, with a current setpoint instead of on/off and phase selection (panel "Wallboxes", "Charging mode" per wallbox). The default remains price-controlled, existing systems do not change. Grid operator blocking and battery boost take precedence, Smart Charging remains untouched.',
+        'NEW: With Solis, EMS can now discharge on demand (forced discharge, only into the house: house load minus PV minus 150 W reserve). If the inverter feeds in more than 200 W while doing so, EMS lowers the setpoint immediately. Today this applies to battery boost; the day plan itself does not request discharging, since the Solis automatic mode covers the house from the battery anyway.',
+        'NEW: Panel "🩺 Configuration check" shows what can silently go wrong in your setup (unknown price, outdated measurements, failed write accesses, battery capacity at the default value, fixed price thresholds, grid connection default). The current price now comes automatically from the price curve, even without a linked price variable.',
+        'NEW: After its first activation, a new EMS instance initially runs in dry run (nothing is written) until you select "Go live now" in the configuration check. Existing instances remain unchanged.',
+        'CHANGED: With Solis, "Hold battery" only applies below the device\'s reserve SOC (80 % at Paul\'s). Above it, and with PV surplus, the inverter stays in automatic mode; the status line states the reason.',
+        'CHANGED: With Solis, EMS now only reverts a forced mode that it set itself. A forced mode set externally (script, app, portal) remains untouched in every state, including dry run.',
+        'NEW: With Solis, EMS can now also "hold the battery" (house from the grid, battery is not discharged) via the discharge lock of InverterHub (storage mode 17, never 49/51). EMS remembers your storage mode and restores it, checks after writing, only holds without PV surplus and releases the lock if EMS fails.',
+        'NEW: Solis inverters can now be controlled, minimally: grid charging via forced charging (power limited to the device\'s charging limit), otherwise automatic mode. The forced mode is rewritten at the interval of the remote control time limit. Hold battery and discharging were added in later versions.',
+        'NEW: The manual day plan entries can now also be edited externally (EMS_GetManualPlan / EMS_SetManualPlan), e.g. in the editor of the PV monitor. The inputs are validated; in case of an error nothing is changed.',
+        'NEW: Manual day plan entries now also accept the date DD.MM.YYYY, and below the list each row shows whether and when the entry takes effect or why it is ignored (e.g. date in the past).',
+        'NEW: If there is no day plan, EMS now states the reason (e.g. "price optimisation switched off", "no quarter-hour prices"). The dashboard can display it (EMS_GetDayPlan contract 1.3, planAvailable and reason).',
+        'NEW: With "0 = automatic", the price thresholds (charging, discharging) are now calculated economically: never looser than is worthwhile after feed-in tariff or replacement import price, losses, wear and minimum margin. Below each threshold the effective value is shown with its origin.',
+        'CHANGED: Night window with the price reference "expected replacement import price": between the charging quarter-hours the grid now supplies the house (hold battery) if the import price is below the expected later price, instead of draining the battery at night. The stored energy is thus available in the expensive hours.',
+        'NEW: The federation status now shows in one line which inverter measuring points EMS has found (PV, grid, battery, SOC, AC power), whether EMS may control or only monitors, and whether EMS is disabled.',
+        'CHANGED: If a Grid Reward is running and the car is charging, PLANNED grid charging of the battery now also takes precedence (not only at negative prices). Previously Grid Rewards masked the day plan, and the battery then stayed empty although the plan wanted to recharge it during the cheap night. The car continues to be controlled by Tibber and runs on top; on a charging stop (grid scarcity) no additional grid import occurs.',
+        'NEW: Grid import outlook for other modules (EMS_GetGridImportOutlook): for a time window, EMS calculates from PV forecast, load forecast, battery and planned grid charging whether grid import will occur and at what price, and what a load change (e.g. a blocked heat pump) would avoid. Purely advisory, EMS does not switch anything because of it. The first user is the price lock of the HeishaMon heating automation.',
+        'NEW: If the grid import mode (mode 9) does not reach its setpoint while a car is charging and the house battery noticeably feeds into the car (observed with a single-phase charging car at about 3.6 kW), EMS switches to "Charge from PV" (mode 2) for 15 minutes after 90 seconds. Mode 9 is then tried again. During this time the house runs from the grid, the battery is not discharged.',
+        'CHANGED: If a car charges in Smart Charging or Grid Reward while the battery is almost full (from 95 %), EMS now keeps the inverter setting "Charge from PV" (mode 2) even when the measured PV is currently curtailed or covered by a cloud. For this, the PV forecast of the current quarter-hour is also taken into account, and after a detected surplus a hold time of ten minutes applies. Previously the grid import mode (mode 9) could throttle PV to below 1 kW and lock itself in (observation of 10.10.).',
+        'CHANGED: The safeguard now calculates the demand instead of a fixed percentage: SOC trajectory with conservative PV forecast and load forecast (with the heat pump via outdoor temperature) until PV takes over the next day. If energy is missing, the plan only buys as much as is really missing in the cheapest quarter-hours before the shortfall. The former minimum SOC is now only an optional lower limit at the evening hour (off by default).',
+        'NEW: Manual entries in the day plan (list in the panel "Day plan"): grid charging, hold battery or automatic for a time window, once with a date or daily. They take precedence over automatic planning, but not over §14a commands of the grid operator and not over Grid Rewards.',
+        'NEW: With Smart Charging and Grid Reward (surplus), only the car is supplied from the grid, the house consumption from PV and battery: for this EMS regulates grid import to the measured car power minus 200 W (inverter mode "buy power"). If the battery is almost full and PV is in surplus, or the battery is at its reserve, the previous behaviour remains (house from the grid, battery only from PV). Can be disabled in the panel "Wallboxes". Not yet observed during a real charging session.',
+        'NEW: If a Grid Reward runs during a grid surplus and the import price is negative, the day plan takes precedence: the battery is then charged from the grid (you get paid for it), the car runs on top. On a charging stop due to scarcity, the Grid Rewards automatic behaviour remains.',
+        'CHANGED: Grid Rewards: while Tibber charges the car, EMS no longer orders a grid purchase setpoint. That setpoint had additionally charged the battery with about 10 kW from the grid and driven grid import up to 20 kW. Now the battery only charges from PV and does not discharge, the car is supplied from the grid. If Tibber pauses charging (grid scarcity), EMS runs the inverter\'s automatic mode so that the house runs from PV and battery and relieves the grid.',
+        'NEW: If a car charges at a wallbox in Smart Charging mode, EMS now spares the house battery: it then only charges from PV and does not discharge; house and car are supplied from PV or the grid. Can be disabled in the panel "Wallboxes". Only applies if EMS would otherwise run the inverter\'s automatic mode; Grid Rewards, grid operator, boost and plan setpoints take precedence.',
+        'NEW: Smart Charging is detected automatically: in the panel "Wallboxes", select the Tibber vehicle once per wallbox (EMS never guesses the assignment). If Tibber reports Smart Charging for this vehicle, EMS leaves the wallbox to Tibber (no blocking, no forcing). If Tibber briefly does not report the vehicle, the last known state applies. Requires the Tibber module from version 2.9.2.',
+        'NEW: Wallbox mode per wallbox in the panel "Wallboxes": Smart Charging (Tibber is in charge, EMS neither blocks nor forces anything), EMS controls (enabling by price and PV surplus) or monitor only. "Automatic" detects whether EMS may switch the wallbox. If EMS previously blocked a wallbox itself, it releases it once in Smart Charging mode. In addition, Grid Rewards no longer blocks the wallbox.',
+        'NEW: "Absorb the midday peak" (grid-supportive function B1) now charges the battery specifically in the strongest PV window of the day instead of as late as possible: blocked beforehand (surplus into the grid) as soon as enough reserve is expected until the start of the window; always released from the window on. New setting in the panel "Grid-supportive functions": which share of the daily maximum counts as "peak". Also new: if the purchase price (including conversion loss and cycle costs) is currently cheaper than the feed-in tariff, EMS always blocks regardless of the time of day — buffering does not pay off then.',
+        'NEW: A shortfall between PV and house consumption is now preferably covered from the grid instead of the battery, provided the current electricity price is below the battery\'s own cycle costs with a 5 % safety margin. The battery keeps charging exclusively from PV. Avoids unnecessary conversion losses and cycles; without a cycle cost entry in the panel "Battery", the behaviour does not change.',
+        'NEW: Federation health now distinguishes sleeping Tesla vehicles (via Tessie) from a real connection problem: a vehicle without telemetry that is asleep according to Tessie counts as healthy and is listed separately as "asleep" instead of as conspicuous.',
+        'NEW: More accurate charging curve: in addition to the report of the battery management system, the EMS learns the actually observed charging power per state of charge and plans night charging with it. Once the night target is reached, the EMS does not recharge after a small drop within the same night window.',
+        'NEW: Wear costs from purchase price and number of cycles: enter the price of the storage system and the manufacturer\'s cycles in the panel "Battery", the EMS calculates the costs per kWh itself and deducts them for grid charging, pre-discharging and residual value. A value entered directly in ct/kWh still takes precedence.',
+        'NEW: Residual value of the battery energy (beta, switch in the panel "Tibber & tariff", off by default): if the stored energy is worth more later than grid import now, the battery is spared and the house runs from the grid. Calculates conservatively with missing PV (p10), so that the expensive periods in the morning and evening can be covered with cheaply bought power. Mainly effective with small storage systems and a dynamic tariff.',
+        'NEW: Price source without Tibber: if you have installed the Symcon electricity price (provider aWATTar, EPEX Spot or Tibber), you get the day plan from its prices. With several instances, select the right one in the panel "Tibber & tariff". The price includes the surcharges configured there.',
+        'NEW: Charging power by state of charge: the EMS learns the charging limit reported by the battery management system per 5 percent step from ongoing operation and plans night charging with it. No archive and no specific hardware required.',
+        'NEW: Contiguous charging windows: the cheapest quarter-hours are preferably chosen in one block so that there are fewer switchovers. The plan shows the estimated savings per charging window (plan figure, not a billing).',
+        'NEW: Dry run: the EMS calculates and shows its decisions but writes nothing to inverters and wallboxes. If the EMS cannot write to a device, the status shows "monitoring only" with a reason instead of "OK".',
+        'NEW: Adjustable efficiency (conversion loss when charging from the grid and when discharging for the house), cycle costs per kWh and a price reference for the threshold from which grid charging pays off. All values are adjustable and never tailored to a specific system.',
+        'NEW: Wallbox minimum power from the reported number of phases (if the wallbox reports it); an entered minimum power always takes precedence. Control errors now trigger the fallback to the inverter\'s automatic mode after a failure duration instead of after a number of errors.',
     ),
 ));
 define('EMS_AI_DEFAULT_CLAUDE', 'claude-opus-5-5');
@@ -174,23 +175,63 @@ class EMS extends IPSModule
 {
     use EMSFormLayout;
 
-    // "🪟 Formular: Aufbau" (SUITE.md Punkt 3a, 0.97.4): waehlbare Fachpanels, Beginn der Caption => stabiler Schluessel, Standardreihenfolge
+    /** Merkliste fuer Translate() (SUITE.md Stolperstein 24): je Text hoechstens ein Translate()-Aufruf je Prozess, nie locale.json selbst lesen. */
+    private static $emsTextMemo = array();
+
+    private function t(string $text): string
+    {
+        if (!isset(self::$emsTextMemo[$text])) {
+            try {
+                self::$emsTextMemo[$text] = (string)$this->Translate($text);
+            } catch (\Throwable $e) {
+                return $text;
+            }
+        }
+        return self::$emsTextMemo[$text];
+    }
+
+    /** No-op: kennzeichnet feste Formulartexte abseits von 'caption' => (SUITE.md Store-Punkt 25); die Konsole uebersetzt sie selbst ueber locale.json. */
+    private static function fest(string $text): string
+    {
+        return $text;
+    }
+
+    // "🪟 Formular: Aufbau" (SUITE.md Punkt 3a, 0.97.4): waehlbare Fachpanels, Panel-name => stabiler Schluessel, Standardreihenfolge.
+    // Panels werden ueber 'name' gefunden, nie ueber die (uebersetzte) Caption (SUITE.md Konventionen Punkt 9).
     private const FORM_LAYOUT_PANELS = array(
-        '🔧 Allgemein'                 => 'general',
-        '🏠 Anlage'                    => 'plant',
-        '📡 Netzmesspunkte'            => 'grid',
-        '⚡ Wechselrichter & PV'       => 'inverter',
-        '🔋 Batteriespeicher'          => 'battery',
-        '🚗 Wallboxen'                 => 'wallboxes',
-        '🌡️ Wärmepumpe'                => 'heatpump',
-        '💰 Tibber & Tarif'            => 'tariff',
-        '📅 Tagesplan'                 => 'dayplan',
-        '⚖️ §14a EnWG'                 => 'p14a',
-        '☀️ PV Forecast'               => 'pvforecast',
-        '⚙️ Optimierungsparameter'     => 'optimizer',
-        '📊 EMS-Bilanz'                => 'selfbalance',
-        '🤖 KI-Assistent'              => 'ai',
-        '🔔 Benachrichtigungen'        => 'notify',
+        'PanelGeneral'     => 'general',
+        'PanelPlant'       => 'plant',
+        'PanelGrid'        => 'grid',
+        'PanelInverter'    => 'inverter',
+        'PanelBattery'     => 'battery',
+        'PanelWallboxes'   => 'wallboxes',
+        'PanelHeatpump'    => 'heatpump',
+        'PanelTariff'      => 'tariff',
+        'PanelDayplan'     => 'dayplan',
+        'PanelP14a'        => 'p14a',
+        'PanelPvForecast'  => 'pvforecast',
+        'PanelOptimizer'   => 'optimizer',
+        'PanelSelfBalance' => 'selfbalance',
+        'PanelAI'          => 'ai',
+        'PanelNotify'      => 'notify',
+    );
+    // Kurzname je Schluessel fuer die Spalte "Bereich" nach "Auf Standard zuruecksetzen" (englischer Quelltext, Listenzelle -> selbst uebersetzt)
+    private const FORM_LAYOUT_TITLES = array(
+        'general'     => '🔧 General',
+        'plant'       => '🏠 System',
+        'grid'        => '📡 Grid metering points',
+        'inverter'    => '⚡ Inverter & PV',
+        'battery'     => '🔋 Battery storage',
+        'wallboxes'   => '🚗 Wallboxes',
+        'heatpump'    => '🌡️ Heat pump',
+        'tariff'      => '💰 Tibber & tariff',
+        'dayplan'     => '📅 Day plan',
+        'p14a'        => '⚖️ §14a EnWG',
+        'pvforecast'  => '☀️ PV Forecast',
+        'optimizer'   => '⚙️ Optimisation parameters',
+        'selfbalance' => '📊 EMS balance',
+        'ai'          => '🤖 AI assistant',
+        'notify'      => '🔔 Notifications',
     );
 
     // Netzdienliche Faehigkeiten -> InverterHub-Ident (Vertrag 1.3,
@@ -509,19 +550,19 @@ class EMS extends IPSModule
         $this->RegisterPropertyInteger('OPT_Planning_Horizon_H',   24);
 
         // ── Statusvariablen ─────────────────────────────────────────
-        $this->RegisterVariableBoolean('EMS_Active_State', 'EMS aktiv',             '', 10);
-        $this->RegisterVariableInteger('EMS_Mode',         'Betriebsmodus',          '', 20);
-        $this->RegisterVariableFloat(  'EMS_GridPower',    'Netzleistung (W)',        '', 30);
-        $this->RegisterVariableFloat(  'EMS_PVPower',      'PV-Leistung (W)',         '', 40);
-        $this->RegisterVariableFloat(  'EMS_BatPower',     'Batterieleistung (W)',    '', 50);
-        $this->RegisterVariableFloat(  'EMS_BatSOC',       'Batterie SOC (%)',        '', 60);
-        $this->RegisterVariableFloat(  'EMS_HousePower',   'Hausverbrauch (W)',       '', 70);
-        $this->RegisterVariableFloat(  'EMS_WB1Power',     'Wallbox 1 Leistung (W)', '', 80);
-        $this->RegisterVariableFloat(  'EMS_WB2Power',     'Wallbox 2 Leistung (W)', '', 90);
-        $this->RegisterVariableFloat(  'EMS_TibberPrice',  'Tibber Preis (EUR/kWh)', '',100);
-        $this->RegisterVariableBoolean('EMS_GridRewards',  'Grid Rewards aktiv',     '',110);
-        $this->RegisterVariableString( 'EMS_LastAction',   'Letzte Aktion',          '',120);
-        $this->RegisterVariableString( 'EMS_Status',       'Status',                 '',130);
+        $this->RegisterVariableBoolean('EMS_Active_State', $this->t('EMS active'), '', 10);
+        $this->RegisterVariableInteger('EMS_Mode',         $this->t('Operating mode'), '', 20);
+        $this->RegisterVariableFloat(  'EMS_GridPower',    $this->t('Grid power (W)'), '', 30);
+        $this->RegisterVariableFloat(  'EMS_PVPower',      $this->t('PV power (W)'), '', 40);
+        $this->RegisterVariableFloat(  'EMS_BatPower',     $this->t('Battery power (W)'), '', 50);
+        $this->RegisterVariableFloat(  'EMS_BatSOC',       $this->t('Battery SOC (%)'), '', 60);
+        $this->RegisterVariableFloat(  'EMS_HousePower',   $this->t('House consumption (W)'), '', 70);
+        $this->RegisterVariableFloat(  'EMS_WB1Power',     $this->t('Wallbox 1 power (W)'), '', 80);
+        $this->RegisterVariableFloat(  'EMS_WB2Power',     $this->t('Wallbox 2 power (W)'), '', 90);
+        $this->RegisterVariableFloat(  'EMS_TibberPrice',  $this->t('Tibber price (EUR/kWh)'), '',100);
+        $this->RegisterVariableBoolean('EMS_GridRewards',  $this->t('Grid Rewards active'), '',110);
+        $this->RegisterVariableString( 'EMS_LastAction',   $this->t('Last action'), '',120);
+        $this->RegisterVariableString( 'EMS_Status',       $this->t('Status'), '',130);
 
         // Rechnungsprüfung (25.08.2026, Dietmars Vorgabe): KEIN PDF-Parsing
         // (Option 3 -- zu fehleranfaellig bei Layoutaenderungen, siehe
@@ -532,21 +573,21 @@ class EMS extends IPSModule
         // (Verbrauch x historische Preiskomponenten) folgt separat, sobald
         // Tibber Grid Reward eine Preis-Archivfunktion liefert -- siehe
         // computeInvoiceSollForMonth()-Kommentar.
-        $this->RegisterVariableFloat('INVOICE_Ist_Betrag',    'Rechnung: Ist-Endbetrag (EUR)',        '', 140);
-        $this->RegisterVariableFloat('INVOICE_Ist_MwSt',      'Rechnung: davon MwSt (EUR)',            '', 141);
-        $this->RegisterVariableFloat('INVOICE_Ist_Gutschrift','Rechnung: Erstattung/Gutschrift (EUR)', '', 142);
+        $this->RegisterVariableFloat('INVOICE_Ist_Betrag',    $this->t('Invoice: actual final amount (EUR)'), '', 140);
+        $this->RegisterVariableFloat('INVOICE_Ist_MwSt',      $this->t('Invoice: of which VAT (EUR)'), '', 141);
+        $this->RegisterVariableFloat('INVOICE_Ist_Gutschrift', $this->t('Invoice: refund/credit (EUR)'), '', 142);
 
         // WR-Totmann-Anzeige + Pendel-Bremse-Rückstellung (WebFront-nutzbar
         // nach demselben Muster: echte Variablen + EnableAction).
-        $this->RegisterVariableBoolean('WATCHDOG_Brake_Tripped', '⚠️ Totmann-Bremse ausgelöst (Reset nötig)', '~Alert', 150);
-        $this->RegisterVariableBoolean('WATCHDOG_Reset_Brake',   'Totmann-Bremse zurücksetzen',              '~Switch', 151);
-        $this->RegisterVariableBoolean('EMS_PlausiWarn',         '⚠️ Plausibilitätswächter ausgelöst (Batterie untätig trotz Netzbezug)', '~Alert', 152);
-        $this->RegisterVariableBoolean('EMS_ExportOverlapWarn',  '⚠️ Einspeise-Überwachung ausgelöst (Batterie entlud ins Netz)', '~Alert', 153);
-        $this->RegisterVariableFloat('EMS_ExportOverlapToday_Wh', 'Batterie→Netz heute (Wh, Obergrenze)', '', 154);
-        $this->RegisterVariableFloat('EMS_ExportOverlapToday_Min', 'Batterie→Netz heute (min)', '', 155);
+        $this->RegisterVariableBoolean('WATCHDOG_Brake_Tripped', $this->t('⚠️ Dead man\'s brake triggered (reset required)'), '~Alert', 150);
+        $this->RegisterVariableBoolean('WATCHDOG_Reset_Brake',   $this->t('Reset dead man\'s brake'), '~Switch', 151);
+        $this->RegisterVariableBoolean('EMS_PlausiWarn',         $this->t('⚠️ Plausibility monitor triggered (battery idle despite grid import)'), '~Alert', 152);
+        $this->RegisterVariableBoolean('EMS_ExportOverlapWarn',  $this->t('⚠️ Feed-in monitor triggered (battery discharged into the grid)'), '~Alert', 153);
+        $this->RegisterVariableFloat('EMS_ExportOverlapToday_Wh', $this->t('Battery→grid today (Wh, upper bound)'), '', 154);
+        $this->RegisterVariableFloat('EMS_ExportOverlapToday_Min', $this->t('Battery→grid today (min)'), '', 155);
         // Einstandspreis des gespeicherten Stroms (0.38.0, Ladesitzungskosten)
-        $this->RegisterVariableFloat('EMS_BatCostCt',    'Batterie: Einstandspreis (ct/kWh)', '', 156);
-        $this->RegisterVariableFloat('EMS_BatCostOppCt', 'Batterie: Einstandspreis inkl. entgangener Vergütung (ct/kWh)', '', 157);
+        $this->RegisterVariableFloat('EMS_BatCostCt',    $this->t('Battery: cost of stored energy (ct/kWh)'), '', 156);
+        $this->RegisterVariableFloat('EMS_BatCostOppCt', $this->t('Battery: cost of stored energy incl. forgone feed-in tariff (ct/kWh)'), '', 157);
 
         // EMS_GridRewards NICHT mehr per EnableAction schaltbar (0.29.5,
         // Dietmar 10.09.2026): wird jetzt automatisch von
@@ -678,10 +719,10 @@ class EMS extends IPSModule
         // ── NRG-Stack Discovery (additiv, siehe discoverPartners()) ──
         $this->RegisterAttributeString('PartnerCache', '{}');
         $this->RegisterAttributeString('UnresponsiveInstances', '{}');
-        $this->RegisterVariableString('EMS_Partners', 'NRG-Stack Partnermodule', '', 5);
-        $this->RegisterVariableBoolean('EMS_WriteWarn', '⚠️ Schreibzugriff fehlgeschlagen (Wechselrichter/Wallbox)', '', 6);
-        $this->RegisterVariableString('EMS_Situation', 'Steuerhoheit (Situation A/B)', '', 6);
-        $this->RegisterVariableString('EMS_FederationHealth', 'Verbund-Gesundheit', '', 7);
+        $this->RegisterVariableString('EMS_Partners', $this->t('NRG-Stack partner modules'), '', 5);
+        $this->RegisterVariableBoolean('EMS_WriteWarn', $this->t('⚠️ Write access failed (inverter/wallbox)'), '', 6);
+        $this->RegisterVariableString('EMS_Situation', $this->t('Control authority (situation A/B)'), '', 6);
+        $this->RegisterVariableString('EMS_FederationHealth', $this->t('Federation health'), '', 7);
 
         // ── Formular-Optik (Verbund-Konvention, siehe SUITE.md) ──────
         $this->RegisterAttributeString('SeenNews', '');
@@ -697,7 +738,7 @@ class EMS extends IPSModule
         // ── Selbstbilanz (0.96.0, Dietmar 07.11.2026: "du lernst nicht aus der Vergangenheit") ──
         $this->RegisterAttributeString('SelfBalance', '{}');
         $this->RegisterAttributeString('FcLearn', '{}');                       // {"Y-m-d": {pvFc, loadFc, pvAct, loadAct}} Prognose gegen Ist je Tag                   // {"Y-m-d": {ist, auto, imp, exp}} je Tag, 60 Tage
-        $this->RegisterVariableFloat('EMS_SelfBalance30', 'EMS-Bilanz 30 Tage gegenüber WR-Automatik (EUR, + = gespart)', '', 110);
+        $this->RegisterVariableFloat('EMS_SelfBalance30', $this->t('EMS balance 30 days vs. inverter automatic mode (EUR, + = saved)'), '', 110);
     }
 
     public function Destroy()
@@ -798,16 +839,17 @@ class EMS extends IPSModule
         // unshift direkt an Position 2 landet.
         array_unshift($form['elements'], array(
             'type'     => 'ExpansionPanel',
-            'caption'  => '📖 Dokumentation & Hilfe',
+            'name'     => 'PanelDoc',
+            'caption'  => '📖 Documentation & help',
             'expanded' => false,
             'items'    => array(
                 array(
                     'type'    => 'Label',
-                    'caption' => 'ℹ️ EMS Version ' . $this->getOwnVersion() . ' (Build ' . $this->getOwnBuild() . ')'
+                    'caption' => sprintf($this->t('ℹ️ EMS version %s (build %s)'), $this->getOwnVersion(), $this->getOwnBuild())
                 ),
                 array(
                     'type'    => 'Label',
-                    'caption' => 'Koordiniert alle NRG-Stack-Module (InverterHub, MeterHub, ChargerHub, HeishaMon, Tessie, TibberGridRewards, StromGedacht, SteuerboxHub) über deren *_GetFunctions-Verträge. Details: https://github.com/DG65/NRGEMS'
+                    'caption' => 'Coordinates all NRG-Stack modules (InverterHub, MeterHub, ChargerHub, HeishaMon, Tessie, TibberGridRewards, StromGedacht, SteuerboxHub) via their *_GetFunctions contracts. Details: https://github.com/DG65/NRGEMS'
                 ),
             )
         ));
@@ -823,11 +865,12 @@ class EMS extends IPSModule
             $ccItems[] = $it;
         }
         if ($this->ReadAttributeBoolean('DryRunAuto')) {
-            $ccItems[] = array('type' => 'Button', 'caption' => '▶ Jetzt live schalten', 'onClick' => 'echo EMS_GoLive($id);');
+            $ccItems[] = array('type' => 'Button', 'caption' => '▶ Go live now', 'onClick' => 'echo EMS_GoLive($id);');
         }
         array_unshift($form['elements'], array(
             'type'     => 'ExpansionPanel',
-            'caption'  => '🩺 Konfigurationsprüfung' . ($ccWarn > 0 ? ' (' . $ccWarn . ' Hinweis' . ($ccWarn > 1 ? 'e' : '') . ')' : ''),
+            'name'     => 'PanelConfigCheck',
+            'caption'  => $ccWarn > 1 ? sprintf($this->t('🩺 Configuration check (%d notes)'), $ccWarn) : ($ccWarn === 1 ? $this->t('🩺 Configuration check (1 note)') : self::fest('🩺 Configuration check')),
             'expanded' => ($ccWarn > 0),
             'items'    => $ccItems,
         ));
@@ -838,12 +881,13 @@ class EMS extends IPSModule
         // im Objektbaum, nicht im Formular selbst).
         array_unshift($form['elements'], array(
             'type'     => 'ExpansionPanel',
-            'caption'  => '🔗 Verbund-Status',
+            'name'     => 'PanelFederation',
+            'caption'  => '🔗 Federation status',
             'expanded' => true,
             'items'    => array(
                 array(
                     'type'    => 'Button',
-                    'caption' => '🔎 Jetzt neu suchen',
+                    'caption' => '🔎 Search again now',
                     'onClick' => 'EMS_Discover($id);'
                 ),
                 array(
@@ -859,7 +903,7 @@ class EMS extends IPSModule
                 array(
                     'type'    => 'Label',
                     'name'    => 'FederationHealthLabel',
-                    'caption' => 'Verbund-Gesundheit: ' . $this->GetValue('EMS_FederationHealth')
+                    'caption' => sprintf($this->t('Federation health: %s'), $this->GetValue('EMS_FederationHealth'))
                 ),
                 array(
                     'type'    => 'Label',
@@ -868,13 +912,13 @@ class EMS extends IPSModule
                 ),
                 array(
                     'type'    => 'ExpansionPanel',
-                    'caption' => 'Details je Partnermodul-Typ',
+                    'caption' => 'Details per partner module type',
                     'expanded' => false,
                     'items'   => array(
                         array(
                             'type'    => 'Label',
                             'name'    => 'PartnerDetailLabel',
-                            'caption' => 'NRG-Stack Partnermodule: ' . $this->GetValue('EMS_Partners')
+                            'caption' => sprintf($this->t('NRG-Stack partner modules: %s'), $this->GetValue('EMS_Partners'))
                         ),
                     )
                 ),
@@ -900,7 +944,7 @@ class EMS extends IPSModule
         // Status neben manuellen Fallback-Feldern"). Sucht das Tibber-Panel
         // per Caption und splict die Zeile direkt vor VAR_TIB_PT15M_Today ein.
         foreach ($form['elements'] as &$element) {
-            if (($element['type'] ?? '') === 'ExpansionPanel' && ($element['caption'] ?? '') === '💰 Tibber & Tarif') {
+            if (($element['type'] ?? '') === 'ExpansionPanel' && ($element['name'] ?? '') === 'PanelTariff') {
                 foreach ($element['items'] as $idx => $item) {
                     if (($item['name'] ?? '') === 'VAR_TIB_PT15M_Today') {
                         $ptLine = $this->getPT15MStatusLine();
@@ -926,7 +970,7 @@ class EMS extends IPSModule
         // 3b1. Preisschwellen: wirksamen Wert und Herkunft unter jedem Feld anzeigen (Dietmar 20.10.2026)
         $thKeys = array('TIB_Threshold_Charge' => 'charge', 'TIB_Threshold_Discharge' => 'discharge', 'TIB_Threshold_WB' => 'wb');
         foreach ($form['elements'] as &$element) {
-            if (($element['type'] ?? '') === 'ExpansionPanel' && ($element['caption'] ?? '') === '💰 Tibber & Tarif') {
+            if (($element['type'] ?? '') === 'ExpansionPanel' && ($element['name'] ?? '') === 'PanelTariff') {
                 $newItems = array();
                 foreach ($element['items'] as $item) {
                     $newItems[] = $item;
@@ -945,7 +989,7 @@ class EMS extends IPSModule
         $manLines = $this->manualPlanStatusLines();
         if (!empty($manLines)) {
             foreach ($form['elements'] as &$element) {
-                if (($element['type'] ?? '') === 'ExpansionPanel' && ($element['caption'] ?? '') === '📅 Tagesplan') {
+                if (($element['type'] ?? '') === 'ExpansionPanel' && ($element['name'] ?? '') === 'PanelDayplan') {
                     $newItems = array();
                     foreach ($element['items'] as $item) {
                         $newItems[] = $item;
@@ -1079,7 +1123,7 @@ class EMS extends IPSModule
             'VAR_SM_Status'      => 'status',
         );
         foreach ($form['elements'] as &$element) {
-            if (($element['type'] ?? '') === 'ExpansionPanel' && strpos($element['caption'] ?? '', '📡 Netzmesspunkte') === 0) {
+            if (($element['type'] ?? '') === 'ExpansionPanel' && ($element['name'] ?? '') === 'PanelGrid') {
                 $newItems = array();
                 foreach ($element['items'] as $item) {
                     $name = $item['name'] ?? '';
@@ -1091,10 +1135,10 @@ class EMS extends IPSModule
                     // der RowLayout entfernen -- die Status-Zeilen je Feld machen
                     // ihn ueberfluessig -- die PopupButton-Erklaerung daneben
                     // (wann brauche ich das ueberhaupt) bleibt erhalten.
-                    if (($item['type'] ?? '') === 'RowLayout' && isset($item['items'][0]['caption'])
-                        && strpos($item['items'][0]['caption'], 'Schau ganz oben im Panel') !== false) {
+                    if (($item['type'] ?? '') === 'RowLayout' && isset($item['items'][0]['name'])
+                        && $item['items'][0]['name'] === 'GridOverviewHint') {
                         $item['items'] = array_values(array_filter($item['items'], function ($sub) {
-                            return !(isset($sub['caption']) && strpos($sub['caption'], 'Schau ganz oben im Panel') !== false);
+                            return ($sub['name'] ?? '') !== 'GridOverviewHint';
                         }));
                     }
                     $newItems[] = $item;
@@ -1112,7 +1156,7 @@ class EMS extends IPSModule
         // automatisch noch manuell) Tagesplan/optimize() faelschlich mit
         // SOC=0% rechnen.
         foreach ($form['elements'] as &$element) {
-            if (($element['type'] ?? '') === 'ExpansionPanel' && ($element['caption'] ?? '') === '🔋 Batteriespeicher') {
+            if (($element['type'] ?? '') === 'ExpansionPanel' && ($element['name'] ?? '') === 'PanelBattery') {
                 $newItems = array();
                 foreach ($element['items'] as $item) {
                     $name = $item['name'] ?? '';
@@ -1155,7 +1199,7 @@ class EMS extends IPSModule
             'VAR_WR_Diag_Status'   => 'unused',
         );
         foreach ($form['elements'] as &$element) {
-            if (($element['type'] ?? '') === 'ExpansionPanel' && strpos($element['caption'] ?? '', '⚡ Wechselrichter & PV') === 0) {
+            if (($element['type'] ?? '') === 'ExpansionPanel' && ($element['name'] ?? '') === 'PanelInverter') {
                 $newItems = array();
                 foreach ($element['items'] as $item) {
                     $name = $item['name'] ?? '';
@@ -1167,8 +1211,7 @@ class EMS extends IPSModule
                     }
                     // Alten Pauschal-Hinweis ganz oben im Panel entfernen -- die
                     // Zeilen je Feld machen ihn ueberfluessig.
-                    if (($item['type'] ?? '') === 'Label' && isset($item['caption'])
-                        && strpos($item['caption'], 'Nur nötig, falls kein Partnermodul') !== false) {
+                    if (($item['type'] ?? '') === 'Label' && ($item['name'] ?? '') === 'InverterFallbackHint') {
                         continue;
                     }
                     $newItems[] = $item;
@@ -1187,23 +1230,24 @@ class EMS extends IPSModule
         // Instanz-ID hart hinterlegen -- jeder Nutzer hat andere WebFront-IDs.
         $form['elements'][] = array(
             'type'     => 'ExpansionPanel',
-            'caption'  => '🔔 Benachrichtigungen',
+            'name'     => 'PanelNotify',
+            'caption'  => '🔔 Notifications',
             'expanded' => false,
             'items'    => array(
                 array(
                     'type'    => 'Label',
-                    'caption' => 'Meldet aktiv per WebFront-Push, sobald ein notwendiger NRG-Stack-Partner ausfaellt oder nicht mehr antwortet (nicht nur passive Statuszeile oben). Laeuft unabhaengig davon, ob EMS gerade aktiv ist.'
+                    'caption' => 'Actively reports via WebFront push as soon as a required NRG-Stack partner fails or stops responding (not just a passive status line above). Runs regardless of whether EMS is currently active.'
                 ),
                 array(
                     'type'    => 'Select',
                     'name'    => 'NOTIFY_Visualization_ID',
-                    'caption' => 'WebFront für Push-Benachrichtigung',
+                    'caption' => 'WebFront for push notification',
                     'options' => $this->GetWebFrontInstances(),
                 ),
                 array(
                     'type'    => 'NumberSpinner',
                     'name'    => 'NOTIFY_Grace_Minutes',
-                    'caption' => 'Gnadenfrist vor Meldung (Minuten) — verhindert Fehlalarm bei kurzen/erwarteten Unterbrechungen (z. B. Auto im Schlafmodus)',
+                    'caption' => 'Grace period before reporting (minutes) — prevents false alarms on short/expected interruptions (e.g. car in sleep mode)',
                     'minimum' => 0,
                     'maximum' => 180,
                     'suffix'  => ' min'
@@ -1222,11 +1266,11 @@ class EMS extends IPSModule
                 'items' => array(
                     array(
                         'type'    => 'Label',
-                        'caption' => '✏️ EMS ist Beta — Rückmeldungen im Symcon-Forum willkommen: (Thread folgt, sobald veröffentlicht)'
+                        'caption' => '✏️ EMS is in beta — feedback in the Symcon forum is welcome: (thread follows once published)'
                     ),
                     array(
                         'type'    => 'Button',
-                        'caption' => 'Nicht mehr anzeigen',
+                        'caption' => 'Do not show again',
                         'onClick' => 'EMS_DismissForumHint($id);'
                     ),
                 )
@@ -1245,21 +1289,17 @@ class EMS extends IPSModule
         // Reload beim naechsten GetConfigurationForm()-Aufruf ist der
         // zuverlaessige Weg.
         if (!$this->ReadPropertyBoolean('EMS_Risk_Acknowledged')) {
-            $infoWhitelist = array('📖 Dokumentation', '🔗 Verbund-Status', '🆕 Neu', '🔔 Benachrichtigungen');
+            $infoWhitelist = array('PanelDoc', 'PanelFederation', 'NewsPanel', 'PanelNotify');
             foreach ($form['elements'] as &$element) {
                 if (($element['type'] ?? '') !== 'ExpansionPanel') { continue; }
-                $caption = $element['caption'] ?? '';
-                if ($caption === '🔧 Allgemein') {
+                $panelName = (string)($element['name'] ?? '');
+                if ($panelName === 'PanelGeneral') {
                     // Nur Warnung + Bestaetigungs-Checkbox behalten (die
                     // ersten zwei Eintraege, siehe form.json-Reihenfolge).
                     $element['items'] = array_slice($element['items'], 0, 2);
                     continue;
                 }
-                $isInfo = false;
-                foreach ($infoWhitelist as $prefix) {
-                    if (strpos($caption, $prefix) === 0) { $isInfo = true; break; }
-                }
-                if (!$isInfo) {
+                if (!in_array($panelName, $infoWhitelist, true)) {
                     $element['visible'] = false;
                 }
             }
@@ -1309,11 +1349,11 @@ class EMS extends IPSModule
         $items = array();
         $multi = count($pending) > 1;
         foreach ($pending as $ver => $lines) {
-            if ($multi) { $items[] = array('type' => 'Label', 'caption' => 'Version ' . $ver . ':'); }
-            foreach ($lines as $line) { $items[] = array('type' => 'Label', 'caption' => '• ' . $line); }
+            if ($multi) { $items[] = array('type' => 'Label', 'caption' => sprintf($this->t('Version %s:'), $ver)); }
+            foreach ($lines as $line) { $items[] = array('type' => 'Label', 'caption' => '• ' . $this->t($line)); }
         }
-        $items[] = array('type' => 'Button', 'caption' => 'Verstanden – nicht mehr anzeigen', 'onClick' => 'EMS_AckNews($id);');
-        return array('type' => 'ExpansionPanel', 'name' => 'NewsPanel', 'caption' => '🆕 Neu bis Version ' . array_key_first($pending),
+        $items[] = array('type' => 'Button', 'caption' => 'Got it – do not show again', 'onClick' => 'EMS_AckNews($id);');
+        return array('type' => 'ExpansionPanel', 'name' => 'NewsPanel', 'caption' => sprintf($this->t('🆕 New up to version %s'), array_key_first($pending)),
             'expanded' => true, 'items' => $items);
     }
 
@@ -1328,7 +1368,7 @@ class EMS extends IPSModule
     /** "↩️ Auf Standard zurücksetzen" im Bereich "🪟 Formular: Aufbau" (gilt nach "Übernehmen"). */
     public function ResetFormLayout(): string
     {
-        return $this->formLayoutReset(self::FORM_LAYOUT_PANELS);
+        return $this->formLayoutReset(self::FORM_LAYOUT_PANELS, self::FORM_LAYOUT_TITLES);
     }
 
     public function DismissForumHint()
@@ -1661,8 +1701,8 @@ class EMS extends IPSModule
         // korrekt aktualisiert wurden. No-op, wenn kein Formular offen ist.
         $this->UpdateFormField('DiscoverySummaryLabel', 'caption', $this->getDiscoverySummaryLine());
         $this->UpdateFormField('InverterMeasurementLabel', 'caption', $this->getInverterMeasurementLine());
-        $this->UpdateFormField('FederationHealthLabel', 'caption', 'Verbund-Gesundheit: ' . $this->GetValue('EMS_FederationHealth'));
-        $this->UpdateFormField('PartnerDetailLabel', 'caption', 'NRG-Stack Partnermodule: ' . $summary);
+        $this->UpdateFormField('FederationHealthLabel', 'caption', sprintf($this->t('Federation health: %s'), $this->GetValue('EMS_FederationHealth')));
+        $this->UpdateFormField('PartnerDetailLabel', 'caption', sprintf($this->t('NRG-Stack partner modules: %s'), $summary));
 
         return $partners;
     }
@@ -1892,7 +1932,7 @@ class EMS extends IPSModule
      */
     public function GetWebFrontInstances()
     {
-        $out = array(array('caption' => '(deaktiviert)', 'value' => 0));
+        $out = array(array('caption' => self::fest('(disabled)'), 'value' => 0));
         foreach (IPS_GetInstanceListByModuleID(GUID_WEBFRONT) as $id) {
             $out[] = array(
                 'caption' => IPS_GetName($id) . ' (#' . $id . ')',
@@ -6271,10 +6311,10 @@ class EMS extends IPSModule
     {
         $missing = $this->archivingMissing();
         if (empty($missing)) { return null; }
-        return array('type' => 'ExpansionPanel', 'caption' => sprintf('📈 Logging fehlt (%d Variablen)', count($missing)), 'expanded' => true, 'items' => array_merge(
-            array(array('type' => 'Label', 'caption' => 'Diese Variablen werden nicht geloggt. Ohne sie kann die EMS-Bilanz nicht rechnen und der Tagesplan zeigt für vergangene Viertelstunden keine Ist-Werte. Die Steuerung läuft davon unberührt weiter.')),
+        return array('type' => 'ExpansionPanel', 'name' => 'PanelLogging', 'caption' => count($missing) === 1 ? $this->t('📈 Logging missing (1 variable)') : sprintf($this->t('📈 Logging missing (%d variables)'), count($missing)), 'expanded' => true, 'items' => array_merge(
+            array(array('type' => 'Label', 'caption' => 'These variables are not being logged. Without them the EMS balance cannot be calculated and the day plan shows no actual values for past quarter-hours. Control continues unaffected.')),
             $this->archivingMissingLines($missing),
-            array(array('type' => 'Button', 'caption' => '📈 Logging für diese Variablen einschalten', 'onClick' => 'echo EMS_EnableArchiving($id);'))
+            array(array('type' => 'Button', 'caption' => '📈 Enable logging for these variables', 'onClick' => 'echo EMS_EnableArchiving($id);'))
         ));
     }
 
@@ -6287,26 +6327,26 @@ class EMS extends IPSModule
         $provider = $this->ReadPropertyInteger('AI_Provider');
         $hasKey   = $this->ReadAttributeString('AI_ApiKey') !== '';
         $items = array(
-            array('type' => 'Label', 'caption' => 'Optional: Ein KI-Modell beantwortet Fragen wie „Warum lädt der Akku gerade?“ aus dem Tagesplan, den Preisen und den Messwerten. Die KI erklärt nur, sie steuert nichts. Ohne Auswahl ändert sich nichts.'),
-            array('type' => 'Select', 'name' => 'AI_Provider', 'caption' => 'Anbieter', 'options' => array(
-                array('caption' => 'Aus', 'value' => 0),
-                array('caption' => 'Claude (Anthropic, Internet, eigener Schlüssel)', 'value' => 1),
-                array('caption' => 'Ollama (lokal im eigenen Netz)', 'value' => 2),
+            array('type' => 'Label', 'caption' => 'Optional: an AI model answers questions such as "Why is the battery charging right now?" based on the day plan, the prices and the measurements. The AI only explains, it controls nothing. Without a selection nothing changes.'),
+            array('type' => 'Select', 'name' => 'AI_Provider', 'caption' => 'Provider', 'options' => array(
+                array('caption' => 'Off', 'value' => 0),
+                array('caption' => 'Claude (Anthropic, internet, own key)', 'value' => 1),
+                array('caption' => 'Ollama (local in your own network)', 'value' => 2),
             )),
-            array('type' => 'ValidationTextBox', 'name' => 'AI_Model', 'caption' => 'Modell (leer = ' . EMS_AI_DEFAULT_CLAUDE . ' bzw. ' . EMS_AI_DEFAULT_OLLAMA . ')'),
-            array('type' => 'ValidationTextBox', 'name' => 'AI_OllamaUrl', 'caption' => 'Ollama-Adresse', 'visible' => $provider === 2),
+            array('type' => 'ValidationTextBox', 'name' => 'AI_Model', 'caption' => sprintf($this->t('Model (empty = %s or %s)'), EMS_AI_DEFAULT_CLAUDE, EMS_AI_DEFAULT_OLLAMA)),
+            array('type' => 'ValidationTextBox', 'name' => 'AI_OllamaUrl', 'caption' => 'Ollama address', 'visible' => $provider === 2),
             array('type' => 'RowLayout', 'visible' => $provider === 1, 'items' => array(
-                array('type' => 'PasswordTextBox', 'name' => 'FormAiKey', 'caption' => 'API-Schlüssel (Anthropic)'),
-                array('type' => 'Button', 'caption' => '🔑 Schlüssel speichern', 'onClick' => 'echo EMS_SetAiKey($id, $FormAiKey);'),
+                array('type' => 'PasswordTextBox', 'name' => 'FormAiKey', 'caption' => 'API key (Anthropic)'),
+                array('type' => 'Button', 'caption' => '🔑 Save key', 'onClick' => 'echo EMS_SetAiKey($id, $FormAiKey);'),
             )),
-            array('type' => 'Label', 'visible' => $provider === 1, 'caption' => $hasKey ? '✅ Schlüssel hinterlegt (leer speichern löscht ihn).' : '⚠️ Noch kein Schlüssel hinterlegt.'),
-            array('type' => 'Label', 'caption' => 'Gesendet werden nur Anlagenwerte: Leistungen, Ladestand, Preise, Prognosen und die Planzeilen der nächsten Stunden. Keine Namen, Adressen oder Zugangsdaten. Bei Claude gehen diese Werte an Anthropic, bei Ollama bleiben sie im eigenen Netz. Die Kosten der Abfragen trägt der Schlüsselinhaber.'),
+            array('type' => 'Label', 'visible' => $provider === 1, 'caption' => $hasKey ? self::fest('✅ Key stored (saving an empty value deletes it).') : self::fest('⚠️ No key stored yet.')),
+            array('type' => 'Label', 'caption' => 'Only system values are sent: power values, state of charge, prices, forecasts and the plan rows for the next hours. No names, addresses or credentials. With Claude these values go to Anthropic, with Ollama they stay in your own network. The cost of the queries is borne by the key holder.'),
             array('type' => 'RowLayout', 'items' => array(
-                array('type' => 'ValidationTextBox', 'name' => 'FormAiQuestion', 'caption' => 'Frage (leer = „Was macht das EMS gerade und warum?“)', 'width' => '500px'),
-                array('type' => 'Button', 'caption' => '💬 Fragen', 'onClick' => 'echo EMS_Ask($id, $FormAiQuestion);'),
+                array('type' => 'ValidationTextBox', 'name' => 'FormAiQuestion', 'caption' => 'Question (empty = "What is the EMS doing right now and why?")', 'width' => '500px'),
+                array('type' => 'Button', 'caption' => '💬 Ask', 'onClick' => 'echo EMS_Ask($id, $FormAiQuestion);'),
             )),
         );
-        return array('type' => 'ExpansionPanel', 'caption' => '🤖 KI-Assistent (erklärt den Plan)', 'expanded' => false, 'items' => $items);
+        return array('type' => 'ExpansionPanel', 'name' => 'PanelAI', 'caption' => '🤖 AI assistant (explains the plan)', 'expanded' => false, 'items' => $items);
     }
 
     /** Speichert den API-Schluessel im Attribut; leer loescht ihn. */
@@ -6711,14 +6751,16 @@ class EMS extends IPSModule
         $hist = json_decode($this->ReadAttributeString('SelfBalance'), true) ?: array();
         krsort($hist);
         $sum = $this->selfBalanceSum($hist, 30);
-        $items = array(array('type' => 'Label', 'caption' => 'Das EMS vergleicht jeden Tag die tatsächlichen Netzkosten (Bezug × Preis minus Einspeisung × Vergütung, gemessen) mit dem, was der Wechselrichter allein in Automatik gekostet hätte (simuliert mit derselben Hauslast und PV). So sieht man, ob die Steuerung Geld bringt oder kostet.'));
+        $items = array(array('type' => 'Label', 'caption' => 'Every day the EMS compares the actual grid costs (import × price minus feed-in × tariff, measured) with what the inverter alone in automatic mode would have cost (simulated with the same house load and PV). This shows whether the control saves or costs money.'));
         if ($sum['days'] > 0) {
             $cs = $this->selfBalanceCatSum($hist, 30);
-            if ($sum['reward'] > 0.004) { $items[] = array('type' => 'Label', 'caption' => sprintf('Tibber Grid Rewards (30 Tage, ab Beginn der Archivierung): %.2f € gutgeschrieben. Die Vergütung erhält das Fahrzeug mit und ohne EMS, sie verringert die echten Kosten, ändert aber den Vergleich nicht.', $sum['reward'])); }
+            if ($sum['reward'] > 0.004) { $items[] = array('type' => 'Label', 'caption' => sprintf($this->t('Tibber Grid Rewards (30 days, since logging began): %.2f € credited. The vehicle receives this reward with or without EMS; it reduces the real costs but does not change the comparison.'), $sum['reward'])); }
             if ($cs !== null) { $items[] = array('type' => 'Label', 'caption' => 'Wohin ging das Geld (30 Tage): ' . $this->selfBalanceCatText($cs)); }
             $diff = $sum['fairDays'] > 0 ? $sum['fair'] : $sum['auto'] - $sum['ist'];
-            $items[] = array('type' => 'Label', 'bold' => true, 'caption' => sprintf('%s Letzte %d Tage: mit EMS %.2f €, reine Automatik %.2f € → %s %.2f € (Energie, die am Tagesende mehr oder weniger im Akku liegt, ist mit dem Tagespreis bewertet)',
-                $diff >= 0 ? '✅' : '⚠️', $sum['days'], $sum['ist'], $sum['auto'], $diff >= 0 ? 'gespart' : 'Mehrkosten', abs($diff)));
+            $items[] = array('type' => 'Label', 'bold' => true, 'caption' => sprintf($diff >= 0
+                    ? $this->t('✅ Last %d days: with EMS %.2f €, automatic mode only %.2f € → saved %.2f € (energy left in the battery at the end of the day, more or less than in the morning, is valued at the day\'s price)')
+                    : $this->t('⚠️ Last %d days: with EMS %.2f €, automatic mode only %.2f € → additional costs %.2f € (energy left in the battery at the end of the day, more or less than in the morning, is valued at the day\'s price)'),
+                $sum['days'], $sum['ist'], $sum['auto'], abs($diff)));
         }
         $n = 0;
         foreach ($hist as $date => $r) {
@@ -6731,17 +6773,17 @@ class EMS extends IPSModule
         }
         $f = $this->forecastFactors();
         $items[] = array('type' => 'Label', 'caption' => $f['learned']
-            ? sprintf('Gelernte Prognose-Korrektur (letzte %d Tage): PV ×%.2f, Hauslast ×%.2f. Damit rechnet das Nachtfenster den Bedarf bis zur nächsten Nacht.', $f['days'], $f['pv'], $f['load'])
-            : sprintf('Prognose-Korrektur noch nicht gelernt (%d von 3 Tagen). Bis dahin vorsichtig: PV ×%.2f, Hauslast ×%.2f.', $f['days'], $f['pv'], $f['load']));
-        $items[] = array('type' => 'Label', 'caption' => sprintf('Annahmen der Simulation: Wirkungsgrad je Wandlung %.0f %% (Einstellung im Bereich Batterie), Akku %.1f kWh, Einspeisevergütung %.2f ct. Die Automatik lädt nur aus PV-Überschuss und entlädt bei Bedarf.', $this->convEff() * 100, $this->batteryCapacityKwh(), $this->planFeedTariffEur() * 100));
+            ? sprintf($this->t('Learned forecast correction (last %d days): PV ×%.2f, house load ×%.2f. The night window uses this to calculate the demand until the next night.'), $f['days'], $f['pv'], $f['load'])
+            : sprintf($this->t('Forecast correction not learned yet (%d of 3 days). Until then conservative: PV ×%.2f, house load ×%.2f.'), $f['days'], $f['pv'], $f['load']));
+        $items[] = array('type' => 'Label', 'caption' => sprintf($this->t('Simulation assumptions: efficiency per conversion %.0f %% (setting in the battery section), battery %.1f kWh, feed-in tariff %.2f ct. Automatic mode only charges from PV surplus and discharges when needed.'), $this->convEff() * 100, $this->batteryCapacityKwh(), $this->planFeedTariffEur() * 100));
         $missing = $this->archivingMissing();
         if (!empty($missing)) {
-            $items[] = array('type' => 'Label', 'caption' => '⚠️ Für die Bilanz fehlt das Logging dieser Variablen:');
+            $items[] = array('type' => 'Label', 'caption' => '⚠️ The balance is missing logging for these variables:');
             $items = array_merge($items, $this->archivingMissingLines($missing));
-            $items[] = array('type' => 'Button', 'caption' => '📈 Logging für diese Variablen einschalten', 'onClick' => 'echo EMS_EnableArchiving($id);');
+            $items[] = array('type' => 'Button', 'caption' => '📈 Enable logging for these variables', 'onClick' => 'echo EMS_EnableArchiving($id);');
         }
-        $items[] = array('type' => 'Button', 'caption' => '🔄 Letzte 30 Tage neu rechnen', 'onClick' => 'echo EMS_RecomputeSelfBalance($id);');
-        return array('type' => 'ExpansionPanel', 'caption' => '📊 EMS-Bilanz (gespart oder verloren?)', 'expanded' => false, 'items' => $items);
+        $items[] = array('type' => 'Button', 'caption' => '🔄 Recalculate the last 30 days', 'onClick' => 'echo EMS_RecomputeSelfBalance($id);');
+        return array('type' => 'ExpansionPanel', 'name' => 'PanelSelfBalance', 'caption' => '📊 EMS balance (saved or lost?)', 'expanded' => false, 'items' => $items);
     }
 
     /** Schaltet das Logging auf ausdruecklichen Klick ein, nie etwas aus. */
@@ -10224,13 +10266,13 @@ class EMS extends IPSModule
     /** Auswahlliste "Tibber-Fahrzeug" fuer das Formular; eine gespeicherte, aktuell nicht gemeldete Auswahl bleibt erhalten. */
     private function tibberVehicleOptions(string $selected): array
     {
-        $opts = array(array('caption' => '(keine Zuordnung)', 'value' => ''));
+        $opts = array(array('caption' => self::fest('(no assignment)'), 'value' => ''));
         $tib  = $this->getTibberVehicles();
         foreach ($tib['vehicles'] as $id => $v) {
-            $opts[] = array('caption' => $this->tibberVehicleLabel($v) . (($v['isPluggedIn'] ?? false) ? ' — angesteckt' : ''), 'value' => (string)$id);
+            $opts[] = array('caption' => (($v['isPluggedIn'] ?? false) ? sprintf($this->t('%s — plugged in'), $this->tibberVehicleLabel($v)) : $this->tibberVehicleLabel($v)), 'value' => (string)$id);
         }
         if ($selected !== '' && !isset($tib['vehicles'][$selected])) {
-            $opts[] = array('caption' => '(bei Tibber gerade nicht gemeldet) ' . $selected, 'value' => $selected);
+            $opts[] = array('caption' => sprintf($this->t('(currently not reported by Tibber) %s'), $selected), 'value' => $selected);
         }
         return $opts;
     }
@@ -10443,16 +10485,16 @@ class EMS extends IPSModule
     private function maintainWallboxControlVariables(): void
     {
         $opt = function (array $map) { $o = array(); foreach ($map as $v => $c) { $o[] = array('Value' => $v, 'Caption' => $c, 'IconActive' => false, 'IconValue' => '', 'Color' => -1); } return json_encode($o); };
-        $modes = $opt(array(0 => 'Preisgesteuert', 1 => 'Manuell', 2 => 'Nur PV', 3 => 'PV-Anteil', 4 => 'Hybrid', 5 => 'Aus'));
-        $cmds = $opt(array(0 => 'Bereit', 1 => 'Jetzt 1 Stunde laden', 2 => 'Übersteuerung beenden', 3 => 'Ladeziel löschen'));
+        $modes = $opt(array(0 => $this->t('Price-controlled'), 1 => $this->t('Manual'), 2 => $this->t('PV only'), 3 => $this->t('PV share'), 4 => $this->t('Hybrid'), 5 => $this->t('Off')));
+        $cmds = $opt(array(0 => $this->t('Ready'), 1 => $this->t('Charge now for 1 hour'), 2 => $this->t('End override'), 3 => $this->t('Delete charging target')));
         for ($n = 1; $n <= 2; $n++) {
             $keep = $this->ReadPropertyBoolean('WB_Active') && $n <= max(1, $this->ReadPropertyInteger('WB_Count'));
             $pos = 300 + $n * 10;
-            $this->MaintainVariable('EMS_WB' . $n . '_Plan', 'Wallbox ' . $n . ': Plan (was als Nächstes passiert)', VARIABLETYPE_STRING, array('PRESENTATION' => VARIABLE_PRESENTATION_VALUE_PRESENTATION), $pos, $keep);
-            $this->MaintainVariable('EMS_WB' . $n . '_ChargeMode', 'Wallbox ' . $n . ': Ladeart', VARIABLETYPE_INTEGER, array('PRESENTATION' => VARIABLE_PRESENTATION_ENUMERATION, 'OPTIONS' => $modes), $pos + 1, $keep);
-            $this->MaintainVariable('EMS_WB' . $n . '_TargetKwh', 'Wallbox ' . $n . ': Ladeziel (kWh, 0 = aus)', VARIABLETYPE_FLOAT, array('PRESENTATION' => VARIABLE_PRESENTATION_SLIDER, 'MIN' => 0.0, 'MAX' => 100.0, 'STEP_SIZE' => 0.5, 'SUFFIX' => ' kWh', 'DIGITS' => 1), $pos + 2, $keep);
-            $this->MaintainVariable('EMS_WB' . $n . '_TargetTime', 'Wallbox ' . $n . ': Frist (HH:MM)', VARIABLETYPE_STRING, array('PRESENTATION' => VARIABLE_PRESENTATION_VALUE_INPUT), $pos + 3, $keep);
-            $this->MaintainVariable('EMS_WB' . $n . '_Command', 'Wallbox ' . $n . ': Befehl', VARIABLETYPE_INTEGER, array('PRESENTATION' => VARIABLE_PRESENTATION_ENUMERATION, 'OPTIONS' => $cmds), $pos + 4, $keep);
+            $this->MaintainVariable('EMS_WB' . $n . '_Plan', sprintf($this->t('Wallbox %d: plan (what happens next)'), $n), VARIABLETYPE_STRING, array('PRESENTATION' => VARIABLE_PRESENTATION_VALUE_PRESENTATION), $pos, $keep);
+            $this->MaintainVariable('EMS_WB' . $n . '_ChargeMode', sprintf($this->t('Wallbox %d: charging mode'), $n), VARIABLETYPE_INTEGER, array('PRESENTATION' => VARIABLE_PRESENTATION_ENUMERATION, 'OPTIONS' => $modes), $pos + 1, $keep);
+            $this->MaintainVariable('EMS_WB' . $n . '_TargetKwh', sprintf($this->t('Wallbox %d: charging target (kWh, 0 = off)'), $n), VARIABLETYPE_FLOAT, array('PRESENTATION' => VARIABLE_PRESENTATION_SLIDER, 'MIN' => 0.0, 'MAX' => 100.0, 'STEP_SIZE' => 0.5, 'SUFFIX' => ' kWh', 'DIGITS' => 1), $pos + 2, $keep);
+            $this->MaintainVariable('EMS_WB' . $n . '_TargetTime', sprintf($this->t('Wallbox %d: deadline (HH:MM)'), $n), VARIABLETYPE_STRING, array('PRESENTATION' => VARIABLE_PRESENTATION_VALUE_INPUT), $pos + 3, $keep);
+            $this->MaintainVariable('EMS_WB' . $n . '_Command', sprintf($this->t('Wallbox %d: command'), $n), VARIABLETYPE_INTEGER, array('PRESENTATION' => VARIABLE_PRESENTATION_ENUMERATION, 'OPTIONS' => $cmds), $pos + 4, $keep);
             if (!$keep) { continue; }
             foreach (array('ChargeMode', 'TargetKwh', 'TargetTime', 'Command') as $k) { $this->EnableAction('EMS_WB' . $n . '_' . $k); }
             $this->syncWallboxControlVariables($n);
@@ -10479,7 +10521,7 @@ class EMS extends IPSModule
         if (!$this->ReadPropertyBoolean('WB_Active')) { return null; }
         $count = min(2, max(1, $this->ReadPropertyInteger('WB_Count')));
         $modes = array();
-        foreach (array(0 => 'Preisgesteuert', 1 => 'Manuell (feste Stromstärke)', 2 => 'Nur PV', 3 => 'PV-Anteil', 4 => 'Hybrid (Mindeststrom + PV)', 5 => 'Aus (Laden gesperrt)') as $v => $c) {
+        foreach (array(0 => self::fest('Price-controlled'), 1 => self::fest('Manual (fixed current)'), 2 => self::fest('PV only'), 3 => self::fest('PV share'), 4 => self::fest('Hybrid (minimum current + PV)'), 5 => self::fest('Off (charging blocked)')) as $v => $c) {
             $modes[] = array('caption' => $c, 'value' => $v);
         }
         $items = array();
@@ -10487,32 +10529,32 @@ class EMS extends IPSModule
             $plan = '';
             $pid = @IPS_GetObjectIDByIdent('EMS_WB' . $n . '_Plan', $this->InstanceID);
             if ($pid !== false && $pid > 0) { $plan = (string)GetValue($pid); }
-            if ($plan === '') { $plan = 'Noch kein Plan berechnet (erscheint mit dem nächsten Regelzyklus).'; }
+            if ($plan === '') { $plan = $this->t('No plan calculated yet (appears with the next control cycle).'); }
             $nowUntil = $this->ReadAttributeInteger('WB' . $n . 'NowUntil');
             $items[] = array('type' => 'Label', 'caption' => '── Wallbox ' . $n . ' ─────────────────────────');
             $items[] = array('type' => 'Label', 'name' => 'FormWB' . $n . 'Plan', 'caption' => '📋 ' . $plan);
             if ($nowUntil > time()) {
-                $items[] = array('type' => 'Label', 'caption' => sprintf('⚡ Jetzt laden läuft noch bis %s Uhr.', date('H:i', $nowUntil)), 'color' => EMS_COLOR_AUTO);
+                $items[] = array('type' => 'Label', 'caption' => sprintf($this->t('⚡ Charge now is running until %s.'), date('H:i', $nowUntil)), 'color' => EMS_COLOR_AUTO);
             }
-            $items[] = array('type' => 'Select', 'name' => 'FormWB' . $n . 'ChargeMode', 'caption' => 'Ladeart (wirkt sofort)', 'options' => $modes,
+            $items[] = array('type' => 'Select', 'name' => 'FormWB' . $n . 'ChargeMode', 'caption' => 'Charging mode (takes effect immediately)', 'options' => $modes,
                 'value' => $this->ReadPropertyInteger('WB' . $n . '_ChargeMode'),
                 'onChange' => 'IPS_RequestAction($id, "EMS_WB' . $n . '_ChargeMode", $FormWB' . $n . 'ChargeMode);');
             $items[] = array('type' => 'RowLayout', 'items' => array(
-                array('type' => 'NumberSpinner', 'name' => 'FormWB' . $n . 'TargetKwh', 'caption' => 'Ladeziel (kWh, 0 = aus)', 'minimum' => 0, 'maximum' => 200, 'digits' => 1, 'suffix' => ' kWh',
+                array('type' => 'NumberSpinner', 'name' => 'FormWB' . $n . 'TargetKwh', 'caption' => 'Charging target (kWh, 0 = off)', 'minimum' => 0, 'maximum' => 200, 'digits' => 1, 'suffix' => ' kWh',
                     'value' => (float)$this->ReadPropertyFloat('WB' . $n . '_TargetKwh')),
-                array('type' => 'ValidationTextBox', 'name' => 'FormWB' . $n . 'TargetTime', 'caption' => 'Frist (HH:MM)', 'validate' => '^([01]?\\d|2[0-3]):[0-5]\\d$',
+                array('type' => 'ValidationTextBox', 'name' => 'FormWB' . $n . 'TargetTime', 'caption' => 'Deadline (HH:MM)', 'validate' => '^([01]?\\d|2[0-3]):[0-5]\\d$',
                     'value' => (string)$this->ReadPropertyString('WB' . $n . '_TargetTime')),
-                array('type' => 'Button', 'caption' => 'Ziel übernehmen',
+                array('type' => 'Button', 'caption' => 'Apply target',
                     'onClick' => 'IPS_RequestAction($id, "EMS_WB' . $n . '_TargetTime", $FormWB' . $n . 'TargetTime); IPS_RequestAction($id, "EMS_WB' . $n . '_TargetKwh", $FormWB' . $n . 'TargetKwh); echo "Ladeziel für Wallbox ' . $n . ' übernommen.";'),
             ));
             $items[] = array('type' => 'RowLayout', 'items' => array(
-                array('type' => 'Button', 'caption' => '⚡ Jetzt 1 Stunde laden', 'onClick' => 'IPS_RequestAction($id, "EMS_WB' . $n . '_Command", 1); echo "Wallbox ' . $n . ': Jetzt laden für 1 Stunde gestartet.";'),
-                array('type' => 'Button', 'caption' => '⏹ Übersteuerung beenden', 'onClick' => 'IPS_RequestAction($id, "EMS_WB' . $n . '_Command", 2); echo "Wallbox ' . $n . ': Übersteuerung beendet, es gilt wieder die Ladeart.";'),
-                array('type' => 'Button', 'caption' => '🗑 Ladeziel löschen', 'onClick' => 'IPS_RequestAction($id, "EMS_WB' . $n . '_Command", 3); echo "Wallbox ' . $n . ': Ladeziel gelöscht.";'),
+                array('type' => 'Button', 'caption' => '⚡ Charge now for 1 hour', 'onClick' => 'IPS_RequestAction($id, "EMS_WB' . $n . '_Command", 1); echo "Wallbox ' . $n . ': Jetzt laden für 1 Stunde gestartet.";'),
+                array('type' => 'Button', 'caption' => '⏹ End override', 'onClick' => 'IPS_RequestAction($id, "EMS_WB' . $n . '_Command", 2); echo "Wallbox ' . $n . ': Übersteuerung beendet, es gilt wieder die Ladeart.";'),
+                array('type' => 'Button', 'caption' => '🗑 Delete charging target', 'onClick' => 'IPS_RequestAction($id, "EMS_WB' . $n . '_Command", 3); echo "Wallbox ' . $n . ': Ladeziel gelöscht.";'),
             ));
         }
-        $items[] = array('type' => 'Label', 'caption' => 'Dieselben Bedienelemente gibt es im WebFront als Variablen „Wallbox n: Ladeart / Ladeziel / Frist / Befehl / Plan“ unter dieser Instanz (für eine eigene Kategorie dort Links anlegen). Die Einstellungen im Bereich „🚗 Wallboxen“ weiter unten zeigen dieselben Werte.');
-        return array('type' => 'ExpansionPanel', 'caption' => '🚗 Wallboxen bedienen', 'expanded' => true, 'items' => $items);
+        $items[] = array('type' => 'Label', 'caption' => 'The same controls are available in the WebFront as the variables "Wallbox n: charging mode / charging target / deadline / command / plan" below this instance (create links there for a category of your own). The settings in the section "🚗 Wallboxes" further down show the same values.');
+        return array('type' => 'ExpansionPanel', 'name' => 'PanelWallboxControl', 'caption' => '🚗 Operate wallboxes', 'expanded' => true, 'items' => $items);
     }
 
     /** WebFront-Bedienung: eine Quelle -- Ladeart, Ziel und Frist aendern die Einstellung selbst, der Befehl wirkt sofort. */

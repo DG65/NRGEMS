@@ -183,7 +183,34 @@ class IPSModule
     protected function LogMessage($msg, $type) { $GLOBALS['LOG'][] = 'LogMessage(' . $type . '): ' . $msg; }
     public function UpdateFormField($f, $p, $v) { $GLOBALS['FORMFIELD'][$f][$p] = $v; }
     protected function RegisterMessage($a, $b) {}
-    public function Translate($s) { return $s; }
+    // Zweisprachigkeit: der Pruefstand laeuft wie ein deutsches Symcon ($GLOBALS['EMS_LANG_EN'] = true: Englisch = Quelltext)
+    public function Translate($s) { return emsLocaleDe()[$s] ?? $s; }
+}
+
+/** Deutsche Fassungen aus EMS/locale.json (nur der Pruefstand liest die Datei, das Modul nie selbst). */
+function emsLocaleDe(): array
+{
+    static $de = null;
+    if ($de === null) {
+        $de = json_decode((string)file_get_contents(dirname(__DIR__) . '/EMS/locale.json'), true)['translations']['de'] ?? [];
+    }
+    return !empty($GLOBALS['EMS_LANG_EN']) ? [] : $de;
+}
+
+/** Formular so, wie die deutsche Konsole es zeigt: caption/label/Optionen/Spaltenkoepfe ueber locale.json, Listenzellen (values) nicht (SUITE.md Store-Punkt 25). */
+function emsFormDe(string $json): string
+{
+    $de = emsLocaleDe();
+    $walk = function ($node) use (&$walk, $de) {
+        if (!is_array($node)) { return $node; }
+        foreach ($node as $k => $v) {
+            if ($k === 'values') { continue; }
+            if (is_string($v) && in_array($k, ['caption', 'label', 'suffix', 'prefix'], true)) { $node[$k] = $de[$v] ?? $v; }
+            elseif (is_array($v)) { $node[$k] = $walk($v); }
+        }
+        return $node;
+    };
+    return json_encode($walk(json_decode($json, true)), JSON_UNESCAPED_UNICODE);
 }
 
 // EMS_TEST_MODULE: alternativer Pfad, um den Pruefstand gegen eine bewusst
@@ -413,7 +440,7 @@ $pcSave = $GLOBALS['ATTR'][EMS_IID]['PartnerCache'];
 attr('PartnerCache', '{}');
 check('keine Wallbox gefunden (automatisch): ℹ️ statt falscher Behauptung', strpos($txt(call($ems, 'wallboxModeStatusLine', [1])), 'ℹ️') === 0);
 attr('PartnerCache', $pcSave);
-$f = json_encode(json_decode($ems->GetConfigurationForm(), true), JSON_UNESCAPED_UNICODE);
+$f = json_encode(json_decode(emsFormDe($ems->GetConfigurationForm()), true), JSON_UNESCAPED_UNICODE);
 check('Formular enthaelt die Statuszeile von Wallbox 1 live berechnet (kein statischer Ersatztext)', strpos($f, '"name":"WB1ModeStatus"') !== false && strpos($f, 'EMS steuert die Freigabe (automatisch erkannt') !== false);
 check('Formular: Statuszeile von Wallbox 2 hat die Sichtbarkeitsbedingung der Auswahl', (bool)preg_match('/"name":"WB2ModeStatus"[^}]*"visible":\{"type":"PropertyCondition","property":"WB_Count"/', $f), '');
 
@@ -527,18 +554,18 @@ $GLOBALS['VAL'][$cenA] = false; attr('WB1EmsLocked', true); attr('LastWB1Switch'
 $d = ['wb1_enable' => false, 'wb2_enable' => false];
 call($ems, 'applyWallboxControl', [&$d, $sWb]);
 check('automatisch Smart Charging: eigene Sperre wird geloest, es wird nichts gesperrt', $wbActs() === [[600, 'ctl_curr_limit', 16], [600, 'ctl_enable', true]], json_encode($GLOBALS['ACTIONS']));
-$f = json_decode($ems->GetConfigurationForm(), true);
+$f = json_decode(emsFormDe($ems->GetConfigurationForm()), true);
 $findSel = function (array $nodes, string $name) use (&$findSel) { foreach ($nodes as $n) { if (is_array($n)) { if (($n['name'] ?? '') === $name) { return $n; } foreach (['items', 'elements'] as $k) { if (isset($n[$k])) { $r = $findSel($n[$k], $name); if ($r) { return $r; } } } } } return null; };
 $sel = $findSel($f['elements'], 'WB1_TibberVehicle');
 check('Formular: Fahrzeugauswahl enthaelt "Name (Hersteller) — angesteckt" mit deviceId als Wert, keine Batterie', $sel && in_array(['caption' => 'Schneeflocke (TESLA) — angesteckt', 'value' => 'veh-1'], $sel['options'], true) && count($sel['options']) === 2, json_encode($sel['options'] ?? null));
 prop('WB1_TibberVehicle', 'weg-1');
-$sel = $findSel(json_decode($ems->GetConfigurationForm(), true)['elements'], 'WB1_TibberVehicle');
+$sel = $findSel(json_decode(emsFormDe($ems->GetConfigurationForm()), true)['elements'], 'WB1_TibberVehicle');
 check('gespeicherte, aktuell nicht gemeldete Zuordnung bleibt in der Auswahl erhalten (kein stilles Loeschen)', (bool)array_filter($sel['options'], fn($o) => $o['value'] === 'weg-1'));
 prop('WB1_TibberVehicle', ''); prop('WB_Count', 1);
-$lbl = $findSel(json_decode($ems->GetConfigurationForm(), true)['elements'], 'WB1ModeStatus');
+$lbl = $findSel(json_decode(emsFormDe($ems->GetConfigurationForm()), true)['elements'], 'WB1ModeStatus');
 check('genau ein Fahrzeug und eine Wallbox: Statuszeile schlaegt es vor (kein stilles Uebernehmen)', $lbl && strpos($lbl['caption'], 'Tibber meldet genau ein Fahrzeug (Schneeflocke (TESLA))') !== false && (int)$ems->ReadPropertyString('WB1_TibberVehicle') === 0, $lbl['caption'] ?? '');
 prop('WB_Count', 2);
-$lbl = $findSel(json_decode($ems->GetConfigurationForm(), true)['elements'], 'WB1ModeStatus');
+$lbl = $findSel(json_decode(emsFormDe($ems->GetConfigurationForm()), true)['elements'], 'WB1ModeStatus');
 check('zwei Wallboxen: kein Vorschlag (nicht eindeutig)', strpos($lbl['caption'], 'Tibber meldet genau ein Fahrzeug') === false);
 prop('WB1_TibberVehicle', '');
 unset($GLOBALS['INSTMOD'][900]); $GLOBALS['FLEX_DEVICES'] = []; // nichts in die folgenden Bloecke verschleppen
@@ -874,7 +901,7 @@ unset($GLOBALS['INSTMOD'][$archMock]);
 
 echo "\n8d3) Formular: Aufbau (SUITE.md Punkt 3a, 0.97.4)\n";
 $ems = freshEms(); prop('EMS_Risk_Acknowledged', true);
-$caps = function () use ($ems) { return array_map(function ($e) { return ($e['caption'] ?? '') . (isset($e['visible']) && $e['visible'] === false ? '#hidden' : '') . (isset($e['expanded']) && $e['expanded'] ? '#open' : ''); }, json_decode($ems->GetConfigurationForm(), true)['elements']); };
+$caps = function () use ($ems) { return array_map(function ($e) { return ($e['caption'] ?? '') . (isset($e['visible']) && $e['visible'] === false ? '#hidden' : '') . (isset($e['expanded']) && $e['expanded'] ? '#open' : ''); }, json_decode(emsFormDe($ems->GetConfigurationForm()), true)['elements']); };
 $c0 = $caps();
 $iA = array_search('🪟  Formular: Aufbau', array_map(function ($c) { return preg_replace('/#.*$/', '', $c); }, $c0));
 $iAll = null; foreach ($c0 as $i => $c) { if (strpos($c, '🔧 Allgemein') === 0) { $iAll = $i; } }
@@ -882,7 +909,7 @@ $iNot = null; foreach ($c0 as $i => $c) { if (strpos($c, '🔔 Benachrichtigunge
 check('Aufbau-Panel steht hinter allen Fachpanels (auch Benachrichtigungen) und ist zugeklappt', $iA !== false && $iNot !== null && $iA === $iNot + 1 && strpos($c0[$iA], '#open') === false, json_encode($c0, JSON_UNESCAPED_UNICODE));
 prop('FormLayout', json_encode([['Key' => 'general', 'Pos' => 5], ['Key' => 'notify', 'Pos' => 1, 'Opened' => true], ['Key' => 'ai', 'Hidden' => true], ['Key' => 'unbekannt', 'Pos' => 1]]));
 $c1 = $caps();
-$firstFach = null; foreach ($c1 as $c) { foreach (array_keys((new ReflectionClass('EMS'))->getConstant('FORM_LAYOUT_PANELS')) as $pre) { if (strpos($c, $pre) === 0) { $firstFach = $c; break 2; } } }
+$firstFach = null; foreach ($c1 as $c) { foreach (array_map(function ($t) { return emsLocaleDe()[$t] ?? $t; }, (new ReflectionClass('EMS'))->getConstant('FORM_LAYOUT_TITLES')) as $pre) { if (strpos($c, $pre) === 0) { $firstFach = $c; break 2; } } }
 check('Position 1 + Aufgeklappt: Benachrichtigungen ganz vorn unter den Fachpanels und offen', $firstFach !== null && strpos($firstFach, '🔔 Benachrichtigungen') === 0 && strpos($firstFach, '#open') !== false, (string)$firstFach);
 $ki = array_values(array_filter($c1, function ($c) { return strpos($c, '🤖 KI-Assistent') === 0; }));
 check('Ausgeblendet: KI-Panel bleibt im Formular, aber visible=false; Aufbau-Caption zaehlt es', count($ki) === 1 && strpos($ki[0], '#hidden') !== false && count(array_filter($c1, function ($c) { return strpos($c, '(1 ausgeblendet)') !== false; })) === 1, json_encode($ki, JSON_UNESCAPED_UNICODE));
@@ -891,8 +918,39 @@ $GLOBALS['FORMFIELD'] = [];
 $tx = $ems->ResetFormLayout();
 $rows = json_decode($GLOBALS['FORMFIELD']['FormLayout']['values'] ?? '[]', true);
 check('Reset: alle 15 Fachpanels in Standardreihenfolge ohne Haken, Klartext mit Uebernehmen', count($rows) === 15 && $rows[0]['Key'] === 'general' && $rows[14]['Key'] === 'notify' && empty($rows[3]['Hidden']) && strpos($tx, 'Übernehmen') !== false, json_encode($rows));
+check('Reset: Spalte Bereich (Listenzelle) selbst uebersetzt, deutsch wie vorher', ($rows[0]['Panel'] ?? '') === '🔧 Allgemein' && ($rows[13]['Panel'] ?? '') === '🤖 KI-Assistent' && ($rows[9]['Panel'] ?? '') === '⚖️ §14a EnWG', json_encode($rows, JSON_UNESCAPED_UNICODE));
 prop('FormLayout', '[]');
 
+
+
+echo "\n8d4) Zweisprachigkeit: Formular englisch und deutsch, Panels ueber name\n";
+$memo = new ReflectionProperty('EMS', 'emsTextMemo');
+$ems = freshEms(); prop('EMS_Risk_Acknowledged', true); prop('WB_Active', true);
+$GLOBALS['EMS_LANG_EN'] = true; $memo->setValue(null, []);
+$fEn = json_decode($ems->GetConfigurationForm(), true);
+$GLOBALS['EMS_LANG_EN'] = false; $memo->setValue(null, []);
+$fDe = json_decode(emsFormDe($ems->GetConfigurationForm()), true);
+$panelsEn = array_values(array_filter($fEn['elements'], function ($e) { return ($e['type'] ?? '') === 'ExpansionPanel'; }));
+$germanEn = array_filter($panelsEn, function ($e) { return preg_match('/[äöüÄÖÜß]|Allgemein|Tagesplan|Neu bis|Benachrichtig/u', (string)($e['caption'] ?? '')); });
+check('Englisch: keine Panel-Ueberschrift mehr deutsch', count($germanEn) === 0, json_encode(array_column($germanEn, 'caption'), JSON_UNESCAPED_UNICODE));
+$noName = array_filter($panelsEn, function ($e) { return trim((string)($e['name'] ?? '')) === ''; });
+check('Jedes Panel der obersten Ebene hat einen festen name', count($noName) === 0, json_encode(array_column($noName, 'caption'), JSON_UNESCAPED_UNICODE));
+$capDe = array_column(array_filter($fDe['elements'], function ($e) { return ($e['type'] ?? '') === 'ExpansionPanel'; }), 'caption', 'name');
+$want = ['PanelGeneral' => '🔧 Allgemein', 'PanelPlant' => '🏠 Anlage (Inbetriebnahme, Vergütung, Pflichten)', 'PanelTariff' => '💰 Tibber & Tarif', 'PanelDayplan' => '📅 Tagesplan',
+    'PanelNotify' => '🔔 Benachrichtigungen', 'PanelDoc' => '📖 Dokumentation & Hilfe', 'PanelFederation' => '🔗 Verbund-Status', 'PanelWallboxControl' => '🚗 Wallboxen bedienen',
+    'PanelAI' => '🤖 KI-Assistent (erklärt den Plan)', 'PanelSelfBalance' => '📊 EMS-Bilanz (gespart oder verloren?)', 'PanelFormLayout' => '🪟  Formular: Aufbau'];
+$diff = []; foreach ($want as $n => $c) { if (($capDe[$n] ?? null) !== $c) { $diff[$n] = $capDe[$n] ?? null; } }
+check('Deutsch: Panel-Ueberschriften unveraendert wie vor der Umstellung', count($diff) === 0, json_encode($diff, JSON_UNESCAPED_UNICODE));
+prop('EMS_Risk_Acknowledged', false);
+$fLock = json_decode($ems->GetConfigurationForm(), true);
+$vis = []; foreach ($fLock['elements'] as $e) { if (($e['type'] ?? '') === 'ExpansionPanel' && ($e['visible'] ?? true) !== false) { $vis[] = $e['name'] ?? '?'; } }
+$gen = null; foreach ($fLock['elements'] as $e) { if (($e['name'] ?? '') === 'PanelGeneral') { $gen = $e; } }
+check('Risiko-Sperre ueber name: nur Doku/Verbund/Neu/Benachrichtigungen/Allgemein sichtbar, Allgemein nur 2 Eintraege',
+    count(array_diff($vis, ['PanelDoc', 'PanelFederation', 'NewsPanel', 'PanelNotify', 'PanelGeneral'])) === 0 && in_array('PanelGeneral', $vis, true) && $gen !== null && count($gen['items']) === 2, json_encode($vis));
+$txt = json_encode($fEn, JSON_UNESCAPED_UNICODE);
+check('Pauschal-Hinweise (Netzmesspunkte/WR) weiter ueber name entfernt', strpos($txt, 'Look at the very top in the panel') === false && strpos($txt, 'Only needed if no partner module (InverterHub)') === false);
+$memo->setValue(null, []);
+prop('EMS_Risk_Acknowledged', false); prop('WB_Active', false);
 
 echo "\n8e) Andere Nutzer, andere Konstellationen: Netzladen ohne feste Einspeiseverguetung\n";
 $ems = freshEms();
@@ -1529,7 +1587,7 @@ check('saubere Konfiguration (Kapazitaet gesetzt, Preis aus der Kurve, keine fes
 attr('WriteFailAt', time() - 60); attr('WriteFailText', 'Instanz #1, ctl_x (abgelehnt)');
 $cc = $ems->GetConfigCheck();
 check('juengster Schreibfehler taucht in der Konfigurationspruefung auf', $cc['ok'] === false && strpos(implode(' ', array_column($cc['findings'], 'text')), 'Schreibzugriff ist fehlgeschlagen') !== false);
-$form = json_decode($ems->GetConfigurationForm(), true);
+$form = json_decode(emsFormDe($ems->GetConfigurationForm()), true);
 $caps = array_column($form['elements'], 'caption');
 check('Formular enthaelt das Panel Konfigurationspruefung (mit Hinweiszahl in der Ueberschrift)', (bool)array_filter($caps, fn($c) => strpos((string)$c, '🩺 Konfigurationsprüfung') === 0), json_encode($caps));
 
@@ -1695,7 +1753,7 @@ check('Liste aus dem Formular ohne Day-Feld: Zuordnung ueber die Zeilenposition 
 prop('WB1_WeekTargets', '[]');
 check('GetWeekTargets(3): ungueltige Wallbox abgelehnt', call($ems, 'GetWeekTargets', [3])['ok'] === false);
 // Formular
-$f = json_encode(json_decode($ems->GetConfigurationForm(), true), JSON_UNESCAPED_UNICODE);
+$f = json_encode(json_decode(emsFormDe($ems->GetConfigurationForm()), true), JSON_UNESCAPED_UNICODE);
 check('Formular enthaelt Ladeart, Stromstaerke, PV-Anteil und Phasen fuer beide Wallboxen', strpos($f, '"name":"WB1_ChargeMode"') !== false && strpos($f, '"name":"WB2_ChargeMode"') !== false && strpos($f, '"name":"WB1_PhaseSetting"') !== false && strpos($f, '"name":"WB2_PvSharePct"') !== false);
 
 echo "\n8k10) ChargerHub-Vertrag 1.9: controlReason/controlSince im Panel Wallboxen (nur bei Beobachten)\n";
@@ -1818,7 +1876,7 @@ call($ems, 'applyWallboxControl', [&$d, $sT]);
 check('Zaehler zeigt beim Anstecken noch 12 kWh der Vorsitzung: Ziel 5 kWh gilt als offen (0 geladen), es wird geladen', $ems->ReadAttributeBoolean('WB1TargetDone') === false && in_array([600, 'ctl_enable', true], $wbActsT(), true) && abs($ems->ReadAttributeFloat('WB1TargetBase') - 12.0) < 1e-6, json_encode($GLOBALS['ACTIONS']) . $ems->ReadAttributeString('WB1ChargeText'));
 $GLOBALS['VAL'][$seT] = 0.0;
 prop('WB1_TargetKwh', 0.0); prop('WB1_TargetTime', '07:00');
-$f = json_encode(json_decode($ems->GetConfigurationForm(), true), JSON_UNESCAPED_UNICODE);
+$f = json_encode(json_decode(emsFormDe($ems->GetConfigurationForm()), true), JSON_UNESCAPED_UNICODE);
 check('Formular: Ladeziel und Frist fuer beide Wallboxen', strpos($f, '"name":"WB1_TargetKwh"') !== false && strpos($f, '"name":"WB2_TargetTime"') !== false);
 
 echo "\n8k12) Wallbox-Werte automatisch ueber ChargerHub (Vertrag 1.11) und sichtbare Quellzeilen\n";
@@ -1868,18 +1926,18 @@ attr('PartnerCache', json_encode(['chargerhub' => [$whL]]));
 $GLOBALS['FORMFIELD'] = [];
 call($ems, 'WallboxLinkChanged', [1, 0, $manPw, 0, 0, 0]);
 check('onChange: Quellzeile folgt der Auswahl vor dem Uebernehmen', strpos($GLOBALS['FORMFIELD']['WB1LinkLeistung']['caption'] ?? '', '✏️ Leistung') === 0, json_encode($GLOBALS['FORMFIELD']));
-$fj = json_decode($ems->GetConfigurationForm(), true);
+$fj = json_decode(emsFormDe($ems->GetConfigurationForm()), true);
 $find = function ($fj, $name) { foreach ($fj['elements'] as $e) { foreach (($e['items'] ?? []) as $it) { if (($it['name'] ?? '') === $name) { return $it; } } } return null; };
 check('Formular: leeres VAR_WB1_Power ausgeblendet, weil ChargerHub die Leistung liefert', ($find($fj, 'VAR_WB1_Power')['visible'] ?? true) === false);
 check('Formular: leeres VAR_WB1_Error ausgeblendet (errorCodeID vorhanden)', ($find($fj, 'VAR_WB1_Error')['visible'] ?? true) === false);
 check('Formular: Phasen-Variable (nie ausgewertet) leer -> ausgeblendet', ($find($fj, 'VAR_WB1_Phases')['visible'] ?? true) === false);
 check('Formular: Quellzeilen unter der Instanz-Auswahl, Beschriftung "Fahrzeug angesteckt" statt "Kabel-Leistungsfaehigkeit"', $find($fj, 'WB1LinkLeistung') !== null && $find($fj, 'WB1LinkInstanz') !== null && strpos($find($fj, 'VAR_WB1_Cable')['caption'], 'Fahrzeug angesteckt') !== false);
 prop('VAR_WB1_Power', $manPw);
-$fj = json_decode($ems->GetConfigurationForm(), true);
+$fj = json_decode(emsFormDe($ems->GetConfigurationForm()), true);
 check('gesetzte eigene Variable bleibt sichtbar (nichts Aktives verstecken)', ($find($fj, 'VAR_WB1_Power')['visible'] ?? true) !== false);
 prop('VAR_WB1_Power', 0);
 attr('PartnerCache', '{}');
-$fj = json_decode($ems->GetConfigurationForm(), true);
+$fj = json_decode(emsFormDe($ems->GetConfigurationForm()), true);
 check('ohne ChargerHub: manuelle Felder sichtbar', ($find($fj, 'VAR_WB1_Power')['visible'] ?? true) !== false && ($find($fj, 'VAR_WB1_Error')['visible'] ?? true) !== false);
 // Preis
 $pl = call($ems, 'priceLinkLine', []);
@@ -2111,7 +2169,7 @@ $ems = freshEms();
 prop('WB_Active', true); prop('WB_Count', 2); prop('WB1_ChargeMode', 4); prop('WB1_TargetKwh', 12.5); prop('WB1_TargetTime', '06:30'); prop('EMS_Risk_Acknowledged', true);
 call($ems, 'maintainWallboxControlVariables');
 SetValue(IPS_GetObjectIDByIdent('EMS_WB1_Plan', EMS_IID), 'Hybrid: 6 A (Mindeststrom 6 A plus PV-Überschuss 0 W).');
-$fj = json_decode($ems->GetConfigurationForm(), true);
+$fj = json_decode(emsFormDe($ems->GetConfigurationForm()), true);
 $idx = null; foreach ($fj['elements'] as $k => $e) { if (($e['caption'] ?? '') === '🚗 Wallboxen bedienen') { $idx = $k; break; } }
 check('Panel "Wallboxen bedienen" ganz oben (Position 0 oder direkt nach "Neu")', $idx !== null && $idx <= 1, var_export($idx, true));
 $pj = json_encode($fj['elements'][$idx] ?? [], JSON_UNESCAPED_UNICODE);
@@ -2119,10 +2177,10 @@ check('Panel zeigt Planzeile, aktuelle Ladeart, Ziel, Frist fuer Wallbox 1 und W
 check('Ladeart wirkt sofort ueber dieselbe Aktion wie im WebFront (EMS_WB1_ChargeMode)', strpos($pj, 'IPS_RequestAction($id, \"EMS_WB1_ChargeMode\", $FormWB1ChargeMode);') !== false);
 check('Schaltflaechen Jetzt laden / Uebersteuerung beenden / Ladeziel loeschen mit Rueckmeldung', strpos($pj, 'EMS_WB1_Command\", 1); echo') !== false && strpos($pj, 'EMS_WB1_Command\", 2); echo') !== false && strpos($pj, 'EMS_WB1_Command\", 3); echo') !== false);
 prop('WB_Count', 1);
-$pj1 = ''; foreach (json_decode($ems->GetConfigurationForm(), true)['elements'] as $e) { if (($e['caption'] ?? '') === '🚗 Wallboxen bedienen') { $pj1 = json_encode($e, JSON_UNESCAPED_UNICODE); } }
+$pj1 = ''; foreach (json_decode(emsFormDe($ems->GetConfigurationForm()), true)['elements'] as $e) { if (($e['caption'] ?? '') === '🚗 Wallboxen bedienen') { $pj1 = json_encode($e, JSON_UNESCAPED_UNICODE); } }
 check('nur eine Wallbox: kein Wallbox-2-Block', strpos($pj1, 'FormWB2') === false && strpos($pj1, 'FormWB1') !== false);
 prop('WB_Active', false);
-$has = false; foreach (json_decode($ems->GetConfigurationForm(), true)['elements'] as $e) { if (($e['caption'] ?? '') === '🚗 Wallboxen bedienen') { $has = true; } }
+$has = false; foreach (json_decode(emsFormDe($ems->GetConfigurationForm()), true)['elements'] as $e) { if (($e['caption'] ?? '') === '🚗 Wallboxen bedienen') { $has = true; } }
 check('Wallboxen aus: kein Bedien-Panel', $has === false);
 prop('WB1_ChargeMode', 0); prop('WB1_TargetKwh', 0.0); prop('WB1_TargetTime', '07:00');
 
@@ -2354,7 +2412,7 @@ $lim0 = call($ems, 'gridChargeLimitEur', [['feedTariff' => 0.1836, 'refMode' => 
 $ctxC = ['feedTariff' => 0.1836, 'refMode' => 0, 'cycleCost' => call($ems, 'cycleCostCt') / 100.0];
 $lim1 = call($ems, 'gridChargeLimitEur', [$ctxC]);
 check('Mit Verschleiss sinkt die Netzlade-Grenze um 3,1 ct: 17,44 -> ca. 14,3 ct', abs($lim0 - 0.17442) < 1e-4 && abs($lim1 - (0.17442 - 0.031244)) < 1e-4, "$lim0 / $lim1");
-$formJson = json_decode($ems->GetConfigurationForm(), true);
+$formJson = json_decode(emsFormDe($ems->GetConfigurationForm()), true);
 check('Formular bleibt gueltig und enthaelt die neuen Felder', strpos(json_encode($formJson), 'BAT_Cycles') !== false && strpos(json_encode($formJson), 'BAT_Price_EUR') !== false);
 check('Formular zeigt die geltenden Verschleisskosten als Status (Berechnet aus Preis und Zyklen)', strpos(json_encode($formJson, JSON_UNESCAPED_UNICODE), 'Berechnet aus Preis und Zyklen') !== false, 'Statuszeile nicht im Formular');
 
@@ -3333,11 +3391,11 @@ unset($GLOBALS['INSTMOD'][909], $GLOBALS['INSTMOD'][910], $GLOBALS['INSTMOD'][91
 
 echo "\n8x) Formular zeigt, was gelernt/verbunden wurde\n";
 $ems = freshEms(); prop('EMS_Max_Power_W', 34500);
-$f0 = json_encode(json_decode($ems->GetConfigurationForm(), true), JSON_UNESCAPED_UNICODE);
+$f0 = json_encode(json_decode(emsFormDe($ems->GetConfigurationForm()), true), JSON_UNESCAPED_UNICODE);
 check('Ohne InverterHub: Formular sagt, dass nichts gelernt wird und warum', strpos($f0, 'Es wird nichts gelernt, weil der Wechselrichter nicht über den InverterHub') !== false);
 $GLOBALS['INSTMOD'][IHUB_IID] = GUID_INVERTERHUB; $wr();
 call($ems, 'learnChargeObserved', [90.0, 21.5]);
-$f1 = json_encode(json_decode($ems->GetConfigurationForm(), true), JSON_UNESCAPED_UNICODE);
+$f1 = json_encode(json_decode(emsFormDe($ems->GetConfigurationForm()), true), JSON_UNESCAPED_UNICODE);
 check('Mit InverterHub und gelernter Stufe: Formular nennt Stufe und kW', strpos($f1, 'Ladeleistung je Ladestand (gelernt') !== false && strpos($f1, '90–95 %: 21.5 kW') !== false, (preg_match('/[✅ℹ️] Ladeleistung je Ladestand[^"]{0,200}/u', $f1, $mm) ? $mm[0] : 'keine Zeile'));
 unset($GLOBALS['INSTMOD'][IHUB_IID]);
 
@@ -3358,7 +3416,7 @@ check('Preisquelle: Auswahl der Instanz mit Daten im offenen Formular ergibt �
 $ems->PriceSourceChanged(0);
 check('Zwei Instanzen ohne Auswahl im Formular: Hinweis "bitte auswaehlen" statt raten', strpos((string)$GLOBALS['FORMFIELD']['PT15MStatusLabel']['caption'], 'Mehrere Symcon-Strompreis-Instanzen') !== false, (string)$GLOBALS['FORMFIELD']['PT15MStatusLabel']['caption']);
 unset($GLOBALS['INSTMOD'][7301], $GLOBALS['INSTMOD'][7302]);
-$fj = json_encode(json_decode($ems->GetConfigurationForm(), true), JSON_UNESCAPED_UNICODE);
+$fj = json_encode(json_decode(emsFormDe($ems->GetConfigurationForm()), true), JSON_UNESCAPED_UNICODE);
 check('Die Zeilen haben Namen, damit UpdateFormField sie erreicht', strpos($fj, 'PT15MStatusLabel') !== false && strpos($fj, 'CycleCostStatusLabel') !== false);
 
 echo "\n8z) EMS_GetSpecialEvents 1.1: mehr Ereignistypen mit betroffener Groesse (affects)\n";
@@ -3411,36 +3469,36 @@ $findItem = function ($node, $name) use (&$findItem) {
     return null;
 };
 $ems = freshEms(); prop('BAT_Active', true);
-$f = json_decode($ems->GetConfigurationForm(), true);
+$f = json_decode(emsFormDe($ems->GetConfigurationForm()), true);
 $soc = $findItem($f, 'VAR_BAT1_SOC');
 check('Ohne InverterHub: Batterie-SOC-Feld bleibt sichtbar (wird gebraucht)', $soc !== null && ($soc['visible'] ?? true) !== false);
 $GLOBALS['INSTMOD'][IHUB_IID] = GUID_INVERTERHUB; $socV = vari('SOC', IHUB_IID, 'soc', 60.0); $wr(['socID' => $socV]);
-$f = json_decode($ems->GetConfigurationForm(), true); $soc = $findItem($f, 'VAR_BAT1_SOC'); $txt = json_encode($f, JSON_UNESCAPED_UNICODE);
+$f = json_decode(emsFormDe($ems->GetConfigurationForm()), true); $soc = $findItem($f, 'VAR_BAT1_SOC'); $txt = json_encode($f, JSON_UNESCAPED_UNICODE);
 check('Mit InverterHub: Batterie-SOC-Feld ausgeblendet, Zeile "🔗 Automatisch übernommen"', $soc !== null && ($soc['visible'] ?? true) === false && strpos($txt, '🔗 Automatisch übernommen: InverterHub') !== false, json_encode($soc));
 check('Der Satz "Felder unten werden ignoriert" ist weg (das Feld ist ja nicht mehr da)', strpos($txt, 'Felder unten werden ignoriert') === false || strpos($txt, '🔗 Automatisch übernommen: InverterHub #') !== false);
 $man = vari('eigener SOC', 0, '', 55.0); prop('VAR_BAT1_SOC', $man);
-$f = json_decode($ems->GetConfigurationForm(), true); $soc = $findItem($f, 'VAR_BAT1_SOC');
+$f = json_decode(emsFormDe($ems->GetConfigurationForm()), true); $soc = $findItem($f, 'VAR_BAT1_SOC');
 $greenOk = false; $walk = function ($n) use (&$walk, &$greenOk) { if (is_array($n)) { if (($n['type'] ?? '') === 'Label' && strpos((string)($n['caption'] ?? ''), '🔗 Automatisch übernommen') === 0 && ($n['color'] ?? null) === EMS_COLOR_AUTO) { $greenOk = true; } foreach ($n as $v) { $walk($v); } } };
 $walk($f);
 check('🔗-Zeile ist grün (color gesetzt)', $greenOk);
 check('Eigene Angabe im Feld: Feld bleibt sichtbar, die eigene Angabe hat Vorrang', $soc !== null && ($soc['visible'] ?? true) !== false);
 prop('VAR_BAT1_SOC', 0);
-$prices = $findItem(json_decode($ems->GetConfigurationForm(), true), 'VAR_TIB_PT15M_Today');
+$prices = $findItem(json_decode(emsFormDe($ems->GetConfigurationForm()), true), 'VAR_TIB_PT15M_Today');
 check('Ohne Preisquelle: Preisfeld sichtbar', $prices !== null && ($prices['visible'] ?? true) !== false);
 unset($GLOBALS['INSTMOD'][IHUB_IID]);
 
 echo "\n8ac) Formular zeigt die Verbindung zum Boersenpreis-Modul (Negativpreis-Pflicht)\n";
 $ems = freshEms(); prop('EMS_Risk_Acknowledged', true); $GLOBALS['SPOT_CURVE'] = [];
-$fx = json_encode(json_decode($ems->GetConfigurationForm(), true), JSON_UNESCAPED_UNICODE);
+$fx = json_encode(json_decode(emsFormDe($ems->GetConfigurationForm()), true), JSON_UNESCAPED_UNICODE);
 check('Ohne Boersenpreis-Quelle: ℹ️ "Keine Börsenpreis-Quelle gefunden" im Formular', strpos($fx, 'Keine Börsenpreis-Quelle gefunden') !== false && strpos($fx, 'SpotStatusLabel') !== false, 'Label: ' . (strpos($fx, 'SpotStatusLabel') !== false ? 'da' : 'fehlt') . ', Text: ' . (preg_match('/Börsenpreis[^"]{0,80}/u', $fx, $mx) ? $mx[0] : '-'));
 $GLOBALS['INSTMOD'][7401] = GUID_SPOTPRICE; obj(7401, 1, 'Börsenpreis Test', 0);
 $dd = strtotime('today'); $nqS = (int)((strtotime('tomorrow') - $dd) / 900); // 92/96/100 je nach Zeitumstellung
 $curveS = []; for ($i = 0; $i < $nqS; $i++) { $curveS[] = ['start' => $dd + $i * 900, 'end' => $dd + ($i + 1) * 900, 'price' => 5.0, 'aufloesung' => 900]; }
 $GLOBALS['SPOT_CURVE'] = $curveS;
-$fx = json_encode(json_decode($ems->GetConfigurationForm(), true), JSON_UNESCAPED_UNICODE);
+$fx = json_encode(json_decode(emsFormDe($ems->GetConfigurationForm()), true), JSON_UNESCAPED_UNICODE);
 check('Mit Boersenpreis-Modul: ✅ mit Instanz, Name, Umfang und aktuellem Wert', strpos($fx, '✅ Börsenpreis #7401') !== false && strpos($fx, 'Börsenpreis Test') !== false && strpos($fx, $nqS . ' Viertelstunden') !== false && strpos($fx, 'aktuell 5.00 ct') !== false, (preg_match('/[✅⚠️ℹ️] ?Börsenpreis[^"]{0,200}/u', $fx, $mm) ? $mm[0] : 'keine Zeile'));
 $GLOBALS['INSTMOD'][7402] = GUID_SPOTPRICE; obj(7402, 1, 'Zweite', 0);
-$fx = json_encode(json_decode($ems->GetConfigurationForm(), true), JSON_UNESCAPED_UNICODE);
+$fx = json_encode(json_decode(emsFormDe($ems->GetConfigurationForm()), true), JSON_UNESCAPED_UNICODE);
 check('Zwei Boersenpreis-Instanzen: ⚠️ (EMS nutzt die erste) statt still zu raten', strpos($fx, '⚠️ Mehrere Börsenpreis-Instanzen gefunden') !== false);
 unset($GLOBALS['INSTMOD'][7401], $GLOBALS['INSTMOD'][7402]); $GLOBALS['SPOT_CURVE'] = [];
 
