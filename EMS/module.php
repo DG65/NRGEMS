@@ -41,7 +41,7 @@ define('EMS_LOG_VERBOSE',     2);
 // Formular-Konvention (siehe EMS/SUITE.md "Einheitliche Formular-Optik"):
 // Was-ist-Neu-Panel ist versionsscharf dismissible, Referenzmuster InverterHub.
 define('EMS_COLOR_AUTO', 0x2E8B3D); // Gruen: Wert wurde automatisch uebernommen (🔗-Zeilen im Formular)
-define('EMS_NEWS_VERSION', '0.97.2');
+define('EMS_NEWS_VERSION', '0.97.3');
 define('EMS_AI_DEFAULT_CLAUDE', 'claude-opus-5-5');
 define('EMS_AI_DEFAULT_OLLAMA', 'llama3.1');
 
@@ -808,6 +808,10 @@ class EMS extends IPSModule
                 'caption'  => '🆕 Neu in Version ' . EMS_NEWS_VERSION,
                 'expanded' => true,
                 'items'    => array(
+                    array(
+                        'type'    => 'Label',
+                        'caption' => '• KORRIGIERT: Nachtladen. Weil die Preise der übernächsten Nacht beim Planen unbekannt sind, lädt das Nachtfenster jetzt bis zum Nachtziel (Standard 100 %) und lässt nur so viel Platz frei, wie der PV-Überschuss am Folgetag laut vorsichtiger Prognose sicher einlädt. Im Winter heißt das voll laden, im Sommer entsprechend weniger. Vorher reichte der Bedarf bis zur nächsten Nacht. Auswertung von 30 Nächten: Eine kWh zu viel kostet etwa 3 ct Wandlungsverlust, eine zu wenig am Folgetag im Schnitt 13 ct.'
+                    ),
                     array(
                         'type'    => 'Label',
                         'caption' => '• NEU: Die EMS-Bilanz weist die Tibber-Grid-Rewards-Vergütung je Tag aus (aus der Tibber-Variable „RewardAllTime“, wenn sie geloggt wird). Sie verringert die echten Kosten; den Vergleich mit der Automatik ändert sie nicht, weil das Fahrzeug sie mit und ohne EMS bekommt.'
@@ -3912,10 +3916,42 @@ class EMS extends IPSModule
             return true;
         };
         if (!$ok(100.0)) { return null; } // reicht selbst voll nicht: festes Nachtziel (voll laden) bleibt
+        $margin = (float)$this->ReadPropertyInteger('BAT_SOC_Safety_Margin_Pct');
         $lo = $floor; $hi = 100.0;
-        if ($ok($lo)) { return min(100.0, $floor + (float)$this->ReadPropertyInteger('BAT_SOC_Safety_Margin_Pct')); }
-        for ($k = 0; $k < 14; $k++) { $mid = ($lo + $hi) / 2.0; if ($ok($mid)) { $hi = $mid; } else { $lo = $mid; } }
-        return min(100.0, $hi + (float)$this->ReadPropertyInteger('BAT_SOC_Safety_Margin_Pct'));
+        if ($ok($lo)) {
+            $need = min(100.0, $floor + $margin);
+        } else {
+            for ($k = 0; $k < 14; $k++) { $mid = ($lo + $hi) / 2.0; if ($ok($mid)) { $hi = $mid; } else { $lo = $mid; } }
+            $need = min(100.0, $hi + $margin);
+        }
+        // 0.97.3: Der Bedarf bis zur naechsten Nacht ist nur die Untergrenze. Die Preise der uebernaechsten Nacht sind beim Planen
+        // unbekannt; Auswertung 30 Naechte (08.10.-07.11.2026): Nachtminimum sprang in 8 von 30 Faellen um 8-16 ct, der Folgetag lag
+        // immer 6-23 ct ueber dem Nachtminimum, der Wandlungsverlust kostet ~3 ct. Eine kWh zu viel kostet also wenig, eine zu wenig
+        // viel. Deshalb wird nur so viel Platz frei gelassen, wie PV-Ueberschuss am Folgetag (vorsichtige Prognose) sicher einlaedt.
+        return max($need, $this->nightPvHeadroomSoc($endAbs, $stopAbs, $pv192, $load192, $ctx));
+    }
+
+    /**
+     * Hoechster Start-SOC am Ende des Nachtfensters, bei dem der PV-Ueberschuss bis $stopAbs noch vollstaendig in den Akku passt
+     * (Automatik, keine Einspeisung wegen vollem Akku). Ohne nennenswerten PV-Ueberschuss (Winter) 100.
+     */
+    private function nightPvHeadroomSoc(int $endAbs, int $stopAbs, array $pv192, array $load192, array $ctx): float
+    {
+        $c = $ctx; $c['houseLoadSlots'] = $load192;
+        $noSpill = function (float $start) use ($c, $endAbs, $stopAbs, $pv192, $load192): bool {
+            $soc = $start;
+            for ($i = $endAbs; $i < $stopAbs; $i++) {
+                $pv = (float)($pv192[$i] ?? 0.0);
+                if ($soc >= 99.5 && $pv - (float)($load192[$i] ?? $c['avgHouseW']) > 50.0) { return false; } // voll, Ueberschuss ginge ins Netz
+                $soc = $this->simulateAutomatikSlot($i, $pv, null, $soc, $c)['soc'];
+            }
+            return true;
+        };
+        if ($noSpill(100.0)) { return 100.0; }
+        $lo = (float)($ctx['socMin'] + $ctx['socReserve']); $hi = 100.0;
+        if (!$noSpill($lo)) { return $lo; }
+        for ($k = 0; $k < 14; $k++) { $mid = ($lo + $hi) / 2.0; if ($noSpill($mid)) { $lo = $mid; } else { $hi = $mid; } }
+        return $lo;
     }
 
     private function nightWindowSlot(int $slot, $price, $soc, ?array $nw, array $ctx): ?array
@@ -3946,11 +3982,11 @@ class EMS extends IPSModule
             if (!isset($ctx['replacePrice']) || $ctx['replacePrice'] === null) { return null; }
             $holdBelow = $ctx['replacePrice'] * $this->convEff() - ($ctx['spread'] ?? 0.0);
             if ($price >= $holdBelow) { return null; }
-            $why = sprintf('%.2fct < %.2fct (erwarteter Ersatzpreis %.2fct abzüglich 5 %% Verlust und Mindestspanne)', $price * 100, $holdBelow * 100, $ctx['replacePrice'] * 100);
+            $why = sprintf('%.2fct < %.2fct (erwarteter Ersatzpreis %.2fct abzüglich %.0f %% Verlust und Mindestspanne)', $price * 100, $holdBelow * 100, $ctx['replacePrice'] * 100, (1 - $this->convEff()) * 100);
         } else {
             $holdBelow = $ctx['feedTariff'] * $this->convEff();
             if ($price >= $holdBelow) { return null; }
-            $why = sprintf('%.2fct < %.2fct (Einspeisevergütung %.2fct abzüglich 5 %% Batterieverlust)', $price * 100, $holdBelow * 100, $ctx['feedTariff'] * 100);
+            $why = sprintf('%.2fct < %.2fct (Einspeisevergütung %.2fct abzüglich %.0f %% Batterieverlust)', $price * 100, $holdBelow * 100, $ctx['feedTariff'] * 100, (1 - $this->convEff()) * 100);
         }
         $reason = ($nw['n'] > 0 || $soc < $ctx['socTargetNight'])
             ? sprintf('Nachtfenster bis %s: Haus aus dem Netz, %s -- Akku wird nicht entladen', $endLabel, $why)

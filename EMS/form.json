@@ -1815,7 +1815,7 @@
                 {
                     "type": "CheckBox",
                     "name": "PLAN_NightGrid_NeedBased",
-                    "caption": "Nachtfenster nur für den Bedarf bis zur nächsten Nacht (halten und laden nur so viel, wie der Akku bis dahin abgibt; volles Laden bleibt, wenn Nachtstrom inkl. Verlust unter der Einspeisevergütung liegt)"
+                    "caption": "Nachtfenster: Platz für den PV-Überschuss des Folgetags frei lassen (lädt bis zum Nachtziel, abzüglich dem, was PV am Folgetag laut vorsichtiger Prognose sicher einlädt; mindestens der Bedarf bis zur nächsten Nacht. Aus: immer bis zum Nachtziel)"
                 },
                 {
                     "type": "CheckBox",

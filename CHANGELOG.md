@@ -2,6 +2,10 @@
 
 Ältere Versionen: [CHANGELOG-Archiv.md](CHANGELOG-Archiv.md)
 
+## 0.97.3 (2026-11-08)
+- **Nachtladen bis voll statt nur bis zum Bedarf der nächsten Nacht (Auftrag Dietmar 08.11.2026):** Die Bedarfsregel aus 0.93.0 lud nur so viel, wie der Akku bis zur nächsten Nacht abgibt, und setzte damit voraus, dass die nächste Nacht wieder günstig ist. Deren Preise sind beim Planen aber unbekannt. Auswertung der Preise von 30 Nächten (08.10.–07.11.2026): Das Nachtminimum sprang in 8 von 30 Fällen um 8–16 ct zur Folgenacht, der Folgetag lag immer 6–23 ct (typisch 13 ct) über dem Nachtminimum, der Wandlungsverlust kostet nur etwa 3 ct. Jetzt ist der Bedarf nur noch die Untergrenze; geladen wird bis zum Nachtziel, abzüglich des Platzes, den der PV-Überschuss des Folgetags (vorsichtige Prognose mit gelernter Korrektur) sicher füllt. Im Winter heißt das voll, im Sommer weniger.
+- **Begründungstext Halten:** nennt den eingestellten Wandlungsverlust statt fest „5 %“.
+
 ## 0.97.2 (2026-11-07)
 - **Grid-Rewards-Vergütung in der EMS-Bilanz (Auftrag Dietmar 07.11.2026):** Das Tibber-Modul liefert die Vergütung als laufende Summe (Variable „RewardAllTime“). Wird sie geloggt, rechnet die Selbstbilanz je Tag die Differenz als Grid-Rewards-Gutschrift aus und zeigt sie je Tag und als 30-Tage-Summe (`gridRewardsEur` in `EMS_GetSelfBalance()`). Die Vergütung bekommt das Fahrzeug mit und ohne EMS (Grid Rewards nur fürs Auto seit 0.89.0); sie senkt die echten Kosten, ändert den Vergleich EMS gegen Automatik aber nicht. Vor Beginn der Archivierung gibt es keine Tageswerte. Zwei neue Prüfungen, eine Mutation nachweislich rot.
 

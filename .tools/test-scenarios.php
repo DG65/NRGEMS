@@ -884,10 +884,14 @@ prop('BAT_SOC_Safety_Margin_Pct', 10);
 $ctxN = array_merge($ctxU, ['capKwh' => 100.0, 'socMin' => 10.0, 'socReserve' => 10.0, 'avgHouseW' => 500.0, 'dischargeKw' => 10.0, 'houseLoadSlots' => []]);
 $pvN = array_fill(0, 192, 0.0); $ldN = array_fill(0, 192, 500.0);
 $needN = call($ems, 'nightNeedSoc', [24, 96, $pvN, $ldN, $ctxN]);
-check('Bedarf 06-24 Uhr: 18 h x 0,5 kW = 9 kWh = 9 % ueber der Reserve 20 % plus 10 % Aufschlag = ~39 %', $needN !== null && abs($needN - 39.0) < 0.5, (string)$needN);
+check('0.97.3: ohne PV-Ueberschuss am Folgetag (Winter) Nachtziel 100 % statt nur Bedarf 39 % (Preise der uebernaechsten Nacht unbekannt)', $needN !== null && abs($needN - 100.0) < 0.01, (string)$needN);
+check('0.97.3: PV-Platz ohne PV = 100 %', abs(call($ems, 'nightPvHeadroomSoc', [24, 96, $pvN, $ldN, $ctxN]) - 100.0) < 0.01);
 $pvSun = $pvN; for ($i = 40; $i < 64; $i++) { $pvSun[$i] = 5000.0; }
 $needSun = call($ems, 'nightNeedSoc', [24, 96, $pvSun, $ldN, $ctxN]);
-check('mit PV ab 10 Uhr: weniger Bedarf als ohne PV (PV laedt nach)', $needSun !== null && $needSun < $needN, (string)$needSun);
+$hrSun = call($ems, 'nightPvHeadroomSoc', [24, 96, $pvSun, $ldN, $ctxN]);
+check('0.97.3: mit PV 10-16 Uhr (27 kWh Ueberschuss, vorher 2 kWh Last) bleibt Platz frei: Ziel ~75 %', $needSun !== null && $needSun > 70.0 && $needSun < 80.0 && abs($needSun - $hrSun) < 0.01, $needSun . ' / ' . $hrSun);
+$pvBig = $pvN; for ($i = 36; $i < 72; $i++) { $pvBig[$i] = 20000.0; }
+check('0.97.3: PV fuellt den Akku sicher von ganz unten: Ziel = Bedarf (Untergrenze), nicht weniger', ($nb = call($ems, 'nightNeedSoc', [24, 96, $pvBig, $ldN, $ctxN])) !== null && $nb >= 20.0 && $nb < 40.0, (string)$nb);
 check('Bedarf groesser als der volle Akku (20 kW Last): nicht bestimmbar, festes Nachtziel bleibt', call($ems, 'nightNeedSoc', [24, 96, $pvN, array_fill(0, 192, 20000.0), $ctxN]) === null);
 $ctxNB = array_merge($ctxU, ['socTargetNight' => 39.0, 'nightNeedBased' => true]);
 check('Akku 86 % ueber dem Bedarf 39 %: kein Halten, Akku versorgt das Haus', call($ems, 'nightWindowSlot', [$slU, 0.21, 86.0, $nwU, $ctxNB]) === null);
