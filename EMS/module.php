@@ -42,7 +42,11 @@ define('EMS_LOG_VERBOSE',     2);
 // Was-ist-Neu-Panel ist versionsscharf dismissible, Referenzmuster InverterHub.
 define('EMS_COLOR_AUTO', 0x2E8B3D); // Gruen: Wert wurde automatisch uebernommen (🔗-Zeilen im Formular)
 define('EMS_NEWS_VERSIONS', array(
-    '0.97.4' => array('KORRIGIERT: „Was ist neu“ zeigt nur noch die Neuerungen seit der zuletzt bestätigten Version statt der ganzen Liste.'),
+    '0.97.4' => array(
+        'KORRIGIERT: „Was ist neu“ zeigt nur noch die Neuerungen seit der zuletzt bestätigten Version statt der ganzen Liste.',
+        '🪟 NEU: Formular-Aufbau selbst wählen: Im Bereich „🪟 Formular: Aufbau“ legen Sie je Bereich fest, ob er beim Öffnen aufgeklappt, zugeklappt oder ausgeblendet ist und an welcher Stelle er steht.',
+        'NEU: Fehlt Logging, steht der Bereich „📈 Logging fehlt“ aufgeklappt ganz oben und nennt die Variablen mit Namen. Er umfasst jetzt auch die Messpunkte des Wechselrichters (Netz, PV, Akku, Ladestand), die die EMS-Bilanz braucht; derselbe Knopf steht auch in der EMS-Bilanz.',
+    ),
     '0.97.3' => array('KORRIGIERT: Nachtladen. Weil die Preise der übernächsten Nacht beim Planen unbekannt sind, lädt das Nachtfenster jetzt bis zum Nachtziel (Standard 100 %) und lässt nur so viel Platz frei, wie der PV-Überschuss am Folgetag laut vorsichtiger Prognose sicher einlädt. Im Winter heißt das voll laden, im Sommer entsprechend weniger. Vorher reichte der Bedarf bis zur nächsten Nacht. Auswertung von 30 Nächten: Eine kWh zu viel kostet etwa 3 ct Wandlungsverlust, eine zu wenig am Folgetag im Schnitt 13 ct.'),
     '0.97.2' => array('NEU: Die EMS-Bilanz weist die Tibber-Grid-Rewards-Vergütung je Tag aus (aus der Tibber-Variable „RewardAllTime“, wenn sie geloggt wird). Sie verringert die echten Kosten; den Vergleich mit der Automatik ändert sie nicht, weil das Fahrzeug sie mit und ohne EMS bekommt.'),
     '0.97.1' => array('KORRIGIERT: Faire Tagesbewertung in der EMS-Bilanz: Energie, die am Tagesende mehr oder weniger im Akku liegt als am Morgen, wird mit dem Tagespreis bewertet. Vorher sah ein Tag, an dem das EMS den Akku schonte, wie ein Verlust aus, obwohl die Energie an den Folgetagen genutzt wurde.'),
@@ -164,8 +168,31 @@ define('GUID_POWERPRICE', '{9354E28B-4E62-AEE5-8F88-BECA9F3F4F8F}'); // Symcon-S
 // auswaehlen, siehe GetWebFrontInstances()/checkFederationHealthAlarm().
 define('GUID_WEBFRONT', '{3565B1F2-8F7B-4311-A4B6-1BF1D868F39E}');
 
+require_once __DIR__ . '/FormLayout.php';
+
 class EMS extends IPSModule
 {
+    use EMSFormLayout;
+
+    // "🪟 Formular: Aufbau" (SUITE.md Punkt 3a, 0.97.4): waehlbare Fachpanels, Beginn der Caption => stabiler Schluessel, Standardreihenfolge
+    private const FORM_LAYOUT_PANELS = array(
+        '🔧 Allgemein'                 => 'general',
+        '🏠 Anlage'                    => 'plant',
+        '📡 Netzmesspunkte'            => 'grid',
+        '⚡ Wechselrichter & PV'       => 'inverter',
+        '🔋 Batteriespeicher'          => 'battery',
+        '🚗 Wallboxen'                 => 'wallboxes',
+        '🌡️ Wärmepumpe'                => 'heatpump',
+        '💰 Tibber & Tarif'            => 'tariff',
+        '📅 Tagesplan'                 => 'dayplan',
+        '⚖️ §14a EnWG'                 => 'p14a',
+        '☀️ PV Forecast'               => 'pvforecast',
+        '⚙️ Optimierungsparameter'     => 'optimizer',
+        '📊 EMS-Bilanz'                => 'selfbalance',
+        '🤖 KI-Assistent'              => 'ai',
+        '🔔 Benachrichtigungen'        => 'notify',
+    );
+
     // Netzdienliche Faehigkeiten -> InverterHub-Ident (Vertrag 1.3,
     // gridServiceCapabilities). Reihenfolge = Reihenfolge der Rueckgabe.
     private const GRID_SERVICE_IDENTS = array(
@@ -662,6 +689,7 @@ class EMS extends IPSModule
 
         // ── KI-Assistent (0.95.0, Dietmar 04.11.2026): erklaert nur, steuert nie ──
         $this->RegisterPropertyInteger('AI_Provider', 0);                       // 0 aus, 1 Claude (Anthropic), 2 Ollama (lokal)
+        $this->RegisterPropertyString('FormLayout', '[]');                      // 0.97.4: Formular-Aufbau je Fachpanel
         $this->RegisterPropertyString('AI_Model', '');                          // leer = Standardmodell des Anbieters
         $this->RegisterPropertyString('AI_OllamaUrl', 'http://localhost:11434');
         $this->RegisterAttributeString('AI_ApiKey', '');                        // Zugangsdaten im Attribut, nie als Property (Verbund-Regel)
@@ -1154,25 +1182,6 @@ class EMS extends IPSModule
         // 3b. KI-Assistent (optional, erklaert nur)
         $form['elements'][] = $this->aiPanel();
 
-        // 4. Symcon-Forum-Hinweis — nach den Haupteinstellungen, einmalig dismissible
-        if (!$this->ReadAttributeBoolean('ForumHintDismissed')) {
-            $form['elements'][] = array(
-                'type'  => 'RowLayout',
-                'name'  => 'ForumHint',
-                'items' => array(
-                    array(
-                        'type'    => 'Label',
-                        'caption' => '✏️ EMS ist Beta — Rückmeldungen im Symcon-Forum willkommen: (Thread folgt, sobald veröffentlicht)'
-                    ),
-                    array(
-                        'type'    => 'Button',
-                        'caption' => 'Nicht mehr anzeigen',
-                        'onClick' => 'EMS_DismissForumHint($id);'
-                    ),
-                )
-            );
-        }
-
         // 5. "Benachrichtigungen" — aktive Ausfall-Meldung (Dietmar, 04.08.2026).
         // Auswahlliste dynamisch aus GetWebFrontInstances(), NIE eine
         // Instanz-ID hart hinterlegen -- jeder Nutzer hat andere WebFront-IDs.
@@ -1202,6 +1211,28 @@ class EMS extends IPSModule
             )
         );
 
+        // 4a. "🪟 Formular: Aufbau" (SUITE.md Punkt 3a): Reihenfolge, Auf-/Zuklappen, Ausblenden der Fachpanels, Panel selbst dahinter
+        $form['elements'] = $this->formLayoutApply($form['elements'], self::FORM_LAYOUT_PANELS);
+
+        // 4. Symcon-Forum-Hinweis — nach den Haupteinstellungen, einmalig dismissible
+        if (!$this->ReadAttributeBoolean('ForumHintDismissed')) {
+            $form['elements'][] = array(
+                'type'  => 'RowLayout',
+                'name'  => 'ForumHint',
+                'items' => array(
+                    array(
+                        'type'    => 'Label',
+                        'caption' => '✏️ EMS ist Beta — Rückmeldungen im Symcon-Forum willkommen: (Thread folgt, sobald veröffentlicht)'
+                    ),
+                    array(
+                        'type'    => 'Button',
+                        'caption' => 'Nicht mehr anzeigen',
+                        'onClick' => 'EMS_DismissForumHint($id);'
+                    ),
+                )
+            );
+        }
+
         // 6. Risiko-Sperre (Dietmars Vorgabe 29.08.2026, Teil der WR-
         // Totmann-Uebergabe): Solange die Risiken nicht bestaetigt sind,
         // bleiben "EMS aktiv" und alle uebrigen Steuerungsfelder verborgen
@@ -1214,7 +1245,7 @@ class EMS extends IPSModule
         // Reload beim naechsten GetConfigurationForm()-Aufruf ist der
         // zuverlaessige Weg.
         if (!$this->ReadPropertyBoolean('EMS_Risk_Acknowledged')) {
-            $infoWhitelist = array('📖 Dokumentation', '🔗 Verbund-Status', '🆕 Neu in Version', '🔔 Benachrichtigungen');
+            $infoWhitelist = array('📖 Dokumentation', '🔗 Verbund-Status', '🆕 Neu', '🔔 Benachrichtigungen');
             foreach ($form['elements'] as &$element) {
                 if (($element['type'] ?? '') !== 'ExpansionPanel') { continue; }
                 $caption = $element['caption'] ?? '';
@@ -1292,6 +1323,12 @@ class EMS extends IPSModule
         $ver = $this->baseVersion((string)$this->getOwnVersion());
         $this->WriteAttributeString('SeenNews', $ver !== '' ? $ver : (string)array_key_first(EMS_NEWS_VERSIONS));
         $this->UpdateFormField('NewsPanel', 'visible', false);
+    }
+
+    /** "↩️ Auf Standard zurücksetzen" im Bereich "🪟 Formular: Aufbau" (gilt nach "Übernehmen"). */
+    public function ResetFormLayout(): string
+    {
+        return $this->formLayoutReset(self::FORM_LAYOUT_PANELS);
     }
 
     public function DismissForumHint()
@@ -6202,7 +6239,10 @@ class EMS extends IPSModule
         return array('EMS_TibberPrice', 'EMS_HousePower', 'EMS_GridRewards', 'EMS_Mode', 'EMS_ExportOverlapToday_Wh', 'EMS_ExportOverlapToday_Min', 'EMS_BatCostCt', 'EMS_BatCostOppCt');
     }
 
-    /** Variablen aus archivingIdents(), die noch nicht geloggt werden (Variablen-IDs). */
+    /**
+     * Variablen, die nicht geloggt werden (Variablen-IDs): die EMS-eigenen aus archivingIdents() und, seit 0.97.4, die Messpunkte
+     * des Wechselrichters, die die EMS-Bilanz braucht (Netz, PV, Akku, Ladestand; Befund Dietmar 08.11.2026 bei Paul).
+     */
     private function archivingMissing(): array
     {
         $archiveId = $this->getArchiveInstanceId();
@@ -6212,7 +6252,18 @@ class EMS extends IPSModule
             $varId = $this->findChildVariableIdByIdent($this->InstanceID, $ident);
             if ($varId > 0 && !@AC_GetLoggingStatus($archiveId, $varId)) { $out[] = $varId; }
         }
+        $inv = $this->getInverterEntry();
+        foreach (array('gridPowerID', 'pvPowerID', 'batPowerID', 'socID') as $k) {
+            $varId = (int)($inv[$k] ?? 0);
+            if ($varId > 0 && @IPS_VariableExists($varId) && !in_array($varId, $out, true) && !@AC_GetLoggingStatus($archiveId, $varId)) { $out[] = $varId; }
+        }
         return $out;
+    }
+
+    /** Fehlende Variablen als Klartext: Name (#ID), je Zeile. */
+    private function archivingMissingLines(array $missing): array
+    {
+        return array_map(function ($v) { return array('type' => 'Label', 'caption' => sprintf('   • %s (#%d)', @IPS_ObjectExists($v) ? IPS_GetLocation($v) : '?', $v)); }, $missing);
     }
 
     /** Formular-Hinweis samt Knopf; null, wenn alles geloggt wird oder kein Archiv da ist. */
@@ -6220,9 +6271,10 @@ class EMS extends IPSModule
     {
         $missing = $this->archivingMissing();
         if (empty($missing)) { return null; }
-        return array('type' => 'ExpansionPanel', 'caption' => '📈 Logging für den Tagesplan', 'expanded' => false, 'items' => array(
-            array('type' => 'Label', 'caption' => sprintf('%d EMS-Variablen werden nicht geloggt. Ohne Logging zeigt der Tagesplan für vergangene Viertelstunden keine Hauslast und keine Grid-Rewards-Zeiten. Die Steuerung läuft davon unberührt weiter.', count($missing))),
-            array('type' => 'Button', 'caption' => '📈 Logging für diese Variablen einschalten', 'onClick' => 'echo EMS_EnableArchiving($id);'),
+        return array('type' => 'ExpansionPanel', 'caption' => sprintf('📈 Logging fehlt (%d Variablen)', count($missing)), 'expanded' => true, 'items' => array_merge(
+            array(array('type' => 'Label', 'caption' => 'Diese Variablen werden nicht geloggt. Ohne sie kann die EMS-Bilanz nicht rechnen und der Tagesplan zeigt für vergangene Viertelstunden keine Ist-Werte. Die Steuerung läuft davon unberührt weiter.')),
+            $this->archivingMissingLines($missing),
+            array(array('type' => 'Button', 'caption' => '📈 Logging für diese Variablen einschalten', 'onClick' => 'echo EMS_EnableArchiving($id);'))
         ));
     }
 
@@ -6682,6 +6734,12 @@ class EMS extends IPSModule
             ? sprintf('Gelernte Prognose-Korrektur (letzte %d Tage): PV ×%.2f, Hauslast ×%.2f. Damit rechnet das Nachtfenster den Bedarf bis zur nächsten Nacht.', $f['days'], $f['pv'], $f['load'])
             : sprintf('Prognose-Korrektur noch nicht gelernt (%d von 3 Tagen). Bis dahin vorsichtig: PV ×%.2f, Hauslast ×%.2f.', $f['days'], $f['pv'], $f['load']));
         $items[] = array('type' => 'Label', 'caption' => sprintf('Annahmen der Simulation: Wirkungsgrad je Wandlung %.0f %% (Einstellung im Bereich Batterie), Akku %.1f kWh, Einspeisevergütung %.2f ct. Die Automatik lädt nur aus PV-Überschuss und entlädt bei Bedarf.', $this->convEff() * 100, $this->batteryCapacityKwh(), $this->planFeedTariffEur() * 100));
+        $missing = $this->archivingMissing();
+        if (!empty($missing)) {
+            $items[] = array('type' => 'Label', 'caption' => '⚠️ Für die Bilanz fehlt das Logging dieser Variablen:');
+            $items = array_merge($items, $this->archivingMissingLines($missing));
+            $items[] = array('type' => 'Button', 'caption' => '📈 Logging für diese Variablen einschalten', 'onClick' => 'echo EMS_EnableArchiving($id);');
+        }
         $items[] = array('type' => 'Button', 'caption' => '🔄 Letzte 30 Tage neu rechnen', 'onClick' => 'echo EMS_RecomputeSelfBalance($id);');
         return array('type' => 'ExpansionPanel', 'caption' => '📊 EMS-Bilanz (gespart oder verloren?)', 'expanded' => false, 'items' => $items);
     }
@@ -6692,10 +6750,10 @@ class EMS extends IPSModule
         $archiveId = $this->getArchiveInstanceId();
         if ($archiveId <= 0 || !function_exists('AC_SetLoggingStatus')) { return 'Kein Archiv gefunden, Logging wurde nicht eingeschaltet.'; }
         $missing = $this->archivingMissing();
-        if (empty($missing)) { return 'Das Logging ist für alle Variablen des Tagesplans schon eingeschaltet.'; }
+        if (empty($missing)) { return 'Das Logging ist für alle benötigten Variablen schon eingeschaltet.'; }
         foreach ($missing as $varId) { AC_SetLoggingStatus($archiveId, $varId, true); }
         IPS_ApplyChanges($archiveId);
-        return sprintf('Logging für %d Variablen eingeschaltet. Der Tagesplan zeigt Ist-Werte ab jetzt.', count($missing));
+        return sprintf('Logging für %d Variablen eingeschaltet. Tagesplan und EMS-Bilanz haben Ist-Werte ab jetzt; die Bilanz rechnet ab dem ersten vollständigen Tag.', count($missing));
     }
 
     private function ensureDayPlanEvent()

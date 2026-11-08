@@ -57,6 +57,7 @@ function IPS_VariableExists($id)  { return isset($GLOBALS['VAR'][$id]); }
 function IPS_GetObject($id)       { return $GLOBALS['OBJ'][$id] ?? null; }
 function IPS_GetVariable($id)     { return $GLOBALS['VAR'][$id] ?? false; }
 function IPS_GetName($id)         { return $GLOBALS['OBJ'][$id]['ObjectName'] ?? ('#' . $id); }
+function IPS_GetLocation($id)     { return IPS_GetName($id); }
 function IPS_SetName($id, $n)     { $GLOBALS['OBJ'][$id]['ObjectName'] = $n; }
 function IPS_SetParent($id, $p)   { $GLOBALS['OBJ'][$id]['ParentID'] = $p; }
 function IPS_SetIdent($id, $i)    { $GLOBALS['OBJ'][$id]['ObjectIdent'] = $i; }
@@ -853,12 +854,45 @@ $vArch = vari('Hauslast', EMS_IID, 'EMS_HousePower', 0.0, 2);
 $src = file_get_contents(defined('EMS_TEST_MODULE_PATH') ? EMS_TEST_MODULE_PATH : __DIR__ . '/../EMS/module.php');
 check('ApplyChanges schaltet das Logging nicht mehr selbst ein: kein ensureArchiving-Aufruf', strpos($src, 'ensureArchiving') === false);
 if (call($ems, 'getArchiveInstanceId') > 0) {
-    check('Variable ohne Logging: Panel mit Knopf erscheint', (call($ems, 'archivingPanel')['items'][1]['onClick'] ?? '') === 'echo EMS_EnableArchiving($id);');
+    check('Variable ohne Logging: Panel mit Knopf erscheint', (($ap = call($ems, 'archivingPanel')) !== null && (end($ap['items'])['onClick'] ?? '') === 'echo EMS_EnableArchiving($id);' && $ap['expanded'] === true));
     $tx = call($ems, 'EnableArchiving');
     check('Knopf schaltet ein und meldet Klartext', !empty($GLOBALS['LOGGED'][call($ems, 'findChildVariableIdByIdent', [EMS_IID, 'EMS_HousePower'])]) && strpos($tx, 'eingeschaltet') !== false, $tx);
     check('alles geloggt: Panel verschwindet', call($ems, 'archivingMissing') === [] || call($ems, 'archivingPanel') === null);
+    // 0.97.4: Wechselrichter-Messpunkte der Bilanz gehoeren dazu (Befund Paul 08.11.2026)
+    $gI = vari('Netz', 0, 'g', 0.0, 2); $pI = vari('PV', 0, 'p', 0.0, 2); $bI = vari('Akku', 0, 'b', 0.0, 2);
+    attr('PartnerCache', json_encode(['inverterhub' => [['instanceID' => IHUB_IID, 'controlAuthority' => 'none', 'controllable' => false, 'gridPowerID' => $gI, 'pvPowerID' => $pI, 'batPowerID' => $bI, 'socID' => 0]]]));
+    $GLOBALS['LOGGED'][$pI] = true;
+    $mi = call($ems, 'archivingMissing');
+    check('0.97.4: fehlendes Logging der WR-Messpunkte Netz und Akku wird erkannt, geloggte PV nicht', in_array($gI, $mi, true) && in_array($bI, $mi, true) && !in_array($pI, $mi, true), json_encode($mi));
+    $sbp = json_encode(call($ems, 'selfBalancePanel'), JSON_UNESCAPED_UNICODE);
+    check('0.97.4: EMS-Bilanz zeigt den Logging-Knopf und nennt die Variablen', strpos($sbp, 'EMS_EnableArchiving') !== false && strpos($sbp, '#' . $gI) !== false);
+    call($ems, 'EnableArchiving');
+    check('0.97.4: Knopf schaltet auch die WR-Messpunkte ein, danach kein Knopf mehr in der Bilanz', !empty($GLOBALS['LOGGED'][$gI]) && !empty($GLOBALS['LOGGED'][$bI]) && strpos(json_encode(call($ems, 'selfBalancePanel')), 'EMS_EnableArchiving') === false);
+    attr('PartnerCache', '');
 } else { check('Testvoraussetzung: Archiv im Mock gefunden', false); }
 unset($GLOBALS['INSTMOD'][$archMock]);
+
+echo "\n8d3) Formular: Aufbau (SUITE.md Punkt 3a, 0.97.4)\n";
+$ems = freshEms(); prop('EMS_Risk_Acknowledged', true);
+$caps = function () use ($ems) { return array_map(function ($e) { return ($e['caption'] ?? '') . (isset($e['visible']) && $e['visible'] === false ? '#hidden' : '') . (isset($e['expanded']) && $e['expanded'] ? '#open' : ''); }, json_decode($ems->GetConfigurationForm(), true)['elements']); };
+$c0 = $caps();
+$iA = array_search('🪟  Formular: Aufbau', array_map(function ($c) { return preg_replace('/#.*$/', '', $c); }, $c0));
+$iAll = null; foreach ($c0 as $i => $c) { if (strpos($c, '🔧 Allgemein') === 0) { $iAll = $i; } }
+$iNot = null; foreach ($c0 as $i => $c) { if (strpos($c, '🔔 Benachrichtigungen') === 0) { $iNot = $i; } }
+check('Aufbau-Panel steht hinter allen Fachpanels (auch Benachrichtigungen) und ist zugeklappt', $iA !== false && $iNot !== null && $iA === $iNot + 1 && strpos($c0[$iA], '#open') === false, json_encode($c0, JSON_UNESCAPED_UNICODE));
+prop('FormLayout', json_encode([['Key' => 'general', 'Pos' => 5], ['Key' => 'notify', 'Pos' => 1, 'Opened' => true], ['Key' => 'ai', 'Hidden' => true], ['Key' => 'unbekannt', 'Pos' => 1]]));
+$c1 = $caps();
+$firstFach = null; foreach ($c1 as $c) { foreach (array_keys((new ReflectionClass('EMS'))->getConstant('FORM_LAYOUT_PANELS')) as $pre) { if (strpos($c, $pre) === 0) { $firstFach = $c; break 2; } } }
+check('Position 1 + Aufgeklappt: Benachrichtigungen ganz vorn unter den Fachpanels und offen', $firstFach !== null && strpos($firstFach, '🔔 Benachrichtigungen') === 0 && strpos($firstFach, '#open') !== false, (string)$firstFach);
+$ki = array_values(array_filter($c1, function ($c) { return strpos($c, '🤖 KI-Assistent') === 0; }));
+check('Ausgeblendet: KI-Panel bleibt im Formular, aber visible=false; Aufbau-Caption zaehlt es', count($ki) === 1 && strpos($ki[0], '#hidden') !== false && count(array_filter($c1, function ($c) { return strpos($c, '(1 ausgeblendet)') !== false; })) === 1, json_encode($ki, JSON_UNESCAPED_UNICODE));
+check('Unbekannter Schluessel stoert nicht, feste Panels oben bleiben oben (Doku vor Allgemein)', array_search('📖 Dokumentation & Hilfe', array_map(function ($c) { return preg_replace('/#.*$/', '', $c); }, $c1)) < $iAll);
+$GLOBALS['FORMFIELD'] = [];
+$tx = $ems->ResetFormLayout();
+$rows = json_decode($GLOBALS['FORMFIELD']['FormLayout']['values'] ?? '[]', true);
+check('Reset: alle 15 Fachpanels in Standardreihenfolge ohne Haken, Klartext mit Uebernehmen', count($rows) === 15 && $rows[0]['Key'] === 'general' && $rows[14]['Key'] === 'notify' && empty($rows[3]['Hidden']) && strpos($tx, 'Übernehmen') !== false, json_encode($rows));
+prop('FormLayout', '[]');
+
 
 echo "\n8e) Andere Nutzer, andere Konstellationen: Netzladen ohne feste Einspeiseverguetung\n";
 $ems = freshEms();
@@ -886,7 +920,7 @@ $nb = call($ems, 'newsBanner');
 check('News: gesehen 0.97.2 -> nur 0.97.4 und 0.97.3, neueste oben', $nb !== null && $nb['caption'] === '🆕 Neu bis Version 0.97.4' && count(array_filter($labels($nb), function ($c) { return strpos($c, 'Version ') === 0; })) === 2 && strpos($labels($nb)[0], 'Version 0.97.4') === 0, json_encode($labels($nb), JSON_UNESCAPED_UNICODE));
 attr('SeenNews', '0.97.3');
 $nb = call($ems, 'newsBanner');
-check('News: gesehen 0.97.3 -> genau eine Zeile, ohne Versionsueberschrift', $nb !== null && count($labels($nb)) === 1, json_encode($labels($nb), JSON_UNESCAPED_UNICODE));
+check('News: gesehen 0.97.3 -> nur die drei Zeilen von 0.97.4, ohne Versionsueberschrift', $nb !== null && count($labels($nb)) === 3 && strpos($labels($nb)[0], 'Version ') !== 0, json_encode($labels($nb), JSON_UNESCAPED_UNICODE));
 attr('SeenNews', '0.97.4-beta.1');
 check('News: gesehen 0.97.4-beta.1 (Beta-Zusatz) -> nichts Neues', call($ems, 'newsBanner') === null);
 attr('SeenNews', '');
