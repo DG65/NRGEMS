@@ -721,6 +721,15 @@
                 },
                 {
                     "type": "NumberSpinner",
+                    "name": "NETZLADUNG_Sicherheit_Pct",
+                    "caption": "Safety factor on the expected replacement price (%): grid charging only if purchase price ≤ efficiency² × factor × expected later price (minus wear and minimum margin); holding only below efficiency × factor × expected price. 90 = 10 % reserve for forecast errors and losses not in the data sheet, 100 = off. Only for the reference \"replacement import price\"",
+                    "digits": 0,
+                    "minimum": 50,
+                    "maximum": 100,
+                    "suffix": " %"
+                },
+                {
+                    "type": "NumberSpinner",
                     "name": "BAT_Conv_Eff_Pct",
                     "caption": "Efficiency per AC/DC conversion (%): 95 = 5 % loss. Applies when charging from the grid and discharging into the house; charging from PV in a DC-coupled hybrid inverter counts without loss",
                     "digits": 1,

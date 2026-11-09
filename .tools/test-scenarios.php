@@ -1025,7 +1025,13 @@ check('Verguetung unbekannt, flacher Tag (30 ct): keine Arbitrage', call($ems, '
 $rp = call($ems, 'replacementPriceEur', [$tagU, 0]);
 check('Ersatz-Bezugspreis = Mittel des teuersten Viertels (16 Slots 36 ct + 8 Slots 30 ct = 34 ct)', abs($rp - 0.34) < 0.001, (string)$rp);
 $ctxU = ['capKwh' => 40.0, 'chargeKw' => 10.0, 'maxW' => 20000, 'socTargetNight' => 100.0, 'feedTariff' => 0.0, 'refMode' => 1, 'replacePrice' => 0.36, 'spread' => 0.03, 'cycleCost' => 0.0];
-check('Referenz 1: Grenze = 36 ct x 0,9025 - 3 ct Mindestspanne = 29,49 ct', abs(call($ems, 'gridChargeLimitEur', [$ctxU]) - 0.29490) < 0.0005);
+check('Referenz 1: Grenze = 36 ct x 0,9025 x 0,9 Sicherheit - 3 ct Mindestspanne = 26,24 ct (0.99.3)', abs(call($ems, 'gridChargeLimitEur', [$ctxU]) - 0.26241) < 0.0005);
+prop('NETZLADUNG_Sicherheit_Pct', 100.0);
+check('Sicherheitsfaktor 100 % = alte Grenze 29,49 ct', abs(call($ems, 'gridChargeLimitEur', [$ctxU]) - 0.29490) < 0.0005);
+prop('NETZLADUNG_Sicherheit_Pct', 10.0);
+check('Sicherheitsfaktor unter 50 % wird auf 50 % begrenzt', abs(call($ems, 'gridChargeLimitEur', [$ctxU]) - (0.36 * 0.9025 * 0.5 - 0.03)) < 0.0005);
+prop('NETZLADUNG_Sicherheit_Pct', 90.0);
+check('Referenz 0 (Verguetung) bleibt ohne Sicherheitsfaktor', abs(call($ems, 'gridChargeLimitEur', [['feedTariff' => 0.08, 'refMode' => 0]]) - 0.076) < 0.0005);
 check('Referenz 1 ohne Preisvergleichswert: kein Netzladen (Grenze unerreichbar)', call($ems, 'gridChargeLimitEur', [array_merge($ctxU, ['replacePrice' => null])]) < -1e9);
 prop('PLAN_NightGrid_Active', true); prop('PLAN_NightGrid_EndHour', 6); prop('PLAN_NightGrid_ExtendHours', 0);
 $nwU = call($ems, 'nightWindowPlan', [$tagU, 0, 0.0, $ctxU]);
@@ -1033,7 +1039,26 @@ check('Nutzer ohne Verguetung laedt trotzdem in den 12-ct-Slots nach (kein Sperr
 $slU = null; for ($i = 0; $i < $nwU['end']; $i++) { if (!isset($nwU['charge'][$i])) { $slU = $i; break; } }
 check('Referenz Ersatzpreis: es gibt einen Nicht-Ladeslot im Fenster (Testvoraussetzung)', $slU !== null, json_encode($nwU));
 check('Referenz Ersatzpreis (Nutzer ohne Verguetung): uebriger Slot im Fenster (12 ct < 36 ct x 0,95 - 3 ct = 31,2 ct) -> Akku halten, Haus aus dem Netz, Begruendung nennt den Ersatzpreis', ($hU = call($ems, 'nightWindowSlot', [$slU, 0.12, 60.0, $nwU, $ctxU])) !== null && $hU['plan']['op'] === EMS_OP_HOLD && $hU['plan']['gw'] === GW_MODE_STANDBY && strpos($hU['plan']['reason'], 'Ersatzpreis') !== false, json_encode($hU['plan'] ?? null));
-check('Referenz Ersatzpreis: Grenze 31,2 ct (31 ct noch halten, 32 ct schon Akku)', call($ems, 'nightWindowSlot', [$slU, 0.31, 60.0, $nwU, $ctxU]) !== null && call($ems, 'nightWindowSlot', [$slU, 0.32, 60.0, $nwU, $ctxU]) === null);
+check('Referenz Ersatzpreis: Halte-Grenze 36 x 0,95 x 0,9 - 3 = 27,78 ct (27 ct noch halten, 28 ct schon Akku)', call($ems, 'nightWindowSlot', [$slU, 0.27, 60.0, $nwU, $ctxU]) !== null && call($ems, 'nightWindowSlot', [$slU, 0.28, 60.0, $nwU, $ctxU]) === null);
+$hr = call($ems, 'nightWindowSlot', [$slU, 0.27, 60.0, $nwU, $ctxU]);
+check('Halte-Begruendung nennt Faktor und Ersatzpreis', strpos($hr['plan']['reason'], '0.85 ×') !== false && strpos($hr['plan']['reason'], '36.00ct') !== false, $hr['plan']['reason']);
+if (method_exists('EMS', 'gridChargeSkipNote')) {
+// 0.99.3: Netzladen ausgelassen -- Hinweis mit Grund (Befund 03./07.11.: 44 ct geladen bei 46 ct Ersatzwert)
+$ctxS = array_merge($ctxU, ['replacePrice' => 0.46, 'socTargetNight' => 100.0]);
+$nwS = ['end' => 24, 'charge' => [], 'n' => 0, 'cand' => 0];
+$note = call($ems, 'gridChargeSkipNote', [4, 0.44, 50.0, $nwS, $ctxS]);
+check('Netzladen bei 44 ct gegen 46 ct ausgelassen, Hinweis nennt beide Werte und die Grenze', strpos($note, '44.00ct') !== false && strpos($note, '34.36ct') !== false && strpos($note, '46.00ct') !== false, $note);
+check('Grenzfall: knapp unter der Grenze kein Hinweis (Laden waere erlaubt)', call($ems, 'gridChargeSkipNote', [4, 0.3435, 50.0, $nwS, $ctxS]) === '');
+check('Grenzfall: genau auf der Grenze ausgelassen', call($ems, 'gridChargeSkipNote', [4, 0.46 * 0.9025 * 0.9 - 0.03, 50.0, $nwS, $ctxS]) !== '');
+check('Kein Hinweis, wenn der Akku das Nachtziel schon hat', call($ems, 'gridChargeSkipNote', [4, 0.44, 99.8, $nwS, $ctxS]) === '');
+check('Kein Hinweis ausserhalb des Nachtfensters', call($ems, 'gridChargeSkipNote', [30, 0.44, 50.0, $nwS, $ctxS]) === '');
+check('Kein Hinweis bei Referenz Verguetung', call($ems, 'gridChargeSkipNote', [4, 0.44, 50.0, $nwS, array_merge($ctxS, ['refMode' => 0])]) === '');
+$wn = call($ems, 'withGridChargeSkipNote', [['plan' => ['op' => EMS_OP_AUTO, 'reason' => 'x']], 4, 0.44, 50.0, $nwS, $ctxS]);
+check('Hinweis wird an die Begruendung angehaengt', strpos($wn['plan']['reason'], 'x · ') === 0, $wn['plan']['reason']);
+$hS = call($ems, 'nightWindowSlot', [4, 0.40, 50.0, $nwS, $ctxS]);
+check('Halten ausgelassen ueber der Schwelle (40 ct > 46 x 0,855 - 3 = 36,33 ct)', $hS === null, json_encode($hS));
+check('Halten unter der Schwelle (36 ct)', call($ems, 'nightWindowSlot', [4, 0.36, 50.0, $nwS, $ctxS]) !== null);
+}
 check('Referenz Ersatzpreis ohne Preisvergleichswert: kein Halten', call($ems, 'nightWindowSlot', [$slU, 0.12, 60.0, $nwU, array_merge($ctxU, ['replacePrice' => null])]) === null);
 // 0.97.4: "Was ist Neu" nur seit der zuletzt bestaetigten Version (SUITE.md NEWS_VERSIONS)
 $labels = function ($panel) { return $panel === null ? array() : array_values(array_filter(array_map(function ($i) { return $i['type'] === 'Label' ? $i['caption'] : null; }, $panel['items']))); };
@@ -1185,7 +1210,7 @@ prop('BAT_Capacity_kWh', 40.0); prop('BAT_Price_EUR', 9998.0); prop('BAT_Cycles'
 $pW = []; for ($i = 0; $i < 96; $i++) { $pW[] = 0.30 + $i * (0.25 / 95); }
 prop('NETZLADUNG_Referenz', 1);
 $info = []; $thW = call($ems, 'priceThresholdsCore', [$pW, &$info]);
-check('Winter 30-55 ct, Referenz Ersatzpreis: Ladeschwelle bleibt unteres Viertel (wirtschaftliche Grenze ~39 ct lockert nicht)', abs($thW['charge'] - $pW[(int)round(0.25 * 95)]) < 1e-9 && $info['charge'] === 'auto_low', json_encode([$thW, $info]));
+check('Winter 30-55 ct, Referenz Ersatzpreis: wirtschaftliche Grenze (~36 ct mit Sicherheitsfaktor 0,9) liegt jetzt unter dem unteren Viertel und gilt (0.99.3)', $thW['charge'] < $pW[(int)round(0.25 * 95)] && $info['charge'] === 'auto_econ_replace', json_encode([$thW, $info]));
 // b) enger Verlauf 30..34 ct: Verschleiss 3,1 ct + Mindestspanne 3 ct + Wandlungsverluste machen Laden unwirtschaftlich
 $pN = []; for ($i = 0; $i < 96; $i++) { $pN[] = 0.30 + $i * (0.04 / 95); }
 $info = []; $thN = call($ems, 'priceThresholdsCore', [$pN, &$info]);
@@ -3756,6 +3781,13 @@ check('Leerer Akku: Automatik kauft wie Ist (1x0,40 + 1x0,60 = 1,00)', abs($r2['
 // PV-Ueberschuss: Automatik speichert ohne Wandlungsverlust, Ist hat eingespeist
 $r3 = call($ems, 'selfBalanceCompute', [[8000, 0], [0, 0], [4000, -4000], [0.30, 0.50], 10.0, $par]);
 check('Ueberschuss wird in der Automatik gespeichert und spaeter genutzt (guenstiger als Ist)', $r3['auto'] < $r3['ist'], json_encode($r3));
+// 0.99.3: PV -> Akku traegt in der Automatik denselben Wandlungsverlust wie das Entladen
+$r4 = call($ems, 'selfBalanceCompute', [[8000, 0], [0, 0], [4000, -4000], [0.30, 0.50], 10.0, $par]);
+// Slot 0: 1 kWh Ueberschuss -> 0,95 kWh im Akku; Slot 1: 1 kWh Bedarf -> Akku liefert 0,95 x 0,95 = 0,9025, Rest 0,0975 kWh x 0,50
+check('Automatik zahlt den PV->Akku-Verlust (Rest 0,0975 kWh x 0,50 = 0,05 EUR statt 0,025)', abs($r4['auto'] - 0.04875) < 0.006, json_encode($r4));
+check('Ladestand der Automatik: 4 kWh + 0,95 - 0,95 = 4 kWh (10 %)', abs($r4['endSocAuto'] - 10.0) < 0.1, json_encode($r4));
+$r5 = call($ems, 'selfBalanceCompute', [[8000], [0], [4000], [0.30], 99.0, $par]);
+check('Grenzfall voller Akku: Automatik speist den Rest ein, ueberlaedt nicht', $r5['endSocAuto'] <= 100.0 && $r5['auto'] < 0, json_encode($r5));
 check('Ist rechnet Einspeisung mit Verguetung (1 kWh x 0,1836 Gutschrift)', abs($r3['ist'] - (0.50 - 0.1836)) < 0.01, json_encode($r3));
 check('Summe ueber Tage: nur Tage mit Werten, hoechstens N', call($ems, 'selfBalanceSum', [['2026-11-02' => ['ist' => 2, 'auto' => 1], '2026-11-01' => ['error' => 'x'], '2026-10-31' => ['ist' => 3, 'auto' => 5]], 30]) === ['ist' => 5.0, 'auto' => 6.0, 'days' => 2, 'fair' => 0.0, 'fairDays' => 0, 'reward' => 0.0]);
 
@@ -3770,14 +3802,21 @@ check('Ueber dem Tagesziel: Automatik laedt den Ueberschuss weiter (SOC steigt u
 $rF = call($ems, 'simulateDaySlot', [48, 0.44, 5000.0, 100.0, [], $ctxT, 0.0]);
 check('Voller Akku: Ueberschuss wird eingespeist, SOC bleibt 100', abs($rF['soc'] - 100.0) < 0.01 && strpos($rF['plan']['reason'], 'eingespeist') !== false, json_encode($rF));
 $f0 = call($ems, 'forecastFactors');
-check('Ohne Lerndaten vorsichtige Vorgaben (PV x0,7, Last x1,15)', $f0['pv'] == 0.7 && $f0['load'] == 1.15 && $f0['learned'] === false, json_encode($f0));
+check('Ohne Lerndaten: PV x1,0 (p10 ist schon vorsichtig, 0.99.3), Last x1,15', $f0['pv'] == 1.0 && $f0['load'] == 1.15 && $f0['learned'] === false, json_encode($f0));
 $GLOBALS['ATTR'][EMS_IID]['FcLearn'] = json_encode([
   '2026-11-06' => ['pvFc' => 10, 'loadFc' => 30, 'pvAct' => 4, 'loadAct' => 36],
   '2026-11-05' => ['pvFc' => 10, 'loadFc' => 30, 'pvAct' => 5, 'loadAct' => 33],
   '2026-11-04' => ['pvFc' => 10, 'loadFc' => 30, 'pvAct' => 6, 'loadAct' => 36],
   '2026-11-07' => ['pvFc' => 10, 'loadFc' => 30]]);
 $f1 = call($ems, 'forecastFactors');
-check('Gelernt aus 3 vollstaendigen Tagen: PV 15/30 = 0,5, Last 105/90 = 1,167', $f1['learned'] === true && abs($f1['pv'] - 0.5) < 0.001 && abs($f1['load'] - 1.167) < 0.001 && $f1['days'] === 3, json_encode($f1));
+check('Gelernt aus 3 Tagen: Last 105/90 = 1,167, PV-Faktor erst ab 7 Tagen (bleibt 1,0)', $f1['learned'] === true && abs($f1['pv'] - 1.0) < 0.001 && abs($f1['load'] - 1.167) < 0.001 && $f1['days'] === 3, json_encode($f1));
+$fl7 = [];
+for ($dd = 1; $dd <= 7; $dd++) { $fl7[sprintf('2026-10-%02d', $dd)] = ['pvFc' => 10, 'loadFc' => 30, 'pvAct' => 5, 'loadAct' => 30]; }
+$fcKeep = $GLOBALS['ATTR'][EMS_IID]['FcLearn'];
+$GLOBALS['ATTR'][EMS_IID]['FcLearn'] = json_encode($fl7);
+$f7 = call($ems, 'forecastFactors');
+check('Ab 7 gelernten Tagen wirkt der PV-Faktor (35/70 = 0,5)', abs($f7['pv'] - 0.5) < 0.001 && $f7['days'] === 7, json_encode($f7));
+$GLOBALS['ATTR'][EMS_IID]['FcLearn'] = $fcKeep;
 call($ems, 'forecastLearnActual', ['2026-11-07', 3.0, 40.0]);
 $fl = json_decode($GLOBALS['ATTR'][EMS_IID]['FcLearn'], true);
 check('Ist-Werte werden zum Tag mit Prognose eingetragen', $fl['2026-11-07']['pvAct'] == 3.0 && $fl['2026-11-07']['loadAct'] == 40.0);

@@ -430,6 +430,7 @@ class EMS extends IPSModule
         $this->RegisterPropertyFloat('ANL_Verguetung_ct',       0.0);  // 0 = automatisch (Variable/Tabelle)
         $this->RegisterPropertyBoolean('ANL_Verguetung_Keine',  false); // ausdruecklich KEINE Verguetung (0 ct), z. B. Volleigenverbrauch
         $this->RegisterPropertyInteger('NETZLADUNG_Referenz',   0);    // 0 = Einspeiseverguetung, 1 = Ersatz-Bezugspreis (Arbitrage im Haus)
+        $this->RegisterPropertyFloat('NETZLADUNG_Sicherheit_Pct', 90.0); // Sicherheitsfaktor auf den erwarteten Ersatzwert (Referenz 1), 100 = aus
         $this->RegisterPropertyInteger('ANL_Einspeisemanagement', 0);  // 0 unbekannt, 1 70-%-Kappung, 2 Rundsteuerempfaenger, 3 Steuerbox, 4 keines
         $this->RegisterPropertyBoolean('ANL_iMSys',             false);
         $this->RegisterPropertyBoolean('ANL_Steuerbox',         false);
@@ -3509,7 +3510,7 @@ class EMS extends IPSModule
         if (!$this->ReadPropertyBoolean('PLAN_Bedarf_Aktiv')) { return array(); }
         $rp = $this->replacementPriceEur(array_values($prices), $fromSlot);
         if ($rp === null) { return array(); }
-        $limit = $rp * $this->convEff() * $this->convEff() - (float)($ctx['cycleCost'] ?? 0.0) - (float)($ctx['spread'] ?? 0.0);
+        $limit = $rp * $this->gridChargeValueFactor() - (float)($ctx['cycleCost'] ?? 0.0) - (float)($ctx['spread'] ?? 0.0);
         $base  = (float)$ctx['socMin'] + (float)$ctx['socReserve'] + (float)$this->ReadPropertyInteger('BAT_SOC_Safety_Margin_Pct');
         $minSoc = (float)$this->ReadPropertyInteger('PLAN_Abend_MinSoc');
         $anchor = ($minSoc > 0.0 && $fromSlot < max(1, min(23, $this->ReadPropertyInteger('PLAN_Abend_Hour')) * 4))
@@ -4026,9 +4027,12 @@ class EMS extends IPSModule
         // von Entlade-/Ladezyklen für diese Energie kommt als Vorteil obendrauf und wird nicht abgezogen.
         if (($ctx['refMode'] ?? 0) === 1) {
             if (!isset($ctx['replacePrice']) || $ctx['replacePrice'] === null) { return null; }
-            $holdBelow = $ctx['replacePrice'] * $this->convEff() - ($ctx['spread'] ?? 0.0);
+            // 0.99.3: x Sicherheitsfaktor (Selbstbilanz 30 Tage: Halten bei 38-43 ct kostete Geld). Physikalisch heben sich die
+            // Entladeverluste beim Halten auf (die kWh wird jetzt oder spaeter einmal entladen); Wirkungsgrad und Sicherheitsfaktor
+            // decken die Unsicherheit ab, ob die gehaltene Energie spaeter wirklich teuren Bezug ersetzt (Ruheverlust, PV-Verdraengung).
+            $holdBelow = $ctx['replacePrice'] * $this->convEff() * $this->chargeSafety() - ($ctx['spread'] ?? 0.0);
             if ($price >= $holdBelow) { return null; }
-            $why = sprintf($this->t('%.2fct < %.2fct (expected replacement price %.2fct minus %.0f %% loss and minimum spread)'), $price * 100, $holdBelow * 100, $ctx['replacePrice'] * 100, (1 - $this->convEff()) * 100);
+            $why = sprintf($this->t('%.2fct < %.2fct (%.2f × expected replacement price %.2fct: efficiency and safety factor, minus minimum spread)'), $price * 100, $holdBelow * 100, $this->convEff() * $this->chargeSafety(), $ctx['replacePrice'] * 100);
         } else {
             $holdBelow = $ctx['feedTariff'] * $this->convEff();
             if ($price >= $holdBelow) { return null; }
@@ -4178,13 +4182,57 @@ class EMS extends IPSModule
         return max(0.70, min(1.0, (float)$this->ReadPropertyFloat('BAT_Conv_Eff_Pct') / 100.0));
     }
 
+    /**
+     * Sicherheitsfaktor auf den ERWARTETEN Ersatzwert (Einstellung NETZLADUNG_Sicherheit_Pct, 50-100 %, Standard 90 %).
+     * Der Ersatzpreis ist eine Erwartung (teuerstes Viertel der naechsten 24 h) und der eingetragene Wirkungsgrad meist ein
+     * Datenblattwert ohne BMS-, Teillast- und Ruheverluste. 90 % deckt beides fuer jede Anlage ab: bei 95 % je Wandlung
+     * ergibt sich ein wirksamer Rundwirkungsgrad von 0,95 x 0,95 x 0,9 = 0,81, das liegt im ueblichen gemessenen Bereich
+     * (etwa 0,75-0,85) von Heimspeichern im AC-Betrieb. Gilt nur fuer Referenz 1 (Ersatz-Bezugspreis); die
+     * Einspeiseverguetung (Referenz 0) ist ein fester, bekannter Wert.
+     */
+    private function chargeSafety(): float
+    {
+        return max(0.50, min(1.0, (float)$this->ReadPropertyFloat('NETZLADUNG_Sicherheit_Pct') / 100.0));
+    }
+
+    /** Wert einer aus dem Netz geladenen kWh je kWh Ersatzpreis: Hin- und Rueckwandlung x Sicherheitsfaktor. */
+    private function gridChargeValueFactor(): float
+    {
+        return $this->convEff() * $this->convEff() * $this->chargeSafety();
+    }
+
+    /**
+     * Klartext, wenn im Nachtfenster das Netzladen am Preis scheitert (nur Referenz 1, Akku unter dem Nachtziel).
+     * '' = kein Hinweis.
+     */
+    private function gridChargeSkipNote(int $slot, $price, $soc, ?array $nw, array $ctx): string
+    {
+        if ($nw === null || $price === null || $slot >= (int)$nw['end'] || isset($nw['charge'][$slot])) { return ''; }
+        if (($ctx['refMode'] ?? 0) !== 1 || !isset($ctx['replacePrice']) || $ctx['replacePrice'] === null) { return ''; }
+        if ((float)$soc >= (float)$ctx['socTargetNight'] - 0.5) { return ''; }
+        $lim = $this->gridChargeLimitEur($ctx);
+        if ((float)$price < $lim) { return ''; }
+        return sprintf($this->t('grid charging skipped: %.2fct ≥ %.2fct (%.2f × expected value %.2fct, minus cycle costs and minimum spread)'),
+            (float)$price * 100, $lim * 100, $this->gridChargeValueFactor(), $ctx['replacePrice'] * 100);
+    }
+
+    /** Haengt den Hinweis gridChargeSkipNote() an den Begruendungstext eines Plan-Slots. */
+    private function withGridChargeSkipNote(array $result, int $slot, $price, $soc, ?array $nw, array $ctx): array
+    {
+        $note = $this->gridChargeSkipNote($slot, $price, $soc, $nw, $ctx);
+        if ($note !== '' && isset($result['plan']['reason']) && ($result['plan']['op'] ?? null) !== EMS_OP_NET_CHARGE) {
+            $result['plan']['reason'] .= ' · ' . $note;
+        }
+        return $result;
+    }
+
     private function gridChargeLimitEur(array $ctx): float
     {
         if (($ctx['refMode'] ?? 0) === 1) {
             // Arbitrage im Haus: gekaufter Strom ersetzt spaeter den teuren Bezug; Hin- und Rueckwandlung (0,95 x 0,95),
             // Verschleiss und Mindestspanne muessen sich lohnen. Ohne Preisvergleichswert kein Netzladen.
             if (!isset($ctx['replacePrice']) || $ctx['replacePrice'] === null) { return -PHP_FLOAT_MAX; }
-            return $ctx['replacePrice'] * $this->convEff() * $this->convEff() - ($ctx['cycleCost'] ?? 0.0) - ($ctx['spread'] ?? 0.0);
+            return $ctx['replacePrice'] * $this->gridChargeValueFactor() - ($ctx['cycleCost'] ?? 0.0) - ($ctx['spread'] ?? 0.0);
         }
         if (($ctx['feedTariff'] ?? 0) <= 0) { return PHP_FLOAT_MAX; }
         return $ctx['feedTariff'] * $this->convEff() - ($ctx['cycleCost'] ?? 0.0);
@@ -5828,6 +5876,7 @@ class EMS extends IPSModule
                     ? $this->simulateDaySlot($slot, $price, $pvW, $soc, $cheapRank, $ctx, $expensiveReserve[$slot] ?? 0.0)
                     : $this->simulateAutomatikSlot($slot, $pvW, $price, $soc, $ctx);
             }
+            $result = $this->withGridChargeSkipNote($result, $slot, $price, $soc, $nwToday, $ctxNwToday);
             $plan[$slot] = $result['plan'];
             $soc = $result['soc'];
         }
@@ -5903,6 +5952,7 @@ class EMS extends IPSModule
                     ? $this->simulateDaySlot($slot, $price, $pvW, $soc, $tomorrowCheapRank, $ctxTomorrow, $tomorrowExpensiveReserve[$slot] ?? 0.0)
                     : $this->simulateAutomatikSlot($slot, $pvW, $price, $soc, $ctxTomorrow);
             }
+            $result = $this->withGridChargeSkipNote($result, $slot, $price, $soc, $nwTomorrow, $ctxNwTomorrow);
             $tomorrowPlan[$slot] = $result['plan'];
             $soc = $result['soc'];
         }
@@ -6643,8 +6693,11 @@ class EMS extends IPSModule
             if ($b > 300.0 && $g < -0.05) { $cat['batExportKwh'] += min(-$g, $b / 4000.0); } // Akku entlaedt ins Netz
             if ($b > 0.0) { $cat['dischargeKwh'] += $b / 4000.0; $cat['dischargeValueEur'] += $b / 4000.0 * $pk; }
             $need = $load - $pv;
-            if ($need < 0) {                                                        // Ueberschuss -> Akku (DC, ohne Wandlung)
-                $ch = min(-$need, $p['chKwh'], $cap - $e); $e += $ch; $need += $ch;
+            if ($need < 0) {                                                        // Ueberschuss -> Akku (eine Wandlung, 0.99.3)
+                // 0.99.3: Das Ist traegt alle realen Speicherverluste (Zelle, DC/DC, BMS) -- sie stecken im Ladestand, nicht in der
+                // Akkuleistung, aus der die Hauslast abgeleitet wird. Die Automatik bekommt deshalb denselben Verlust je Wandlung beim
+                // Laden wie beim Entladen (Rundwirkungsgrad eta x eta wie in der Planung); vorher lud sie PV verlustfrei ein.
+                $ch = min(-$need, $p['chKwh'], max(0.0, $cap - $e) / $eta); $e += $ch * $eta; $need += $ch;
             } else {                                                                // Bedarf -> Akku (eine Wandlung)
                 $dis = max(0.0, min($need / $eta, $p['disKwh'], $e - $eMin)); $e -= $dis; $need -= $dis * $eta;
             }
@@ -6855,8 +6908,10 @@ class EMS extends IPSModule
             $pvF += $r['pvFc']; $pvA += $r['pvAct']; $ldF += $r['loadFc']; $ldA += $r['loadAct'];
             if (++$n >= 7) { break; }
         }
-        if ($n < 3 || $ldF <= 0) { return array('pv' => 0.7, 'load' => 1.15, 'days' => $n, 'learned' => false); }
-        $pv = $pvF > 0.5 ? $pvA / $pvF : 1.0;
+        // 0.99.3: Der PV-Faktor wirkt erst ab 7 gelernten Tagen (vorher 1,0: die p10-Prognose ist schon vorsichtig). Ein zu
+        // kleiner PV-Faktor laesst im Nachtfenster zu wenig Platz fuer die Folgetags-PV (Netzladen verdraengte PV, 22./27.-29.10.).
+        if ($n < 3 || $ldF <= 0) { return array('pv' => 1.0, 'load' => 1.15, 'days' => $n, 'learned' => false); }
+        $pv = ($n >= 7 && $pvF > 0.5) ? $pvA / $pvF : 1.0;
         return array('pv' => round(max(0.2, min(1.3, $pv)), 3), 'load' => round(max(0.8, min(1.8, $ldA / $ldF)), 3), 'days' => $n, 'learned' => true);
     }
 
@@ -7371,7 +7426,7 @@ class EMS extends IPSModule
             // Arbitrage im Haus (unabhaengig von einer Einspeiseverguetung): guenstigster Preis gegen Ersatz-Bezugspreis
             $rp = $this->replacementPriceEur(array_values($prices), 0);
             if ($rp === null) { return false; }
-            return $minPrice < ($rp * $this->convEff() * $this->convEff() - $this->cycleCostCt() / 100.0 - $spreadEur);
+            return $minPrice < ($rp * $this->gridChargeValueFactor() - $this->cycleCostCt() / 100.0 - $spreadEur);
         }
         if ($tarif['quelle'] === 'platzhalter') {
             $this->emsLog(EMS_LOG_VERBOSE, sprintf(
