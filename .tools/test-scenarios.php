@@ -4008,6 +4008,7 @@ if (!function_exists('IPS_GetEvent')) {
     if (!function_exists('IPS_SetEventScheduleGroup')) { function IPS_SetEventScheduleGroup($id, $g, $d) { return true; } }
     function IPS_SetEventScheduleGroupPoint($id, $g, $p, $h, $m, $s, $aid) { $GLOBALS['EVT'][$id]['Points'][$p] = $aid; return true; }
 }
+if (method_exists('EMS', 'dayPlanLegacyActions')) {
 $GLOBALS['OBJ'][90001] = true; $GLOBALS['OBJ'][90002] = true;
 $GLOBALS['EVT'][90001] = array('ScheduleActions' => array(0 => array('ID' => 0, 'Name' => 'Automatik'), 1 => array('ID' => 1, 'Name' => 'x')));
 $GLOBALS['EVT'][90002] = array('ScheduleActions' => array());
@@ -4026,6 +4027,7 @@ check('Neuer Plan: Punkte zeigen auf Aktion 1 statt 0', ($GLOBALS['EVT'][90002][
 attr('DayPlanEventId', 90001);
 call($ems, 'writeDayPlanEvent', [$planAuto]);
 check('Bestands-Plan: Punkte bleiben auf Aktion 0', ($GLOBALS['EVT'][90001]['Points'][0] ?? null) === 0, json_encode($GLOBALS['EVT'][90001]['Points'][0] ?? null));
+}
 
 // ===========================================================================
 if (getenv('EMS_DUMP')) { file_put_contents(getenv('EMS_DUMP'), implode("\n", $GLOBALS['DUMP'] ?? []) . "\n"); }
