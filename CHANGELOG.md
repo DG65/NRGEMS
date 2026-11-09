@@ -2,6 +2,9 @@
 
 Ältere Versionen: [CHANGELOG-Archiv.md](CHANGELOG-Archiv.md)
 
+## 0.99.1 (2026-11-09)
+- **Zweisprachig, Schritt 3:** Begründungen in Entscheidung und Tagesplan (Nachtfenster, Mittagsspitze, Smart Charging, Wächter, Haltephasen), Grund für fehlenden Tagesplan und Anzeigetexte in Verträgen (GetPlantInfo-Pflichten/Hinweise, GetBatteryCost/GetPurchasePriceHistory-Hinweis, GetGridImportOutlook-Gründe, Schaltbeschriftungen, Simulationen) folgen der Systemsprache; Deutsch wortgleich (deutsch-vergleich). Codefelder sprachneutral; `einheit` 'ct/kWh brutto' und `GetCurrentDecision.mode` bleiben bewusst unübersetzt; Wochenplan-Name und Aktionsnamen unverändert. Log bleibt deutsch.
+
 ## 0.99.0 (2026-11-09)
 - **EEBUS-Discovery:** WPEEBUSHub (`WPEEB_GetFunctions`, heatpump 1.17/1.18) und ChargerEEBUSHub (`CHEEB_GetFunctions`, charger 1.12) werden gefunden. EEBUS-Wallboxen zählen zusätzlich zu `WB_Quelle` (gespeicherte Werte unverändert); keine Doppelzählung über `duplicateOf` oder gleiche `deviceSerial` (dann Log-Hinweis). EEBUS-Wallboxen werden gemessen, noch nicht geschaltet.
 - **WP-Zusatzlauf (SUITE.md WP-Steuermuster 1.18, Dietmar 09.11.2026):** Neuer Schalter `WP_OptionalRun_Active` (ab Werk aus) mit Mindest-Überschuss, Abschalt-Bezug, Wartezeit und Mindestlaufzeit. Schaltet `optionalRunID` per RequestAction nur bei Wunschwechsel, nur bei `controllable` und `managedBy` none/ems, nur wenn der Überschuss sonst eingespeist würde (Akku-Vorrang). §14a schaltet sofort aus, Negativpreis und Grid Rewards verhindern ein Einschalten. Statuszeile im Bereich Wärmepumpe.
