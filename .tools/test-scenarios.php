@@ -259,6 +259,9 @@ function freshEms() {
     $ems = new EMS(EMS_IID);
     $ems->Create();
     prop('ANL_Verguetung_ct', 18.36); // konfigurierte Anlage; Tests zu "unbekannt" setzen den Wert selbst auf 0
+    // 0.100.0: Die Bestandsfaelle rechnen mit dem abgeleiteten Pfad (Rundwirkungsgrade 0 = aus BAT_Conv_Eff_Pct 95 %), damit ihre
+    // Zahlen (0,95 je Wandlung) gueltig bleiben. Die neuen Standards 91/82 prueft Abschnitt 8al ausdruecklich mit EMS_RAW_DEFAULTS.
+    if (empty($GLOBALS['EMS_RAW_DEFAULTS'])) { prop('BAT_RT_PV_Pct', 0.0); prop('BAT_RT_Grid_Pct', 0.0); }
     return $ems;
 }
 /** Manuelle Preisquelle: 96 Slots in EUR/kWh (einfaches Zahlen-Array, siehe parsePT15M()). */
@@ -3220,14 +3223,14 @@ $st = $run21($st, 60, -5000.0, -5000.0, 0.0, 20.0);
 check('Nachts 1 h aus dem Netz zu 20 ct: 21,05 ct (Wandlungsverluste enthalten), Netzanteil 100 %',
     $sum21($st)['einstandCt'] === 21.05 && $sum21($st)['netzAnteilPct'] === 100.0, json_encode($sum21($st)));
 $st = $run21($st, 60, -5000.0, 2000.0, 7000.0, 30.0);
-check('Danach 1 h PV-Überschuss: Preis halbiert auf 10,53 ct, mit entgangener Vergütung (8 ct) 14,74 ct',
-    $sum21($st)['einstandCt'] === 10.53 && $sum21($st)['einstandMitVerguetungCt'] === 14.74, json_encode($sum21($st)));
+check('Danach 1 h PV-Überschuss (0.100.0: PV-Laden ohne AC-Wandlung, 5 kWh voll im Akku): 1,00 EUR / 9,75 kWh = 10,26 ct, mit entgangener Vergütung 14,36 ct',
+    $sum21($st)['einstandCt'] === 10.26 && $sum21($st)['einstandMitVerguetungCt'] === 14.36, json_encode($sum21($st)));
 $vor = $sum21($st);
 $st = $run21($st, 30, 5000.0, 0.0, 0.0, 30.0);
 check('Entladen: Bestand sinkt, Durchschnittspreis bleibt', $sum21($st)['einstandCt'] === $vor['einstandCt'] && $sum21($st)['gespeichertKwh'] < $vor['gespeichertKwh'], json_encode($sum21($st)));
 $st = call($ems, 'batteryCostStep', [[], 0.0, 0.0, 0.0, 0.0, $t21, null, 8.0, 0.0]);
 $st = $run21($st, 60, -2000.0, -1000.0, 3000.0, 40.0);
-check('Gemischt: Bezug 1 kW + PV 3 kW → Netzanteil 25 %, 10 ct', $sum21($st)['netzAnteilPct'] === 25.0 && $sum21($st)['einstandCt'] === 10.53, json_encode($sum21($st)));
+check('Gemischt: Bezug 1 kW + PV 3 kW → gespeicherter Netzanteil 0,475 / 1,975 = 24,1 %, 10,13 ct (PV ohne AC-Verlust)', $sum21($st)['netzAnteilPct'] === 24.1 && $sum21($st)['einstandCt'] === 10.13, json_encode($sum21($st)));
 $vor = $sum21($st)['einstandCt'];
 $st = $run21($st, 30, -2000.0, -2000.0, 0.0, null);
 check('Preis unbekannt: zum bisherigen Durchschnitt gebucht, kein Sprung', $vor !== null && $sum21($st)['einstandCt'] !== null && abs($sum21($st)['einstandCt'] - $vor) < 0.01, json_encode($sum21($st)));
@@ -4066,6 +4069,36 @@ check('Neuer Plan: Punkte zeigen auf Aktion 1 statt 0', ($GLOBALS['EVT'][90002][
 attr('DayPlanEventId', 90001);
 call($ems, 'writeDayPlanEvent', [$planAuto]);
 check('Bestands-Plan: Punkte bleiben auf Aktion 0', ($GLOBALS['EVT'][90001]['Points'][0] ?? null) === 0, json_encode($GLOBALS['EVT'][90001]['Points'][0] ?? null));
+}
+
+echo "\n8al) Rundwirkungsgrade PV 91 % / Netz 82 % als Standard (0.100.0, Nachweis an mehreren Speichersystemen)\n";
+if (method_exists('EMS', 'rtGrid')) {
+$GLOBALS['EMS_RAW_DEFAULTS'] = true;
+$ems = freshEms();
+check('Standard Netz-Rundwirkungsgrad 0,82, PV 0,91', abs(call($ems, 'rtGrid') - 0.82) < 1e-9 && abs(call($ems, 'rtPv') - 0.91) < 1e-9);
+check('eta je AC-Wandlung = Wurzel 0,82 = 0,9055', abs(call($ems, 'effAc') - sqrt(0.82)) < 1e-9, (string)call($ems, 'effAc'));
+check('eta PV-Laden = 0,91 / 0,9055 = 1,005 -> gedeckelt 1,0', abs(call($ems, 'effPv') - 1.0) < 1e-9, (string)call($ems, 'effPv'));
+$ctxD = ['refMode' => 1, 'replacePrice' => 0.46, 'spread' => 0.03, 'cycleCost' => 0.0, 'feedTariff' => 0.1836];
+check('Netzladegrenze = 46 ct x 0,82 x 0,9 - 3 ct = 30,95 ct', abs(call($ems, 'gridChargeLimitEur', [$ctxD]) - (0.46 * 0.82 * 0.9 - 0.03)) < 1e-6);
+check('Referenz Verguetung: 18,36 x 0,9055 = 16,63 ct', abs(call($ems, 'gridChargeLimitEur', [['feedTariff' => 0.1836, 'refMode' => 0]]) - 0.1836 * sqrt(0.82)) < 1e-6);
+$nwD = ['end' => 24, 'charge' => [], 'n' => 0, 'cand' => 0];
+$ctxH = array_merge($ctxD, ['socTargetNight' => 100.0, 'capKwh' => 40.0]);
+check('Haltegrenze = 46 x 0,9055 x 0,9 - 3 = 34,49 ct: 34 ct haelt, 35 ct nicht', call($ems, 'nightWindowSlot', [4, 0.34, 50.0, $nwD, $ctxH]) !== null && call($ems, 'nightWindowSlot', [4, 0.35, 50.0, $nwD, $ctxH]) === null);
+$ctxA = ['avgHouseW' => 4000.0, 'houseLoadSlots' => [], 'socMin' => 0.0, 'socReserve' => 10.0, 'capKwh' => 40.0, 'chargeKw' => 25.0, 'dischargeKw' => 25.0];
+$rA = call($ems, 'simulateAutomatikSlot', [0, 0.0, 0.3, 50.0, $ctxA]);
+check('Planung: 1 kWh Hauslast zieht 1/0,9055 = 1,104 kWh aus dem Akku (SOC 50 -> 47,24)', abs($rA['soc'] - (50.0 - 1.0 / sqrt(0.82) / 40.0 * 100.0)) < 0.01, json_encode($rA));
+$rP = call($ems, 'simulateAutomatikSlot', [0, 8000.0, 0.3, 50.0, $ctxA]);
+check('Planung: 1 kWh PV-Ueberschuss laedt 1 kWh (eta_pv 1,0)', abs($rP['soc'] - 52.5) < 0.01, json_encode($rP));
+$parD = ['eta' => sqrt(0.82), 'etaPv' => 1.0, 'capKwh' => 40.0, 'socMinPct' => 10.0, 'feed' => 0.1836, 'chKwh' => 6.0, 'disKwh' => 6.0];
+$rS = call($ems, 'selfBalanceCompute', [[8000, 0], [0, 0], [4000, -4000], [0.30, 0.50], 10.0, $parD]);
+check('Selbstbilanz: PV-Pfad ohne Verlust, Entladen mit eta_ac (Rest 1 - 0,9055 = 0,0945 kWh x 0,50)', abs($rS['auto'] - (1.0 - sqrt(0.82)) * 0.50) < 0.006, json_encode($rS));
+prop('BAT_RT_Grid_Pct', 0.0); prop('BAT_RT_PV_Pct', 0.0); prop('BAT_Conv_Eff_Pct', 93.0);
+check('0 = ableiten: Netz 0,93^2 = 0,8649, PV 0,93, eta_pv 1,0', abs(call($ems, 'rtGrid') - 0.8649) < 1e-9 && abs(call($ems, 'rtPv') - 0.93) < 1e-9 && abs(call($ems, 'effPv') - 1.0) < 1e-9);
+prop('BAT_RT_Grid_Pct', 30.0);
+check('Eingabe unter 50 % wird auf 50 % begrenzt', abs(call($ems, 'rtGrid') - 0.5) < 1e-9);
+prop('BAT_RT_Grid_Pct', 82.0); prop('BAT_RT_PV_Pct', 70.0);
+check('PV-Rundwirkungsgrad unter Netz: eta_pv = 0,70 / 0,9055 = 0,773', abs(call($ems, 'effPv') - 0.70 / sqrt(0.82)) < 1e-9);
+$GLOBALS['EMS_RAW_DEFAULTS'] = false;
 }
 
 // ===========================================================================

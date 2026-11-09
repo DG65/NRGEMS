@@ -43,7 +43,7 @@ define('EMS_LOG_VERBOSE',     2);
 define('EMS_COLOR_AUTO', 0x2E8B3D); // Gruen: Wert wurde automatisch uebernommen (🔗-Zeilen im Formular)
 // Quelltexte englisch, deutsche Fassung in locale.json; newsBanner() uebersetzt je Zeile.
 define('EMS_NEWS_VERSIONS', array(
-    '0.100.0' => array('NEW: Grid charging and holding the battery only when it pays off after losses: the expected value is multiplied by the round-trip efficiency and a new safety factor (default 90 %, panel Battery storage). The EMS balance now also charges the automatic mode for PV-to-battery losses; press "Recalculate the last 30 days" once. The PV forecast correction is used only after 7 learned days.'),
+    '0.100.0' => array('CHANGED: Realistic battery losses for every system. Two new settings in the panel Battery storage: round-trip efficiency PV → battery → house (default 91 %) and grid → battery → house (default 82 %), measured values of common home storage systems. They replace the old "efficiency per conversion" (95 % = 90 % round trip), which now only applies if both new fields are set to 0. As a result EMS charges from the grid and holds the battery less often. NEW: Grid charging and holding only when it pays off after losses and a new safety factor (default 90 %); the reason names the limit when grid charging is skipped. The EMS balance charges the automatic mode with the same losses; press "Recalculate the last 30 days" once. The PV forecast correction is used only after 7 learned days.'),
     '0.99.2' => array('FIX: Since Symcon 9.1, the day plan schedule logged a warning every 15 minutes ("schedule action ID must be greater than 0"). Existing schedules keep their actions, new ones start at action 1.'),
     '0.99.1' => array('NEW: Step 3 of the bilingual module: the reasons of the day plan and of the current decision, and the display texts other modules read from EMS, follow the Symcon language setting. Codes and units stay unchanged.'),
     '0.99.0' => array('NEW: EEBUS devices are found automatically: heat pumps via WPEEBUSHub and wallboxes via ChargerEEBUSHub (measured, not yet switched). NEW: Heat pump extra run on PV surplus (panel Heat pump, off by default): EMS switches on the extra run only when the surplus would otherwise go to the grid; the battery has priority, grid operator and §14a always win.'),
@@ -344,7 +344,9 @@ class EMS extends IPSModule
         $this->RegisterPropertyBoolean('BAT_Active',               false);
         $this->RegisterPropertyInteger('BAT_String_Count',         1);
         $this->RegisterPropertyFloat(  'BAT_Capacity_kWh',         10.0);
-        $this->RegisterPropertyFloat(  'BAT_Conv_Eff_Pct',         95.0); // Wirkungsgrad je AC/DC-Wandlung (%), 5 % Verlust = 95
+        $this->RegisterPropertyFloat(  'BAT_Conv_Eff_Pct',         95.0); // VERALTET (0.100.0): nur noch Ableitungsgrundlage, wenn BAT_RT_*_Pct = 0
+        $this->RegisterPropertyFloat(  'BAT_RT_PV_Pct',            91.0); // Rundwirkungsgrad PV -> Akku -> Haus (%), 0 = aus BAT_Conv_Eff_Pct ableiten
+        $this->RegisterPropertyFloat(  'BAT_RT_Grid_Pct',          82.0); // Rundwirkungsgrad Netz -> Akku -> Haus (%), 0 = aus BAT_Conv_Eff_Pct ableiten
         $this->RegisterPropertyFloat(  'BAT_CycleCost_ct',         0.0); // Verschleisskosten je entladene kWh (0 = nicht beruecksichtigen)
         $this->RegisterPropertyFloat(  'BAT_Price_EUR',            0.0); // Anschaffungspreis des Speichers (EUR), optional: daraus wird BAT_CycleCost_ct berechnet, wenn dort 0 steht
         $this->RegisterPropertyInteger('BAT_Cycles',               0);   // Ladezyklen laut Hersteller, optional (siehe BAT_Price_EUR)
@@ -1039,6 +1041,22 @@ class EMS extends IPSModule
             }
             unset($element);
         }
+
+        // 3b1. 0.100.0: wirksame Rundwirkungsgrade anzeigen (abgeleitet oder eingetragen)
+        $rtText = sprintf($this->t('Effective: grid → battery → house %.0f %% (%.1f %% per AC conversion), PV → battery → house %.0f %% (PV charging %.1f %%)%s. Typical measured values of home storage systems: 91 %% (PV) and 82 %% (grid).'),
+            $this->rtGrid() * 100, $this->effAc() * 100, $this->rtPv() * 100, $this->effPv() * 100,
+            ((float)$this->ReadPropertyFloat('BAT_RT_Grid_Pct') <= 0.0 || (float)$this->ReadPropertyFloat('BAT_RT_PV_Pct') <= 0.0) ? $this->t(', partly derived from the old efficiency per conversion') : '');
+        foreach ($form['elements'] as &$element) {
+            if (($element['type'] ?? '') === 'ExpansionPanel') {
+                foreach ($element['items'] as $idx => $item) {
+                    if (($item['name'] ?? '') === 'BAT_RT_Grid_Pct') {
+                        array_splice($element['items'], $idx + 1, 0, array(array_merge($this->statusLabel($rtText), array('name' => 'RoundTripStatusLabel'))));
+                        break 2;
+                    }
+                }
+            }
+        }
+        unset($element);
 
         // 3b2. Verschleisskosten: berechneten Wert anzeigen (aus Preis und Zyklen), damit der Nutzer sieht, was gilt
         $cycText = $this->cycleCostText();
@@ -2991,7 +3009,7 @@ class EMS extends IPSModule
         $winFrom = max($winFrom, $nowIdx); $winTo = min($winTo, 192);
         $run = function (float $delta) use ($prices, $pv, $load, $chargeOps, $nowIdx, $winFrom, $winTo, $soc0, $ctx, $floor) {
             $soc = $soc0; $imp = 0.0; $cost = 0.0; $costKnown = 0.0; $impKnown = 0.0; $maxPrice = null; $minSoc = 100.0; $slots = array(); $planned = 0.0;
-            $cap = max(0.001, (float)$ctx['capKwh']); $eff = $this->convEff();
+            $cap = max(0.001, (float)$ctx['capKwh']); $eff = $this->effAc();
             for ($i = $nowIdx; $i < $winTo; $i++) {
                 $in = ($i >= $winFrom);
                 $l = max(0.0, (float)($load[$i] ?? 0.0) + ($in ? $delta : 0.0));
@@ -4031,13 +4049,13 @@ class EMS extends IPSModule
             // 0.99.3: x Sicherheitsfaktor (Selbstbilanz 30 Tage: Halten bei 38-43 ct kostete Geld). Physikalisch heben sich die
             // Entladeverluste beim Halten auf (die kWh wird jetzt oder spaeter einmal entladen); Wirkungsgrad und Sicherheitsfaktor
             // decken die Unsicherheit ab, ob die gehaltene Energie spaeter wirklich teuren Bezug ersetzt (Ruheverlust, PV-Verdraengung).
-            $holdBelow = $ctx['replacePrice'] * $this->convEff() * $this->chargeSafety() - ($ctx['spread'] ?? 0.0);
+            $holdBelow = $ctx['replacePrice'] * $this->effAc() * $this->chargeSafety() - ($ctx['spread'] ?? 0.0);
             if ($price >= $holdBelow) { return null; }
-            $why = sprintf($this->t('%.2fct < %.2fct (%.2f × expected replacement price %.2fct: efficiency and safety factor, minus minimum spread)'), $price * 100, $holdBelow * 100, $this->convEff() * $this->chargeSafety(), $ctx['replacePrice'] * 100);
+            $why = sprintf($this->t('%.2fct < %.2fct (%.2f × expected replacement price %.2fct: efficiency and safety factor, minus minimum spread)'), $price * 100, $holdBelow * 100, $this->effAc() * $this->chargeSafety(), $ctx['replacePrice'] * 100);
         } else {
-            $holdBelow = $ctx['feedTariff'] * $this->convEff();
+            $holdBelow = $ctx['feedTariff'] * $this->effAc();
             if ($price >= $holdBelow) { return null; }
-            $why = sprintf($this->t('%.2fct < %.2fct (feed-in tariff %.2fct minus %.0f %% battery loss)'), $price * 100, $holdBelow * 100, $ctx['feedTariff'] * 100, (1 - $this->convEff()) * 100);
+            $why = sprintf($this->t('%.2fct < %.2fct (feed-in tariff %.2fct minus %.0f %% battery loss)'), $price * 100, $holdBelow * 100, $ctx['feedTariff'] * 100, (1 - $this->effAc()) * 100);
         }
         $reason = ($nw['n'] > 0 || $soc < $ctx['socTargetNight'])
             ? sprintf($this->t('Night window until %s: house from the grid, %s -- battery is not discharged'), $endLabel, $why)
@@ -4177,10 +4195,38 @@ class EMS extends IPSModule
         return (int)ceil($hours / 0.25 - 1e-9);
     }
 
-    /** Wirkungsgrad je AC/DC-Wandlung (Einstellung BAT_Conv_Eff_Pct, 70-100 %), z. B. 0,95. */
+    /** VERALTET (0.100.0): Wirkungsgrad je AC/DC-Wandlung aus BAT_Conv_Eff_Pct, nur noch Ableitungsgrundlage fuer rtGrid()/rtPv(). */
     private function convEff(): float
     {
         return max(0.70, min(1.0, (float)$this->ReadPropertyFloat('BAT_Conv_Eff_Pct') / 100.0));
+    }
+
+    /**
+     * 0.100.0: Rundwirkungsgrade als gemessene Groessen (Herstellerunabhaengig an mehreren Speichersystemen nachgewiesen:
+     * PV -> Akku -> Haus ~91 %, Netz -> Akku -> Haus ~82 %). 0 = aus BAT_Conv_Eff_Pct ableiten (Netz: eta^2, PV: eta).
+     */
+    private function rtGrid(): float
+    {
+        $p = (float)$this->ReadPropertyFloat('BAT_RT_Grid_Pct');
+        return $p > 0.0 ? max(0.50, min(1.0, $p / 100.0)) : $this->convEff() * $this->convEff();
+    }
+
+    private function rtPv(): float
+    {
+        $p = (float)$this->ReadPropertyFloat('BAT_RT_PV_Pct');
+        return $p > 0.0 ? max(0.50, min(1.0, $p / 100.0)) : $this->convEff();
+    }
+
+    /** Wirkungsgrad je AC-Wandlung (Laden aus dem Netz, Entladen ins Haus) = Wurzel des Netz-Rundwirkungsgrads. */
+    private function effAc(): float
+    {
+        return sqrt($this->rtGrid());
+    }
+
+    /** Wirkungsgrad beim Laden aus PV (DC/DC) = PV-Rundwirkungsgrad / effAc, hoechstens 1. */
+    private function effPv(): float
+    {
+        return min(1.0, $this->rtPv() / max(0.01, $this->effAc()));
     }
 
     /**
@@ -4199,7 +4245,7 @@ class EMS extends IPSModule
     /** Wert einer aus dem Netz geladenen kWh je kWh Ersatzpreis: Hin- und Rueckwandlung x Sicherheitsfaktor. */
     private function gridChargeValueFactor(): float
     {
-        return $this->convEff() * $this->convEff() * $this->chargeSafety();
+        return $this->rtGrid() * $this->chargeSafety();
     }
 
     /**
@@ -4236,7 +4282,7 @@ class EMS extends IPSModule
             return $ctx['replacePrice'] * $this->gridChargeValueFactor() - ($ctx['cycleCost'] ?? 0.0) - ($ctx['spread'] ?? 0.0);
         }
         if (($ctx['feedTariff'] ?? 0) <= 0) { return PHP_FLOAT_MAX; }
-        return $ctx['feedTariff'] * $this->convEff() - ($ctx['cycleCost'] ?? 0.0);
+        return $ctx['feedTariff'] * $this->effAc() - ($ctx['cycleCost'] ?? 0.0);
     }
 
     private function gridChargeXsetW(array $ctx, float $missingKwh = -1.0, ?float $soc = null): int
@@ -4258,7 +4304,7 @@ class EMS extends IPSModule
         $floor    = $ctx['socMin'] + $ctx['socReserve'];
 
         if ($surplusW > 0 && $soc < 99.5) {
-            $gainKwh = min($surplusW, $this->ctxChargeKw($ctx, $soc) * 1000.0) / 1000.0 * 0.25;
+            $gainKwh = min($surplusW * $this->effPv(), $this->ctxChargeKw($ctx, $soc) * 1000.0) / 1000.0 * 0.25; // 0.100.0: Laden aus PV mit eta_pv
             $soc = min(100.0, $soc + ($gainKwh / max(0.001, $ctx['capKwh']) * 100.0));
             $reason = ($soc >= 99.5)
                 ? sprintf($this->t('Automatic: PV surplus %.0fW, battery reaches full charge'), $surplusW)
@@ -4268,7 +4314,8 @@ class EMS extends IPSModule
         } else {
             $deficitW = -$surplusW;
             if ($soc > $floor) {
-                $lossKwh = min($deficitW, $ctx['dischargeKw'] * 1000.0) / 1000.0 * 0.25;
+                // 0.100.0: Entladen ins Haus kostet eine AC-Wandlung (Akku gibt Last / eta_ac her)
+                $lossKwh = min($deficitW / $this->effAc(), $ctx['dischargeKw'] * 1000.0) / 1000.0 * 0.25;
                 $soc = max($floor, $soc - ($lossKwh / max(0.001, $ctx['capKwh']) * 100.0));
                 $reason = sprintf($this->t('Automatic: house load %.0fW from battery (SOC %.0f%%)'), $loadW, $soc);
             } else {
@@ -4310,7 +4357,7 @@ class EMS extends IPSModule
             }
             if ($n > 0.0 && isset($p[$i]) && $p[$i] !== null) { $items[] = array((float)$p[$i], $n); }
         }
-        $terminal = ($minPrice !== null) ? max(0.0, $minPrice) / $this->convEff() : 0.0;
+        $terminal = ($minPrice !== null) ? max(0.0, $minPrice) / $this->effAc() : 0.0;
         if (empty($items)) { return array('value' => $terminal, 'covered' => 0.0, 'usable' => $usable); }
         usort($items, function ($a, $b) { return $b[0] <=> $a[0]; });
         $cum = 0.0;
@@ -4548,7 +4595,7 @@ class EMS extends IPSModule
         // einzige korrekte Export-Ausloeser bleibt der Zweig oben (Bezug <
         // Einspeiseverguetung -- Batterie bleibt geschont, Haus aus dem Netz).
         if ($price > $ctx['thDischarge'] && $soc > ($ctx['socMin'] + $ctx['socReserve'] + $ctx['hystSoc'])) {
-            $lossKwh = $loadW / 1000.0 * 0.25;
+            $lossKwh = $loadW / $this->effAc() / 1000.0 * 0.25; // 0.100.0: eine AC-Wandlung
             $soc = max(0.0, $soc - ($lossKwh / max(0.001, $ctx['capKwh']) * 100.0));
             // Live-Fund 25.08.2026 (InverterHub-Rueckfrage, ctl_ems_power=0W
             // bei Modus 3 live beobachtet): GW_MODE_DISCHARGE (3, "Entladen+
@@ -5815,7 +5862,7 @@ class EMS extends IPSModule
         // eigenen Bedarf (Einkauf nachts, Verkauf ueber Vorentladen/Einspeisung; Dietmar 24.10.2026: 10,5 ct kaufen, 18,36 ct verkaufen).
         $resaleOk = function (array $pr, int $from, int $to) use ($feedTariff): bool {
             if ($feedTariff <= 0) { return false; }
-            for ($i = $from; $i < $to; $i++) { if (isset($pr[$i]) && $pr[$i] !== null && (float)$pr[$i] < $feedTariff * $this->convEff() * $this->convEff()) { return true; } }
+            for ($i = $from; $i < $to; $i++) { if (isset($pr[$i]) && $pr[$i] !== null && (float)$pr[$i] < $feedTariff * $this->rtGrid()) { return true; } }
             return false;
         };
         $this->forecastLearnRecord($pvLow192, $load192);
@@ -6246,7 +6293,7 @@ class EMS extends IPSModule
         $f = max(0.02, (900 - (time() % 900)) / 900.0);
         $batW = min($this->preDischargeBatteryW($eKwh, $wNow, $sum - $wNow, $f), $lim['dischargeKw'] * 1000.0);
         $wbW    = ((float)$s['wb1_pow_kw'] + (float)$s['wb2_pow_kw']) * 1000.0;
-        $exportW = $batW * $this->convEff() + (float)$s['pv_total_w'] - (float)$s['house_pow_w'] - $wbW;
+        $exportW = $batW * $this->effAc() + (float)$s['pv_total_w'] - (float)$s['house_pow_w'] - $wbW;
         $exportW = min($exportW, (float)$this->ReadPropertyInteger('EMS_Max_Power_W'));
         if ($exportW < 500) { return null; }
 
@@ -6295,7 +6342,7 @@ class EMS extends IPSModule
     private function preDischargeEnd(array $price192, int $nowSlot, float $feed): ?int
     {
         $cycle  = $this->cycleCostCt() / 100.0;
-        $maxBuy = ($feed - $cycle - (float)$this->ReadPropertyFloat('PLAN_PreDischarge_MinGain_ct') / 100.0) * $this->convEff() * $this->convEff();
+        $maxBuy = ($feed - $cycle - (float)$this->ReadPropertyFloat('PLAN_PreDischarge_MinGain_ct') / 100.0) * $this->rtGrid();
         // Ist die laufende Viertelstunde selbst schon guenstig, ist das Fenster erreicht: nicht weiter entladen.
         if (isset($price192[$nowSlot]) && $price192[$nowSlot] !== null && $price192[$nowSlot] < $maxBuy) { return null; }
         for ($j = $nowSlot + 1; $j <= $nowSlot + 40 && $j < 192; $j++) {
@@ -6323,7 +6370,7 @@ class EMS extends IPSModule
         $batKwh = ($pd['sum'] > 0) ? min($eKwh * ($w / $pd['sum']), $ctx['dischargeKw'] * 0.25) : 0.0;
         $pd['sum'] = max(0.0, $pd['sum'] - $w);
         $batW = $batKwh / 0.25 * 1000.0;
-        $exportW = min($batW * $this->convEff() + $pvW - $loadW, (float)$ctx['maxW']);
+        $exportW = min($batW * $this->effAc() + $pvW - $loadW, (float)$ctx['maxW']);
         $soc2 = max($pd['floor'], $soc - $batKwh / max(0.001, $ctx['capKwh']) * 100.0);
         if ($exportW < 500 || $batKwh <= 0) {
             return array('plan' => array('op' => EMS_OP_AUTO, 'gw' => GW_MODE_AUTO, 'power' => 0,
@@ -6422,7 +6469,7 @@ class EMS extends IPSModule
         if ($op === EMS_OP_PV_SELFUSE && $gwMode === GW_MODE_CHARGE_PV) {
             $feed    = $this->planFeedTariffEur();
             $surplus = (float)$s['pv_total_w'] - (float)$s['house_pow_w'];
-            $cheap   = ($price > 0 && $feed > 0 && $price < $feed * $this->convEff() - $this->cycleCostCt() / 100.0);
+            $cheap   = ($price > 0 && $feed > 0 && $price < $feed * $this->effAc() - $this->cycleCostCt() / 100.0);
             // Fehlbetrag-Regel (Dietmar 27.09.2026, siehe simulateAutomatikSlot()-Kommentar):
             // Xmax=0 ist auch OHNE realen PV-Ueberschuss zulaessig, solange der aktuelle
             // Bezugspreis mit 5% Abstand unter den Zykluskosten liegt -- die Batterie soll
@@ -6698,7 +6745,8 @@ class EMS extends IPSModule
                 // 0.99.3: Das Ist traegt alle realen Speicherverluste (Zelle, DC/DC, BMS) -- sie stecken im Ladestand, nicht in der
                 // Akkuleistung, aus der die Hauslast abgeleitet wird. Die Automatik bekommt deshalb denselben Verlust je Wandlung beim
                 // Laden wie beim Entladen (Rundwirkungsgrad eta x eta wie in der Planung); vorher lud sie PV verlustfrei ein.
-                $ch = min(-$need, $p['chKwh'], max(0.0, $cap - $e) / $eta); $e += $ch * $eta; $need += $ch;
+                $etaPv = (float)($p['etaPv'] ?? $eta);
+                $ch = min(-$need, $p['chKwh'], max(0.0, $cap - $e) / $etaPv); $e += $ch * $etaPv; $need += $ch;
             } else {                                                                // Bedarf -> Akku (eine Wandlung)
                 $dis = max(0.0, min($need / $eta, $p['disKwh'], $e - $eMin)); $e -= $dis; $need -= $dis * $eta;
             }
@@ -6706,7 +6754,7 @@ class EMS extends IPSModule
         }
         // Schaetzung: verdraengte PV haette spaeter Bezug zum Tagesschnitt ersetzt (eine Wandlung), bekam nur die Verguetung
         $avgImp = $imp > 0.01 ? (($ist + $exp * $feed) / $imp) : 0.0;
-        $cat['pvExportLossEur'] = $cat['pvExportKwh'] * max(0.0, $avgImp * $eta - $feed);
+        $cat['pvExportLossEur'] = $cat['pvExportKwh'] * max(0.0, $avgImp * (float)($p['etaPv'] ?? 1.0) * $eta - $feed);
         foreach ($cat as $kk => $vv) { $cat[$kk] = round($vv, 2); }
         // 0.97.1: faire Tagesbewertung. Energie, die am Tagesende mehr (oder weniger) im Akku liegt als am Morgen, ist nicht
         // verloren, sondern ersetzt spaeter Bezug. Bewertet mit dem Tagesdurchschnittspreis x Wirkungsgrad (eine Wandlung).
@@ -6779,7 +6827,7 @@ class EMS extends IPSModule
         }
         $lim = $this->getBatteryPowerLimitsKw($inv, (float)$this->ReadPropertyInteger('EMS_Max_Power_W'), $this->batteryCapacityKwh());
         $res = $this->selfBalanceCompute($pv, $bat, $grid, $price, $socStart, array(
-            'eta' => $this->convEff(), 'capKwh' => $this->batteryCapacityKwh(), 'socMinPct' => (float)$this->ReadPropertyInteger('BAT_SOC_Min'),
+            'eta' => $this->effAc(), 'etaPv' => $this->effPv(), 'capKwh' => $this->batteryCapacityKwh(), 'socMinPct' => (float)$this->ReadPropertyInteger('BAT_SOC_Min'),
             'feed' => $this->planFeedTariffEur(), 'chKwh' => (float)$lim['chargeKw'] / 4.0, 'disKwh' => (float)($lim['dischargeKw'] ?? $lim['chargeKw']) / 4.0), $socSeries);
         $reward = $this->gridRewardEarnedEur($archive, $day0, $day1);
         if ($reward !== null) { $res['reward'] = $reward; }
@@ -6927,7 +6975,7 @@ class EMS extends IPSModule
                              'savedFair' => round($sum['fair'], 2), 'days' => $sum['days'], 'fairDays' => $sum['fairDays'], 'gridRewardsEur' => round($sum['reward'], 2)),
             'forecastFactors' => $this->forecastFactors(),
             'categories30' => $this->selfBalanceCatSum($hist, 30),
-            'assumptions' => array('etaPerConversion' => $this->convEff(), 'capKwh' => $this->batteryCapacityKwh(), 'feedTariffCt' => round($this->planFeedTariffEur() * 100, 2))),
+            'assumptions' => array('etaPerConversion' => round($this->effAc(), 4), 'etaPvCharge' => round($this->effPv(), 4), 'roundTripGrid' => $this->rtGrid(), 'roundTripPv' => $this->rtPv(), 'capKwh' => $this->batteryCapacityKwh(), 'feedTariffCt' => round($this->planFeedTariffEur() * 100, 2))),
             JSON_UNESCAPED_UNICODE);
     }
 
@@ -6971,7 +7019,7 @@ class EMS extends IPSModule
         $items[] = array('type' => 'Label', 'caption' => $f['learned']
             ? sprintf($this->t('Learned forecast correction (last %d days): PV ×%.2f, house load ×%.2f. The night window uses this to calculate the demand until the next night.'), $f['days'], $f['pv'], $f['load'])
             : sprintf($this->t('Forecast correction not learned yet (%d of 3 days). Until then conservative: PV ×%.2f, house load ×%.2f.'), $f['days'], $f['pv'], $f['load']));
-        $items[] = array('type' => 'Label', 'caption' => sprintf($this->t('Simulation assumptions: efficiency per conversion %.0f %% (setting in the battery section), battery %.1f kWh, feed-in tariff %.2f ct. Automatic mode only charges from PV surplus and discharges when needed.'), $this->convEff() * 100, $this->batteryCapacityKwh(), $this->planFeedTariffEur() * 100));
+        $items[] = array('type' => 'Label', 'caption' => sprintf($this->t('Simulation assumptions: round-trip efficiency PV → battery → house %.0f %%, grid → battery → house %.0f %% (settings in the battery section), battery %.1f kWh, feed-in tariff %.2f ct. Automatic mode only charges from PV surplus and discharges when needed.'), $this->rtPv() * 100, $this->rtGrid() * 100, $this->batteryCapacityKwh(), $this->planFeedTariffEur() * 100));
         $missing = $this->archivingMissing();
         if (!empty($missing)) {
             $items[] = array('type' => 'Label', 'caption' => '⚠️ The balance is missing logging for these variables:');
@@ -7227,7 +7275,7 @@ class EMS extends IPSModule
             $info['charge']    = $entered['charge']    ? 'eingetragen' : 'auto_low';
             $info['discharge'] = $entered['discharge'] ? 'eingetragen' : 'auto_high';
             $info['wb']        = $entered['wb']        ? 'eingetragen' : 'auto_mid';
-            $eff   = $this->convEff();
+            $eff   = $this->effAc();
             $cycle = $this->cycleCostCt() / 100.0;
             $feed  = $this->planFeedTariffEur();
             if (empty($entered['charge'])) {
@@ -9094,7 +9142,7 @@ class EMS extends IPSModule
      */
     private function batteryCostStep(array $st, float $batW, float $gridW, float $pvW, float $soc, int $now, ?float $priceCt, float $feedCt, float $capKwh): array
     {
-        $eta  = $this->convEff();
+        $eta  = $this->effAc(); $etaPv = $this->effPv();
         $meas = ($capKwh > 0.0) ? max(0.0, min(100.0, $soc)) / 100.0 * $capKwh : null;
         if (empty($st['ts'])) {
             $stock = $meas ?? 0.0;
@@ -9118,7 +9166,7 @@ class EMS extends IPSModule
             $st['opp']     += $gridKwh * $p / 100.0 + ($inKwh - $gridKwh) * $feedCt / 100.0;
             $st['grid']    += $gridKwh * $eta;
             $st['charged'] += $inKwh;
-            $stock         += $inKwh * $eta;
+            $stock         += $gridKwh * $eta + ($inKwh - $gridKwh) * $etaPv; // 0.100.0: Netzanteil eta_ac, PV-Anteil eta_pv
         } elseif ($dt > 0 && $batW > 50.0 && $stock > 0.0) {
             $f = max(0.0, $stock - $batW * $dt / 3600000.0 / $eta) / $stock;
             $st['pool'] *= $f; $st['opp'] *= $f; $st['grid'] *= $f;
@@ -9309,7 +9357,7 @@ class EMS extends IPSModule
         $price      = $in['price'] ?? null;
         if ($price !== null && $feedTariff > 0.0) {
             $cycleCostEur = $this->cycleCostCt() / 100.0;
-            $effLimitEur  = $feedTariff * $this->convEff() - $cycleCostEur;
+            $effLimitEur  = $feedTariff * $this->effAc() - $cycleCostEur;
             if ((float)$price < $effLimitEur) {
                 return array('active' => true,
                     'reason' => sprintf($this->t('Purchase %.2f ct cheaper than feed-in tariff %.2f ct (minus conversion/cycle, limit %.2f ct): feed in surplus instead of charging the battery, demand from the grid'),

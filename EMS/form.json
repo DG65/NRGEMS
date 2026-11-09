@@ -730,8 +730,26 @@
                 },
                 {
                     "type": "NumberSpinner",
+                    "name": "BAT_RT_PV_Pct",
+                    "caption": "Round-trip efficiency PV → battery → house (%), typical measured value 91. 0 = derive from the old efficiency per conversion",
+                    "digits": 0,
+                    "minimum": 0,
+                    "maximum": 100,
+                    "suffix": " %"
+                },
+                {
+                    "type": "NumberSpinner",
+                    "name": "BAT_RT_Grid_Pct",
+                    "caption": "Round-trip efficiency grid → battery → house (%), typical measured value 82. 0 = derive from the old efficiency per conversion",
+                    "digits": 0,
+                    "minimum": 0,
+                    "maximum": 100,
+                    "suffix": " %"
+                },
+                {
+                    "type": "NumberSpinner",
                     "name": "BAT_Conv_Eff_Pct",
-                    "caption": "Efficiency per AC/DC conversion (%): 95 = 5 % loss. Applies when charging from the grid and discharging into the house; charging from PV in a DC-coupled hybrid inverter counts without loss",
+                    "caption": "Outdated: efficiency per AC/DC conversion (%). Only used to derive the round-trip efficiencies above if they are set to 0",
                     "digits": 1,
                     "minimum": 70,
                     "maximum": 100,
