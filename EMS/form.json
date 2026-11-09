@@ -1608,6 +1608,56 @@
                     "type": "SelectVariable",
                     "name": "VAR_HP_DHW_Temp",
                     "caption": "Domestic hot water temperature (°C)"
+                },
+                {
+                    "type": "Label",
+                    "caption": "── Additional run on PV surplus ──────────────────────────"
+                },
+                {
+                    "type": "Label",
+                    "caption": "Heat pumps that offer an additional run (e.g. via WPEEBUSHub) are switched on by EMS only when the surplus would otherwise go to the grid and the battery does not take it. EMS only switches if the heat pump module allows it (control authority none or EMS)."
+                },
+                {
+                    "type": "CheckBox",
+                    "name": "WP_OptionalRun_Active",
+                    "caption": "Switch the heat pump additional run on PV surplus"
+                },
+                {
+                    "type": "NumberSpinner",
+                    "name": "WP_OptionalRun_MinSurplus_W",
+                    "caption": "Required surplus if the heat pump reports no power (W)",
+                    "minimum": 100,
+                    "maximum": 20000,
+                    "suffix": " W"
+                },
+                {
+                    "type": "NumberSpinner",
+                    "name": "WP_OptionalRun_OffImport_W",
+                    "caption": "Switch off at sustained grid import from (W)",
+                    "minimum": 50,
+                    "maximum": 20000,
+                    "suffix": " W"
+                },
+                {
+                    "type": "NumberSpinner",
+                    "name": "WP_OptionalRun_Delay_Min",
+                    "caption": "Condition must last for (min.)",
+                    "minimum": 0,
+                    "maximum": 60,
+                    "suffix": " min"
+                },
+                {
+                    "type": "NumberSpinner",
+                    "name": "WP_OptionalRun_MinRun_Min",
+                    "caption": "Minimum run time after switching on (min.)",
+                    "minimum": 0,
+                    "maximum": 240,
+                    "suffix": " min"
+                },
+                {
+                    "type": "Label",
+                    "name": "HpOptionalRunStatus",
+                    "caption": "Additional run: switched off"
                 }
             ]
         },

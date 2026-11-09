@@ -100,7 +100,7 @@ function GetValueInteger($id)     { return (int)($GLOBALS['VAL'][$id] ?? 0); }
 function emsDump(string $kind, $v): void { if (getenv('EMS_DUMP') && empty($GLOBALS['EMS_LANG_EN']) && (is_string($v) || is_array($v))) { $GLOBALS['DUMP'][] = $kind . ': ' . (is_string($v) ? $v : json_encode($v, JSON_UNESCAPED_UNICODE)); } }
 function SetValue($id, $v)        { emsDump('SetValue', $v); $GLOBALS['VAL'][$id] = $v; return true; }
 function WFC_PushNotification($id, $title, $text, $sound, $target) { emsDump('Push', $title . ' | ' . $text); $GLOBALS['PUSH'][] = [$title, $text]; return true; }
-function RequestAction($id, $v)   { $GLOBALS['VAL'][$id] = $v; return true; }
+function RequestAction($id, $v)   { $GLOBALS['VARACTIONS'][] = [$id, $v]; $GLOBALS['VAL'][$id] = $v; return true; }
 function AC_SetLoggingStatus($a, $b, $c) { $GLOBALS['LOGGED'][$b] = $c; $GLOBALS['LOGSET'][] = $b; return true; }
 function AC_GetLoggingStatus($a, $b) { return !empty($GLOBALS['LOGGED'][$b]); }
 // Archiv: $GLOBALS['ARCHIVE'][varId] = [[ts, wert], ...]; Rueckgabe wie echtes
@@ -133,6 +133,9 @@ function WPHUB_GetFunctions($iid)          { return $GLOBALS['WP_FUNCS']['wphub'
 function WPMBHUB_GetFunctions($iid)       { return $GLOBALS['WP_FUNCS']['wpmbhub'] ?? []; }
 function WPMBGW_GetFunctions($iid)        { return $GLOBALS['WP_FUNCS']['wpmbgw'] ?? []; }
 function SAMEHS_GetFunctions($iid)        { return $GLOBALS['WP_FUNCS']['samehs'] ?? []; }
+function WPEEB_GetFunctions($iid)         { return $GLOBALS['WP_FUNCS']['wpeeb'][$iid] ?? []; }
+$GLOBALS['CHEEB_FUNCS'] = [];
+function CHEEB_GetFunctions($iid)         { return $GLOBALS['CHEEB_FUNCS'][$iid] ?? []; }
 
 class IPSModule
 {
@@ -3429,6 +3432,100 @@ $GLOBALS['WP_FUNCS'] = []; call($ems, 'Discover');
 $un = json_decode($ems->ReadAttributeString('UnresponsiveInstances'), true);
 check('Antwortet ein Modul nicht, wird es als stumm gemeldet (wie HeishaMon)', ($un['wpmodbushub'] ?? []) === [910] && ($un['samsungehs'] ?? []) === [912], json_encode($un));
 unset($GLOBALS['INSTMOD'][909], $GLOBALS['INSTMOD'][910], $GLOBALS['INSTMOD'][911], $GLOBALS['INSTMOD'][912]); $GLOBALS['WP_FUNCS'] = [];
+
+// EEBUS/Zusatzlauf erst ab 0.99.0 (Gegenprobe deutsch-vergleich laeuft auch gegen aeltere Modulstaende)
+if (defined('GUID_WPEEBUSHUB')) {
+echo "\n25b) EEBUS-Module: Discovery WPEEBUSHub/ChargerEEBUSHub (0.99.0)\n";
+$ems = freshEms();
+$GLOBALS['INSTMOD'][920] = GUID_WPEEBUSHUB; $GLOBALS['INSTMOD'][930] = GUID_CHARGEREEBUSHUB; $GLOBALS['INSTMOD'][931] = GUID_CHARGEREEBUSHUB;
+$GLOBALS['WP_FUNCS'] = ['wpeeb' => [920 => [['contractVersion' => '1.18', 'Type' => 'heatpump', 'Caption' => 'Vaillant', 'function' => 'heatpump', 'label' => 'Vaillant', 'instanceID' => 920, 'managedBy' => 'none', 'controllable' => true, 'optionalRunID' => 0, 'lastSeenAt' => time()]]]];
+$cheebPow = vari('EEBUS Leistung', 930, 'Leistung', 3680.0);
+$GLOBALS['CHEEB_FUNCS'] = [930 => [['contractVersion' => '1.12', 'function' => 'charger', 'label' => 'Elli', 'powerID' => $cheebPow, 'chargeEnableID' => 0, 'currentLimitID' => 0, 'managedBy' => 'none', 'duplicateOf' => null, 'deviceSerial' => 'SN-1', 'lastSeenAt' => time()]],
+    931 => [['contractVersion' => '1.12', 'function' => 'charger', 'label' => 'Elli doppelt', 'powerID' => 0, 'managedBy' => 'none', 'duplicateOf' => ['source' => 'chargereebushub', 'instanceID' => 930], 'deviceSerial' => 'SN-2', 'lastSeenAt' => time()]]];
+call($ems, 'Discover');
+$pc = json_decode($ems->ReadAttributeString('PartnerCache'), true);
+check('Discovery: WPEEBUSHub gefunden, instanceID = Geraeteinstanz', count($pc['wpeebushub'] ?? []) === 1 && $pc['wpeebushub'][0]['instanceID'] === 920, json_encode($pc['wpeebushub'] ?? null));
+check('Discovery: ChargerEEBUSHub gefunden, instanceID je Geraeteinstanz (kein Splitter, Ueberschreiben unschaedlich)', array_column($pc['chargereebushub'] ?? [], 'instanceID') === [930, 931]);
+check('Uebersicht nennt die EEBUS-Module', strpos($ems->GetValue('EMS_Partners'), 'WPEEBUSHub=1 ChargerEEBUSHub=2') !== false, $ems->GetValue('EMS_Partners'));
+$un = json_decode($ems->ReadAttributeString('UnresponsiveInstances'), true);
+check('Keine EEBUS-Instanz als stumm gemeldet', empty($un['wpeebushub']) && empty($un['chargereebushub']), json_encode($un));
+$sit = array_values(array_filter(call($ems, 'GetSituation'), fn($d) => ($d['domain'] ?? '') === 'heatpump'));
+check('Situation: WPEEBUSHub als Waermepumpe, ohne Zusatzlauf nicht schaltbar', count($sit) === 1 && $sit[0]['sourceModule'] === 'WPEEBUSHub' && $sit[0]['writable'] === false, json_encode($sit));
+$list = call($ems, 'getChargerList');
+check('CHEEB mit duplicateOf zaehlt nicht doppelt: genau eine EEBUS-Wallbox', count($list) === 1 && $list[0]['instanceID'] === 930 && $list[0]['source'] === 'chargereebushub', json_encode(array_column($list, 'instanceID')));
+check('EEBUS-Wallbox: Leistung wird gemessen (3,68 kW)', abs(call($ems, 'readChargerPowerKw', [1]) - 3.68) < 0.01, (string)call($ems, 'readChargerPowerKw', [1]));
+check('EEBUS-Wallbox: EMS schaltet sie nicht (kein ctl_enable-Ident)', call($ems, 'getWritableChargers') === [] && call($ems, 'getControlEntry', [1]) === null);
+// dieselbe Wallbox zusaetzlich ueber ChargerHub (gleiche Seriennummer, keine Markierung): nur einmal zaehlen
+attr('PartnerCache', json_encode(array_merge($pc, ['chargerhub' => [['instanceID' => 601, 'label' => 'go-e', 'powerID' => 0, 'managedBy' => 'none', 'deviceSerial' => 'SN-1']]])));
+$list = call($ems, 'getChargerList');
+check('Gleiche Seriennummer ueber ChargerHub ohne Markierung: EEBUS-Anbindung zaehlt nicht zusaetzlich', count($list) === 1 && $list[0]['source'] === 'chargerhub', json_encode(array_column($list, 'source')));
+attr('PartnerCache', json_encode(array_merge($pc, ['chargerhub' => [['instanceID' => 601, 'label' => 'go-e', 'powerID' => 0, 'managedBy' => 'none', 'deviceSerial' => 'X']]])));
+prop('WB_Quelle', 1);
+check('WB_Quelle=1 (nur ChargerHub) unveraendert: andere EEBUS-Wallbox zaehlt additiv', array_column(call($ems, 'getChargerList'), 'source') === ['chargerhub', 'chargereebushub']);
+unset($GLOBALS['INSTMOD'][920], $GLOBALS['INSTMOD'][930], $GLOBALS['INSTMOD'][931]); $GLOBALS['WP_FUNCS'] = []; $GLOBALS['CHEEB_FUNCS'] = [];
+
+echo "\n25c) WP-Zusatzlauf bei PV-Ueberschuss (optionalRunID, heatpump 1.18)\n";
+$ems = freshEms();
+$orVid = vari('Zusatzlauf', 920, 'OhpcfLauf', false, 0);
+$orPow = vari('Zusatzleistung max', 920, 'OhpcfLeistungMax', 2000.0);
+$hpE = fn(string $mb, bool $ctl = true) => ['instanceID' => 920, 'Caption' => 'Vaillant', 'managedBy' => $mb, 'controllable' => $ctl, 'optionalRunID' => $orVid, 'optionalRunPowerID' => 0, 'optionalRunPowerMaxID' => $orPow];
+attr('PartnerCache', json_encode(['wpeebushub' => [$hpE('none')]]));
+$writes = function () use ($orVid) { return array_values(array_filter($GLOBALS['VARACTIONS'] ?? [], fn($a) => $a[0] === $orVid)); };
+$t0 = 1800000000;
+$sur = state(['grid_total_w' => 2400.0, 'bat_soc' => 98.0, 'bat_pow_w' => 0.0]);
+$GLOBALS['VARACTIONS'] = [];
+for ($i = 0; $i <= 12; $i++) { call($ems, 'applyHeatpumpOptionalRun', [$sur, $t0 + $i * 60]); }
+check('Schalter aus (Standard): nie schreiben, auch bei Ueberschuss', $writes() === [], json_encode($writes()));
+prop('WP_OptionalRun_Active', true);
+attr('PartnerCache', json_encode(['wpeebushub' => [$hpE('other')]]));
+for ($i = 0; $i <= 12; $i++) { call($ems, 'applyHeatpumpOptionalRun', [$sur, $t0 + $i * 60]); }
+check('managedBy other: nie schreiben', $writes() === []);
+attr('PartnerCache', json_encode(['wpeebushub' => [$hpE('wphub')]]));
+for ($i = 0; $i <= 12; $i++) { call($ems, 'applyHeatpumpOptionalRun', [$sur, $t0 + $i * 60]); }
+check('managedBy modul-eigen (wphub): nie schreiben', $writes() === []);
+attr('PartnerCache', json_encode(['wpeebushub' => [$hpE('none', false)]]));
+for ($i = 0; $i <= 12; $i++) { call($ems, 'applyHeatpumpOptionalRun', [$sur, $t0 + $i * 60]); }
+check('controllable=false: nie schreiben', $writes() === []);
+attr('PartnerCache', json_encode(['wpeebushub' => [$hpE('none')]]));
+attr('HpOptionalRun', '{}');
+call($ems, 'applyHeatpumpOptionalRun', [state(['grid_total_w' => 2400.0, 'bat_soc' => 60.0, 'bat_pow_w' => 0.0]), $t0]);
+call($ems, 'applyHeatpumpOptionalRun', [state(['grid_total_w' => 2400.0, 'bat_soc' => 60.0, 'bat_pow_w' => 0.0]), $t0 + 600]);
+check('Batterie hat Vorrang (SOC 60 %, laedt nicht): kein Zusatzlauf', $writes() === []);
+call($ems, 'applyHeatpumpOptionalRun', [state(['grid_total_w' => 1500.0, 'bat_soc' => 98.0]), $t0 + 600]);
+call($ems, 'applyHeatpumpOptionalRun', [state(['grid_total_w' => 1500.0, 'bat_soc' => 98.0]), $t0 + 1200]);
+check('Einspeisung 1,5 kW unter gemeldeter Zusatzleistung 2 kW: kein Zusatzlauf', $writes() === []);
+attr('HpOptionalRun', '{}');
+call($ems, 'applyHeatpumpOptionalRun', [$sur, $t0]);
+call($ems, 'applyHeatpumpOptionalRun', [$sur, $t0 + 120]);
+check('Ueberschuss erst 2 min: noch nicht schreiben (Wartezeit 5 min)', $writes() === []);
+for ($i = 5; $i <= 20; $i++) { call($ems, 'applyHeatpumpOptionalRun', [$sur, $t0 + $i * 60]); }
+check('Ueberschuss ueber 5 min: genau einmal true', $writes() === [[$orVid, true]], json_encode($writes()));
+$GLOBALS['VAL'][$orVid] = false; // WP meldet Ist-Zustand "laeuft nicht" (z. B. Angebot abgelaufen)
+for ($i = 21; $i <= 30; $i++) { call($ems, 'applyHeatpumpOptionalRun', [state(['grid_total_w' => 0.0, 'bat_soc' => 98.0]), $t0 + $i * 60]); }
+check('Kein zyklisches Nachschieben, obwohl der gelesene Wert false ist', count($writes()) === 1, json_encode($writes()));
+$st = json_decode($ems->ReadAttributeString('HpOptionalRun'), true);
+check('Grund sichtbar: "Zusatzlauf an: 2,4 kW Überschuss"', strpos((string)($st[$orVid]['text'] ?? ''), 'Zusatzlauf an: 2,4 kW Überschuss') !== false, json_encode($st));
+$imp = state(['grid_total_w' => -1200.0, 'bat_soc' => 98.0]);
+for ($i = 31; $i <= 33; $i++) { call($ems, 'applyHeatpumpOptionalRun', [$imp, $t0 + $i * 60]); }
+check('Netzbezug vor Ablauf der Mindestlaufzeit (30 min ab Minute 5): kein false', count($writes()) === 1, json_encode($writes()));
+for ($i = 34; $i <= 45; $i++) { call($ems, 'applyHeatpumpOptionalRun', [$imp, $t0 + $i * 60]); }
+check('Anhaltender Bezug nach Mindestlaufzeit: genau einmal false', $writes() === [[$orVid, true], [$orVid, false]], json_encode($writes()));
+// Abschalten des Schalters nimmt einen Wunsch einmal zurueck
+attr('HpOptionalRun', json_encode([$orVid => ['want' => true, 'onAt' => $t0]]));
+$GLOBALS['VARACTIONS'] = [];
+prop('WP_OptionalRun_Active', false);
+call($ems, 'applyHeatpumpOptionalRun', [$sur, $t0]); call($ems, 'applyHeatpumpOptionalRun', [$sur, $t0 + 60]);
+check('Schalter aus nach EMS-Wunsch true: einmal false, dann nichts mehr', $writes() === [[$orVid, false]], json_encode($writes()));
+// §14a-Lastbegrenzung schaltet sofort aus
+prop('WP_OptionalRun_Active', true);
+attr('HpOptionalRun', json_encode([$orVid => ['want' => true, 'onAt' => $t0]]));
+$GLOBALS['VARACTIONS'] = [];
+$GLOBALS['INSTMOD'][950] = GUID_STEUERBOXHUB; $GLOBALS['SBH_STATE'] = ['loadDimmActive' => true];
+call($ems, 'applyHeatpumpOptionalRun', [$sur, $t0 + 60]);
+check('§14a-Lastbegrenzung: Zusatzlauf sofort false (Netzbetreiber vor EMS)', $writes() === [[$orVid, false]], json_encode($writes()));
+unset($GLOBALS['INSTMOD'][950]); $GLOBALS['SBH_STATE'] = null;
+prop('WP_OptionalRun_Active', false);
+}
 
 echo "\n8x) Formular zeigt, was gelernt/verbunden wurde\n";
 $ems = freshEms(); prop('EMS_Max_Power_W', 34500);

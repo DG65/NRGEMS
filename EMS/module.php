@@ -124,6 +124,8 @@ define('GUID_WPHUB',         '{5BE429EA-3AAD-4A8B-85DE-5778CCA2E6BC}'); // WPHUB
 define('GUID_WPMODBUSHUB',   '{E878B4D4-8E98-4E89-AE21-8636262EBC55}'); // WPMBHUB_GetFunctions, heatpump-Vertrag wie HeishaMon/WPHub
 define('GUID_WPMODBUSGW',    '{70FBAC61-A1C0-47B7-8B56-BE047F7C0C6B}'); // WPMBGW_GetFunctions
 define('GUID_SAMSUNGEHS',    '{D2B2A1E8-2F94-426C-8761-505A2F226977}'); // SAMEHS_GetFunctions
+define('GUID_WPEEBUSHUB',    '{731C4932-48B3-4360-BFED-1CA034978BCB}'); // WPEEB_GetFunctions, heatpump-Vertrag (ab 1.18 Steuerfelder)
+define('GUID_CHARGEREEBUSHUB', '{45A53474-81B3-4A59-BDD9-B0C3CCBFE6BF}'); // CHEEB_GetFunctions, charger-Vertrag feldgleich CHUB/OHUB
 define('GUID_TESSIEVEHICLE', '{3F1F7E31-8BA0-4B8F-9B62-47DAD7A0B6C9}');
 define('GUID_TIBBERGRIDREWARD', '{E92F62F4-88A6-4C6E-9F0D-E76C3B1C9A01}');
 
@@ -502,6 +504,12 @@ class EMS extends IPSModule
         $this->RegisterPropertyInteger('VAR_HP_Mode',          0);
         $this->RegisterPropertyInteger('VAR_HP_COP_Heat',      0);
         $this->RegisterPropertyInteger('VAR_HP_DHW_Temp',      0);
+        // WP-Zusatzlauf bei PV-Ueberschuss (heatpump-Vertrag 1.18 optionalRunID, 0.99.0): Opt-in, Standard aus
+        $this->RegisterPropertyBoolean('WP_OptionalRun_Active',     false);
+        $this->RegisterPropertyInteger('WP_OptionalRun_MinSurplus_W', 1500); // Rueckfall, wenn die WP keine Zusatzleistung meldet
+        $this->RegisterPropertyInteger('WP_OptionalRun_OffImport_W',  300);  // Ausschalten bei anhaltendem Netzbezug ab ...
+        $this->RegisterPropertyInteger('WP_OptionalRun_Delay_Min',    5);    // Bedingung muss so lange anhalten (ein und aus)
+        $this->RegisterPropertyInteger('WP_OptionalRun_MinRun_Min',   30);   // Mindestlaufzeit nach dem Einschalten
 
         // ── Tibber ──────────────────────────────────────────────────
         $this->RegisterPropertyBoolean('TIBBER_Active',            false);
@@ -697,6 +705,7 @@ class EMS extends IPSModule
         $this->RegisterAttributeInteger('ExpOvlHoldUntil',   0);
         $this->RegisterAttributeInteger('ExpOvlLastTs',      0); // letzter Messzeitpunkt fuer die Tageszaehler
         $this->RegisterAttributeString('ExpOvlDay',          '');
+        $this->RegisterAttributeString('HpOptionalRun',      '{}');    // je WP-Instanz: EMS-Wunsch + Zeitpunkte des Zusatzlaufs
         $this->RegisterAttributeBoolean('B1Active',          false); // B1 hat per svc_charge_inhibit das Laden gesperrt
         $this->RegisterAttributeInteger('B1LastSwitch',      0);
         $this->RegisterAttributeString('FcCacheKey',         '');    // Datum|Slot der letzten Prognose-Auffrischung
@@ -945,6 +954,16 @@ class EMS extends IPSModule
         // 1. "Was ist Neu" — nur die Versionen seit der zuletzt bestaetigten (SUITE.md NEWS_VERSIONS, 0.97.4)
         $newsPanel = $this->newsBanner();
         if ($newsPanel !== null) { array_unshift($form['elements'], $newsPanel); }
+
+        // WP-Zusatzlauf: Statuszeile im Waermepumpen-Panel (Name, nie Caption)
+        foreach ($form['elements'] as &$hpEl) {
+            if (($hpEl['type'] ?? '') === 'ExpansionPanel' && ($hpEl['name'] ?? '') === 'PanelHeatpump') {
+                foreach ($hpEl['items'] as $k => $it) {
+                    if (($it['name'] ?? '') === 'HpOptionalRunStatus') { $hpEl['items'][$k]['caption'] = $this->hpOptionalRunStatusLine(); }
+                }
+            }
+        }
+        unset($hpEl);
 
         // 3b. Status-Zeile ueber dem manuellen PT15M-Fallback-Feld einfuegen —
         // zeigt live, ob/wie das Feld gerade automatisch ueberholt ist
@@ -1516,6 +1535,8 @@ class EMS extends IPSModule
         }
 
         if (!$this->ReadPropertyBoolean('EMS_Active')) {
+            // EMS aus: einen zuvor gewuenschten WP-Zusatzlauf einmal zuruecknehmen
+            try { $this->releaseHeatpumpOptionalRuns($this->t('EMS is switched off')); } catch (Throwable $e) {}
             if ($this->ReadPropertyBoolean('WB_Active')) {
                 for ($n = 1; $n <= min(2, max(1, $this->ReadPropertyInteger('WB_Count'))); $n++) {
                     try { $this->publishWallboxPlan($n, $this->t('EMS is switched off: the wallbox is not controlled.')); } catch (Throwable $e) {}
@@ -1574,6 +1595,8 @@ class EMS extends IPSModule
             $decision = $this->applyChargeNoEffectGuard($decision, $state);
             $decision = $this->applyExportOverlapGuard($decision, $state);
             $this->applyDecision($decision, $state);
+            // WP-Zusatzlauf: rein additive Stellgroesse nach der Batterie-/WR-Entscheidung, beeinflusst sie nie
+            try { $this->applyHeatpumpOptionalRun($state); } catch (Throwable $e) { $this->emsLog(EMS_LOG_BASIC, 'WP-Zusatzlauf-Fehler: ' . $e->getMessage()); }
             $this->trackSpecialEvents($state);
             $this->WriteAttributeInteger('ConsecutiveErrors', 0);
             $this->WriteAttributeInteger('FirstErrorAt', 0);
@@ -1623,6 +1646,10 @@ class EMS extends IPSModule
         $partners['wpmodbushub']     = $this->discoverContract(GUID_WPMODBUSHUB, 'WPMBHUB_GetFunctions');
         $partners['wpmodbushubgw']   = $this->discoverContract(GUID_WPMODBUSGW,  'WPMBGW_GetFunctions');
         $partners['samsungehs']      = $this->discoverContract(GUID_SAMSUNGEHS,  'SAMEHS_GetFunctions');
+        // EEBUS-Module: je Geraet eine eigene Instanz, die instanceID aus discoverContract() ist also das Geraet selbst.
+        $partners['wpeebushub']      = $this->discoverContract(GUID_WPEEBUSHUB,  'WPEEB_GetFunctions');
+        $partners['chargereebushub'] = $this->discoverContract(GUID_CHARGEREEBUSHUB, 'CHEEB_GetFunctions');
+        foreach ($partners['chargereebushub'] as $i => $e) { $partners['chargereebushub'][$i]['source'] = 'chargereebushub'; }
         $partners['tessie']      = $this->discoverContract(GUID_TESSIEVEHICLE, 'TESSIE_GetVehicleState');
 
         // Tibber liefert keine *_GetFunctions-Liste, sondern eigene Getter
@@ -1660,6 +1687,8 @@ class EMS extends IPSModule
             'wpmodbushub'   => GUID_WPMODBUSHUB,
             'wpmodbushubgw' => GUID_WPMODBUSGW,
             'samsungehs'    => GUID_SAMSUNGEHS,
+            'wpeebushub'    => GUID_WPEEBUSHUB,
+            'chargereebushub' => GUID_CHARGEREEBUSHUB,
             'tessie'      => GUID_TESSIEVEHICLE,
             'tibber'      => GUID_TIBBERGRIDREWARD,
         );
@@ -1689,6 +1718,21 @@ class EMS extends IPSModule
                 . ' -- beide Anbindungen dürfen schreiben. EMS schaltet nur über eine. Bitte bei einer „Wer regelt?“ auf „Anderer“ stellen.');
         }
         $this->WriteAttributeBoolean('WbDoubleWriterWarned', !empty($pairs));
+        // EEBUS-Wallbox mit derselben Seriennummer wie eine ChargerHub-/OCPPHub-Wallbox ohne duplicateOf: EMS zaehlt nur den
+        // bestehenden Eintrag (getChargerList), meldet das aber einmal je Discovery, damit der Nutzer es eindeutig markiert.
+        $counted = array();
+        $use = $this->chargerSourceStatus();
+        foreach (array('chargerhub', 'ocpphub') as $src) {
+            if (!$use[$src]) { continue; }
+            foreach ($this->withoutDuplicates((array)($partners[$src] ?? array())) as $c) { $counted[] = $c; }
+        }
+        foreach ($this->withoutDuplicates((array)$partners['chargereebushub']) as $c) {
+            $twin = $this->eebusChargerSerialTwin($c, $counted);
+            if ($twin !== null) {
+                $this->emsLog(EMS_LOG_BASIC, sprintf('⚠️ Wallbox „%s“ (ChargerEEBUSHub #%d) hat dieselbe Seriennummer wie „%s“ (#%d) -- EMS zählt sie nur einmal (über die bestehende Anbindung). Bitte im Quellmodul „Doppelt von“ (duplicateOf) eintragen.',
+                    (string)($c['label'] ?? ''), (int)($c['instanceID'] ?? 0), (string)($twin['label'] ?? ''), (int)($twin['instanceID'] ?? 0)));
+            }
+        }
 
         $summary = sprintf(
             'InverterHub=%d MeterHub=%d ChargerHub=%d OCPPHub=%d HeishaMon=%d Tessie=%d Tibber=%d',
@@ -1701,6 +1745,10 @@ class EMS extends IPSModule
         if ($wpMore > 0) {
             $summary .= sprintf(' WPHub=%d WPModbusHub=%d WPModbusHubGateway=%d SamsungEhs=%d',
                 count($partners['wphub']), count($partners['wpmodbushub']), count($partners['wpmodbushubgw']), count($partners['samsungehs']));
+        }
+        // EEBUS-Module ebenso nur nennen, wenn vorhanden
+        if (count($partners['wpeebushub']) + count($partners['chargereebushub']) > 0) {
+            $summary .= sprintf(' WPEEBUSHub=%d ChargerEEBUSHub=%d', count($partners['wpeebushub']), count($partners['chargereebushub']));
         }
         $this->SetValue('EMS_Partners', $summary);
         $this->emsLog(EMS_LOG_BASIC, 'Discover: ' . $summary);
@@ -2461,7 +2509,7 @@ class EMS extends IPSModule
         $get = function (string $k, string $prop) use ($ov) { return ($ov !== null && array_key_exists($k, $ov)) ? (int)$ov[$k] : $this->ReadPropertyInteger($prop); };
         $entry = $this->getChargerEntry($n);
         $iid = (int)($entry['instanceID'] ?? 0);
-        $src = (($entry['source'] ?? '') === 'ocpphub') ? 'OCPPHub' : 'ChargerHub';
+        $src = $this->chargerSourceLabel($entry);
         $hub = ($iid > 0) ? sprintf('%s «%s» (#%d)', $src, IPS_ObjectExists($iid) ? IPS_GetName($iid) : '?', $iid) : '';
         $out = array();
         $inst = $get('Instance', 'WB' . $n . '_Instance');
@@ -2631,9 +2679,9 @@ class EMS extends IPSModule
     private function doubleWriterPairs(): array
     {
         $p = $this->GetPartners();
-        $writable = function ($e) { return in_array($e['managedBy'] ?? 'none', array('none', 'ems'), true); };
+        $writable = function ($e) { return $this->chargerEmsWritable($e); };
         $pairs = array();
-        foreach (array('chargerhub', 'ocpphub') as $src) {
+        foreach (self::CHARGER_SOURCES as $src) {
             foreach ((array)($p[$src] ?? array()) as $e) {
                 $d = $e['duplicateOf'] ?? null;
                 if (!is_array($d) || !$writable($e)) { continue; }
@@ -2655,7 +2703,7 @@ class EMS extends IPSModule
         // sonst ganz verschwunden ("keine Wallbox gefunden"), obwohl ChargerHub sie liefert.
         $present = array();
         $p = $this->GetPartners();
-        foreach (array('chargerhub', 'ocpphub') as $src) {
+        foreach (self::CHARGER_SOURCES as $src) {
             foreach ((array)($p[$src] ?? array()) as $e) { $present[$src . ':' . (int)($e['instanceID'] ?? 0)] = true; }
         }
         return array_values(array_filter($list, function ($e) use ($present) {
@@ -2676,10 +2724,10 @@ class EMS extends IPSModule
     {
         $count = $this->getChargerEntry($n);
         if (empty($count)) { return null; }
-        $writable = function ($e) { return in_array($e['managedBy'] ?? 'none', array('none', 'ems'), true); };
+        $writable = function ($e) { return $this->chargerEmsWritable($e); };
         if ($writable($count)) { return $count; }
         $p = $this->GetPartners();
-        foreach (array('chargerhub', 'ocpphub') as $src) {
+        foreach (self::CHARGER_SOURCES as $src) {
             foreach ((array)($p[$src] ?? array()) as $e) {
                 $d = $e['duplicateOf'] ?? null;
                 if (is_array($d) && ($d['source'] ?? '') === ($count['source'] ?? '')
@@ -2704,7 +2752,43 @@ class EMS extends IPSModule
         if ($use['ocpphub']) {
             foreach ($this->withoutDuplicates((array)($p['ocpphub'] ?? array())) as $c) { $c['source'] = 'ocpphub'; $list[] = $c; }
         }
+        // EEBUS-Wallboxen (ChargerEEBUSHub) zaehlen additiv, unabhaengig von WB_Quelle (deren gespeicherte Werte 0-3 betreffen
+        // nur ChargerHub/OCPPHub und bleiben unveraendert): fuer ein ueber EEBUS angebundenes Geraet gibt es meist keine andere
+        // Quelle. Doppelt nur, wenn dasselbe Geraet auch ueber ChargerHub/OCPPHub kommt -- dann gilt duplicateOf (Nutzerangabe),
+        // und ohne Markierung bei gleicher Seriennummer zaehlt der bestehende Eintrag, die EEBUS-Anbindung nicht (Warnung im Log).
+        foreach ($this->withoutDuplicates((array)($p['chargereebushub'] ?? array())) as $c) {
+            $c['source'] = 'chargereebushub';
+            if ($this->eebusChargerSerialTwin($c, $list) !== null) { continue; }
+            $list[] = $c;
+        }
         return $list;
+    }
+
+    /** Wallbox-Quellen fuer Dubletten-/Reglerpruefung (duplicateOf.source). */
+    private const CHARGER_SOURCES = array('chargerhub', 'ocpphub', 'chargereebushub');
+
+    /**
+     * Darf EMS ueber diesen Eintrag schalten? managedBy none/ems wie bisher. EEBUS-Wallboxen (ChargerEEBUSHub) werden in dieser
+     * Version nur gemessen: EMS schaltet ueber die Idents ctl_enable/ctl_curr_limit (ChargerHub/OCPPHub), die dieses Modul nicht hat.
+     */
+    private function chargerEmsWritable(array $e): bool
+    {
+        if (($e['source'] ?? '') === 'chargereebushub') { return false; }
+        return in_array($e['managedBy'] ?? 'none', array('none', 'ems'), true);
+    }
+
+    /**
+     * Schon gezaehlter ChargerHub-/OCPPHub-Eintrag mit derselben Seriennummer wie die EEBUS-Wallbox $c (ohne duplicateOf-Markierung
+     * vermutlich dasselbe Geraet); null, wenn keiner. Nie geraten ohne Seriennummer.
+     */
+    private function eebusChargerSerialTwin(array $c, array $counted): ?array
+    {
+        $sn = trim((string)($c['deviceSerial'] ?? ''));
+        if ($sn === '') { return null; }
+        foreach ($counted as $o) {
+            if (strcasecmp(trim((string)($o['deviceSerial'] ?? '')), $sn) === 0) { return $o; }
+        }
+        return null;
     }
 
     /**
@@ -2730,8 +2814,7 @@ class EMS extends IPSModule
     {
         $result = array();
         foreach ($this->getChargerList() as $chg) {
-            $managedBy = $chg['managedBy'] ?? 'none';
-            if (in_array($managedBy, array('none', 'ems'), true)) {
+            if ($this->chargerEmsWritable($chg)) {
                 $result[] = $chg;
             }
         }
@@ -5183,8 +5266,9 @@ class EMS extends IPSModule
         // wird die Quelle je Eintrag mitgegeben statt zusammengefasst.
         $heatpumpSources = array(
             'heishamon' => 'HeishaMon', 'wphub' => 'WPHub', 'wpmodbushub' => 'WPModbusHub',
-            'wpmodbushubgw' => 'WPModbusHubGateway', 'samsungehs' => 'SamsungEhs',
+            'wpmodbushubgw' => 'WPModbusHubGateway', 'samsungehs' => 'SamsungEhs', 'wpeebushub' => 'WPEEBUSHub',
         );
+        $optOn = $this->ReadPropertyBoolean('WP_OptionalRun_Active');
         $heatpumps = array();
         foreach ($heatpumpSources as $key => $srcName) {
             foreach ((array)($partners[$key] ?? array()) as $hp) {
@@ -5200,7 +5284,8 @@ class EMS extends IPSModule
                 'label'      => $hp['Caption'] ?? 'Wärmepumpe',
                 'situation'  => 'A',
                 'source'     => 'ems',
-                'writable'   => false, // bewusst inaktiv, siehe README
+                // nur der Zusatzlauf (heatpump 1.18) ist schaltbar, und nur, wenn der Nutzer ihn eingeschaltet hat
+                'writable'   => $optOn && $this->hpOptionalRunEligible($hp),
             );
         }
 
@@ -11201,9 +11286,179 @@ class EMS extends IPSModule
         }
     }
 
+    // ----------------------------------------------------------------
+    //  WP-Zusatzlauf bei PV-Ueberschuss (heatpump-Vertrag 1.18, WP-Steuermuster SUITE.md, 0.99.0)
+    // ----------------------------------------------------------------
+
+    /** Partnerschluessel aller Waermepumpen-Quellen (heatpump-Vertrag). */
+    private const HEATPUMP_KEYS = array('heishamon', 'wphub', 'wpmodbushub', 'wpmodbushubgw', 'samsungehs', 'wpeebushub');
+
+    /**
+     * Darf EMS den Zusatzlauf dieses Eintrags schalten? Nur mit optionalRunID, controllable=true und Steuerhoheit
+     * fehlend/none/ems (nie 'other' oder ein modul-eigener Wert wie 'heishamon'/'wphub': dort regelt ein anderer).
+     */
+    private function hpOptionalRunEligible(array $hp): bool
+    {
+        $vid = (int)($hp['optionalRunID'] ?? 0);
+        if ($vid <= 0 || (int)($hp['instanceID'] ?? 0) <= 0 || ($hp['controllable'] ?? false) !== true) { return false; }
+        if (!in_array((string)($hp['managedBy'] ?? 'none'), array('', 'none', 'ems'), true)) { return false; }
+        return IPS_VariableExists($vid);
+    }
+
+    /** Alle Waermepumpen-Eintraege mit schaltbarem Zusatzlauf, Schluessel = optionalRunID (eine Stellgroesse = ein Eintrag). */
+    private function hpOptionalRunTargets(): array
+    {
+        $out = array();
+        $p = $this->GetPartners();
+        foreach (self::HEATPUMP_KEYS as $key) {
+            foreach ((array)($p[$key] ?? array()) as $hp) {
+                if (is_array($hp) && $this->hpOptionalRunEligible($hp)) { $out[(int)$hp['optionalRunID']] = $hp; }
+            }
+        }
+        return $out;
+    }
+
+    /** Schreibt den Zusatzlauf-Wunsch (nur bei Wunschwechsel aufgerufen). */
+    private function hpWriteOptionalRun(int $vid, bool $on): bool
+    {
+        try { $r = RequestAction($vid, $on); return $r !== false; }
+        catch (Throwable $e) { $this->emsLog(EMS_LOG_BASIC, sprintf('WP-Zusatzlauf: Schreiben auf #%d fehlgeschlagen: %s', $vid, $e->getMessage())); return false; }
+    }
+
+    /**
+     * Nimmt jeden Zusatzlauf zurueck, den EMS zuletzt gewuenscht hat (einmal false), z. B. bei EMS aus oder Schalter aus.
+     * Wurde nie true gewuenscht, schreibt EMS nichts.
+     */
+    private function releaseHeatpumpOptionalRuns(string $why): void
+    {
+        $st = json_decode($this->ReadAttributeString('HpOptionalRun'), true);
+        if (!is_array($st) || empty($st)) { return; }
+        $changed = false;
+        foreach ($st as $vid => $e) {
+            if (!empty($e['want'])) {
+                $this->hpWriteOptionalRun((int)$vid, false);
+                $this->emsLog(EMS_LOG_BASIC, sprintf('WP-Zusatzlauf #%d zurückgenommen (%s)', (int)$vid, $why));
+                $changed = true;
+            }
+        }
+        if ($changed || !empty($st)) { $this->WriteAttributeString('HpOptionalRun', '{}'); }
+    }
+
+    /**
+     * Zusatzlauf je Waermepumpe: einschalten, wenn der Ueberschuss ohnehin ins Netz ginge (gemessene Einspeisung >= erwartete
+     * Zusatzleistung ueber WP_OptionalRun_Delay_Min) und die Batterie ihn nicht nimmt (keine, voll, B1 sperrt das Laden bewusst
+     * oder sie laedt bereits und es fliesst trotzdem ins Netz). Ausschalten bei anhaltendem Netzbezug, fruehestens nach der
+     * Mindestlaufzeit. §14a-Lastbegrenzung schaltet sofort aus; Negativpreis-Sonderlage und Grid Rewards verhindern ein Neueinschalten.
+     * Geschrieben wird nur beim Wunschwechsel; der gelesene Wert der WP ist ihr Ist-Zustand und wird nie mit dem Wunsch verglichen.
+     * Grid-Vorzeichen kanonisch: grid_total_w + = Einspeisung, - = Bezug; bat_pow_w + = Entladen, - = Laden.
+     */
+    private function applyHeatpumpOptionalRun(array $s, ?int $now = null): void
+    {
+        $now = $now ?? time();
+        if (!$this->ReadPropertyBoolean('WP_OptionalRun_Active')) {
+            $this->releaseHeatpumpOptionalRuns($this->t('heat pump additional run switched off'));
+            return;
+        }
+        $targets = $this->hpOptionalRunTargets();
+        $st = json_decode($this->ReadAttributeString('HpOptionalRun'), true);
+        if (!is_array($st)) { $st = array(); }
+        // nicht mehr schaltbare Eintraege (Steuerhoheit gewechselt, Modul weg): einmal false, wenn EMS true gewuenscht hatte
+        foreach ($st as $vid => $e) {
+            if (!isset($targets[(int)$vid])) {
+                if (!empty($e['want'])) { $this->hpWriteOptionalRun((int)$vid, false); }
+                unset($st[$vid]);
+            }
+        }
+        $delay   = max(0, $this->ReadPropertyInteger('WP_OptionalRun_Delay_Min')) * 60;
+        $minRun  = max(0, $this->ReadPropertyInteger('WP_OptionalRun_MinRun_Min')) * 60;
+        $offImp  = max(0, $this->ReadPropertyInteger('WP_OptionalRun_OffImport_W'));
+        $exportW = max(0.0, (float)($s['grid_total_w'] ?? 0.0));
+        $importW = max(0.0, -(float)($s['grid_total_w'] ?? 0.0));
+        $sbh = $this->getSteuerboxState();
+        $dimm = ($sbh !== null) && !empty($sbh['loadDimmActive']);
+        $neg = !empty($this->negativePriceStatus($now)['active']);
+        $gr  = !empty($s['grid_rewards']);
+        // Batterie hat Vorrang: nur, wenn sie den Ueberschuss nicht (mehr) nimmt
+        $batW = (float)($s['bat_pow_w'] ?? 0.0);
+        $batFree = empty($s['bat_active']) || (float)($s['bat_soc'] ?? 0.0) >= 97.0
+            || $this->ReadAttributeBoolean('B1Active') || $batW <= -200.0;
+        if ($batW > 100.0) { $batFree = false; } // Einspeisung aus der Batterie ist kein Ueberschuss
+        foreach ($targets as $vid => $hp) {
+            $e = (array)($st[$vid] ?? array());
+            $want = !empty($e['want']);
+            $need = 0.0;
+            foreach (array('optionalRunPowerMaxID', 'optionalRunPowerID') as $k) {
+                $id = (int)($hp[$k] ?? 0);
+                if ($need <= 0.0 && $id > 0 && IPS_VariableExists($id)) { $need = (float)GetValue($id); }
+            }
+            if ($need <= 0.0) { $need = (float)max(0, $this->ReadPropertyInteger('WP_OptionalRun_MinSurplus_W')); }
+            $newWant = $want;
+            if ($dimm) {
+                $newWant = false;
+                $text = $this->t('Additional run off: §14a load limitation by the grid operator');
+                $e['cond'] = 0;
+            } elseif (!$want) {
+                $blocked = $neg ? $this->t('negative price situation') : ($gr ? $this->t('Tibber Grid Rewards active') : '');
+                $ok = $blocked === '' && $batFree && $exportW >= $need;
+                $e['cond'] = $ok ? ((int)($e['cond'] ?? 0) > 0 ? (int)$e['cond'] : $now) : 0;
+                if ($ok && $now - (int)$e['cond'] >= $delay) {
+                    $newWant = true;
+                    $text = sprintf($this->t('Additional run on: %s kW surplus'), $this->num($exportW / 1000.0, 1));
+                } elseif ($blocked !== '') {
+                    $text = sprintf($this->t('Additional run off: %s'), $blocked);
+                } elseif (!$batFree) {
+                    $text = $this->t('Additional run off: the battery takes the surplus first');
+                } elseif ($ok) {
+                    $text = sprintf($this->t('Additional run pending: %s kW surplus, waiting for %d min'), $this->num($exportW / 1000.0, 1), (int)ceil(($delay - ($now - (int)$e['cond'])) / 60));
+                } else {
+                    $text = sprintf($this->t('Additional run off: surplus %s kW below %s kW'), $this->num($exportW / 1000.0, 1), $this->num($need / 1000.0, 1));
+                }
+            } else {
+                $bad = $importW >= $offImp && $offImp > 0;
+                $e['cond'] = $bad ? ((int)($e['cond'] ?? 0) > 0 ? (int)$e['cond'] : $now) : 0;
+                $ran = $now - (int)($e['onAt'] ?? $now);
+                if ($bad && $now - (int)$e['cond'] >= $delay && $ran >= $minRun) {
+                    $newWant = false;
+                    $text = sprintf($this->t('Additional run off: %s kW drawn from the grid'), $this->num($importW / 1000.0, 1));
+                } elseif ($bad) {
+                    $text = sprintf($this->t('Additional run on, %s kW drawn from the grid: switching off after the minimum run time and delay'), $this->num($importW / 1000.0, 1));
+                } else {
+                    $text = (string)($e['text'] ?? $this->t('Additional run on'));
+                }
+            }
+            if ($newWant !== $want) {
+                $this->hpWriteOptionalRun((int)$vid, $newWant);
+                $e['cond'] = 0;
+                if ($newWant) { $e['onAt'] = $now; }
+                $this->emsLog(EMS_LOG_BASIC, sprintf('WP-Zusatzlauf %s (#%d): %s', $newWant ? 'an' : 'aus', (int)$vid, $text));
+            }
+            $e['want'] = $newWant;
+            $e['label'] = (string)($hp['Caption'] ?? $hp['label'] ?? ('#' . (int)$hp['instanceID']));
+            $e['text'] = $text;
+            $st[$vid] = $e;
+        }
+        $this->WriteAttributeString('HpOptionalRun', json_encode($st));
+    }
+
+    /** Statuszeile fuers Waermepumpen-Panel. */
+    private function hpOptionalRunStatusLine(): string
+    {
+        if (!$this->ReadPropertyBoolean('WP_OptionalRun_Active')) { return $this->t('Additional run: switched off'); }
+        $targets = $this->hpOptionalRunTargets();
+        if (empty($targets)) { return $this->t('Additional run: no heat pump with a switchable additional run found (WPEEBUSHub or similar, control authority none/EMS)'); }
+        $st = json_decode($this->ReadAttributeString('HpOptionalRun'), true);
+        $parts = array();
+        foreach ($targets as $vid => $hp) {
+            $label = (string)($hp['Caption'] ?? $hp['label'] ?? ('#' . (int)$hp['instanceID']));
+            $parts[] = $label . ': ' . (string)($st[$vid]['text'] ?? $this->t('Additional run: waiting for the next cycle'));
+        }
+        return implode(' | ', $parts);
+    }
+
     private function chargerSourceLabel(array $entry): string
     {
-        return (($entry['source'] ?? '') === 'ocpphub') ? 'OCPPHub' : 'ChargerHub';
+        $src = (string)($entry['source'] ?? '');
+        return ($src === 'ocpphub') ? 'OCPPHub' : (($src === 'chargereebushub') ? 'ChargerEEBUSHub' : 'ChargerHub');
     }
 
     private function setAllWallboxes($enable)

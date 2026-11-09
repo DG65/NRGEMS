@@ -843,7 +843,30 @@
             "Wallbox %d: override ended, the charging mode applies again.": "Wallbox %d: Übersteuerung beendet, es gilt wieder die Ladeart.",
             "Wallbox %d: charging target deleted.": "Wallbox %d: Ladeziel gelöscht.",
             "✅ ApplyChanges() executed.": "✅ ApplyChanges() ausgeführt.",
-            "NEW: Step 2 of the bilingual module: status lines, button messages, push notifications and weekday names follow the Symcon language setting. The reasons in the day plan follow in the next version.": "NEU: Zweisprachig, Schritt 2: Statuszeilen, Rückmeldungen der Knöpfe, Push-Meldungen und Wochentage folgen der Sprache von Symcon. Die Begründungen im Tagesplan folgen in der nächsten Version."
+            "NEW: Step 2 of the bilingual module: status lines, button messages, push notifications and weekday names follow the Symcon language setting. The reasons in the day plan follow in the next version.": "NEU: Zweisprachig, Schritt 2: Statuszeilen, Rückmeldungen der Knöpfe, Push-Meldungen und Wochentage folgen der Sprache von Symcon. Die Begründungen im Tagesplan folgen in der nächsten Version.",
+            "EMS is switched off": "EMS ist ausgeschaltet",
+            "heat pump additional run switched off": "WP-Zusatzlauf ausgeschaltet",
+            "Additional run off: §14a load limitation by the grid operator": "Zusatzlauf aus: §14a-Lastbegrenzung durch den Netzbetreiber",
+            "negative price situation": "Negativpreis-Lage",
+            "Tibber Grid Rewards active": "Tibber Grid Rewards aktiv",
+            "Additional run on: %s kW surplus": "Zusatzlauf an: %s kW Überschuss",
+            "Additional run off: %s": "Zusatzlauf aus: %s",
+            "Additional run off: the battery takes the surplus first": "Zusatzlauf aus: die Batterie nimmt den Überschuss zuerst",
+            "Additional run pending: %s kW surplus, waiting for %d min": "Zusatzlauf vorgemerkt: %s kW Überschuss, noch %d min abwarten",
+            "Additional run off: surplus %s kW below %s kW": "Zusatzlauf aus: Überschuss %s kW unter %s kW",
+            "Additional run off: %s kW drawn from the grid": "Zusatzlauf aus: %s kW Netzbezug",
+            "Additional run on, %s kW drawn from the grid: switching off after the minimum run time and delay": "Zusatzlauf an, %s kW Netzbezug: aus nach Mindestlaufzeit und Wartezeit",
+            "Additional run on": "Zusatzlauf an",
+            "Additional run: switched off": "Zusatzlauf: ausgeschaltet",
+            "Additional run: no heat pump with a switchable additional run found (WPEEBUSHub or similar, control authority none/EMS)": "Zusatzlauf: keine Wärmepumpe mit schaltbarem Zusatzlauf gefunden (WPEEBUSHub o. Ä., Steuerhoheit keine/EMS)",
+            "Additional run: waiting for the next cycle": "Zusatzlauf: wartet auf den nächsten Zyklus",
+            "── Additional run on PV surplus ──────────────────────────": "── Zusatzlauf bei PV-Überschuss ──────────────────────────",
+            "Heat pumps that offer an additional run (e.g. via WPEEBUSHub) are switched on by EMS only when the surplus would otherwise go to the grid and the battery does not take it. EMS only switches if the heat pump module allows it (control authority none or EMS).": "Wärmepumpen mit Zusatzlauf (z. B. über WPEEBUSHub) schaltet das EMS nur ein, wenn der Überschuss sonst ins Netz ginge und die Batterie ihn nicht nimmt. Das EMS schaltet nur, wenn das Wärmepumpen-Modul es erlaubt (Steuerhoheit keine oder EMS).",
+            "Switch the heat pump additional run on PV surplus": "Wärmepumpen-Zusatzlauf bei PV-Überschuss schalten",
+            "Required surplus if the heat pump reports no power (W)": "Nötiger Überschuss, wenn die Wärmepumpe keine Leistung meldet (W)",
+            "Switch off at sustained grid import from (W)": "Ausschalten bei anhaltendem Netzbezug ab (W)",
+            "Condition must last for (min.)": "Bedingung muss anhalten (Min.)",
+            "Minimum run time after switching on (min.)": "Mindestlaufzeit nach dem Einschalten (Min.)"
         }
     }
 }
