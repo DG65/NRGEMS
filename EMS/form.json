@@ -2088,6 +2088,7 @@
         },
         {
             "type": "Button",
+            "name": "ForceApplyButton",
             "caption": "🔄 Force apply (without form change)",
             "onClick": "IPS_ApplyChanges($id); echo '✅ ApplyChanges() ausgeführt.';"
         }

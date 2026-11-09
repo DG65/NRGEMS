@@ -96,7 +96,10 @@ foreach (['VARIABLETYPE_BOOLEAN' => 0, 'VARIABLETYPE_INTEGER' => 1, 'VARIABLETYP
           'VARIABLE_PRESENTATION_SLIDER' => '{6B9CAEEC-5958-C223-30F7-BD36569FC57A}', 'VARIABLE_PRESENTATION_VALUE_INPUT' => '{6A8FC8D2-5B39-D4A1-8D1D-F2E4C7F80F04}'] as $k => $v) { if (!defined($k)) { define($k, $v); } }
 function GetValue($id)            { return $GLOBALS['VAL'][$id] ?? 0; }
 function GetValueInteger($id)     { return (int)($GLOBALS['VAL'][$id] ?? 0); }
-function SetValue($id, $v)        { $GLOBALS['VAL'][$id] = $v; return true; }
+// EMS_DUMP=<Datei>: alle sichtbaren Texte (Variablen, Formular, Rueckgaben, Push) mitschreiben -- Gegenprobe alt/neu auf Deutsch
+function emsDump(string $kind, $v): void { if (getenv('EMS_DUMP') && empty($GLOBALS['EMS_LANG_EN']) && (is_string($v) || is_array($v))) { $GLOBALS['DUMP'][] = $kind . ': ' . (is_string($v) ? $v : json_encode($v, JSON_UNESCAPED_UNICODE)); } }
+function SetValue($id, $v)        { emsDump('SetValue', $v); $GLOBALS['VAL'][$id] = $v; return true; }
+function WFC_PushNotification($id, $title, $text, $sound, $target) { emsDump('Push', $title . ' | ' . $text); $GLOBALS['PUSH'][] = [$title, $text]; return true; }
 function RequestAction($id, $v)   { $GLOBALS['VAL'][$id] = $v; return true; }
 function AC_SetLoggingStatus($a, $b, $c) { $GLOBALS['LOGGED'][$b] = $c; $GLOBALS['LOGSET'][] = $b; return true; }
 function AC_GetLoggingStatus($a, $b) { return !empty($GLOBALS['LOGGED'][$b]); }
@@ -181,10 +184,10 @@ class IPSModule
     protected function SetStatus($s) {}
     protected function SendDebug($sender, $msg, $format) {}
     protected function LogMessage($msg, $type) { $GLOBALS['LOG'][] = 'LogMessage(' . $type . '): ' . $msg; }
-    public function UpdateFormField($f, $p, $v) { $GLOBALS['FORMFIELD'][$f][$p] = $v; }
+    public function UpdateFormField($f, $p, $v) { emsDump('Form ' . $f . '.' . $p, $v); $GLOBALS['FORMFIELD'][$f][$p] = $v; }
     protected function RegisterMessage($a, $b) {}
     // Zweisprachigkeit: der Pruefstand laeuft wie ein deutsches Symcon ($GLOBALS['EMS_LANG_EN'] = true: Englisch = Quelltext)
-    public function Translate($s) { return emsLocaleDe()[$s] ?? $s; }
+    public function Translate($s) { $GLOBALS['TRANSLATE_CALLS'] = ($GLOBALS['TRANSLATE_CALLS'] ?? 0) + 1; $GLOBALS['TRANSLATE_LAST'] = $s; return emsLocaleDe()[$s] ?? $s; }
 }
 
 /** Deutsche Fassungen aus EMS/locale.json (nur der Pruefstand liest die Datei, das Modul nie selbst). */
@@ -210,7 +213,9 @@ function emsFormDe(string $json): string
         }
         return $node;
     };
-    return json_encode($walk(json_decode($json, true)), JSON_UNESCAPED_UNICODE);
+    $out = json_encode($walk(json_decode($json, true)), JSON_UNESCAPED_UNICODE);
+    emsDump('Formular', $out);
+    return $out;
 }
 
 // EMS_TEST_MODULE: alternativer Pfad, um den Pruefstand gegen eine bewusst
@@ -232,7 +237,9 @@ function check($label, $cond, $detail = '') {
 }
 function call($obj, $method, array $args = []) {
     $m = new ReflectionMethod($obj, $method); // private Methoden sind ab PHP 8.1 per Reflection direkt aufrufbar
-    return $m->invokeArgs($obj, $args);
+    $r = $m->invokeArgs($obj, $args);
+    emsDump('call ' . $method, $r);
+    return $r;
 }
 function prop($n, $v) { $GLOBALS['PROP'][EMS_IID][$n] = $v; }
 function attr($n, $v) { $GLOBALS['ATTR'][EMS_IID][$n] = $v; }
@@ -952,6 +959,39 @@ check('Pauschal-Hinweise (Netzmesspunkte/WR) weiter ueber name entfernt', strpos
 $memo->setValue(null, []);
 prop('EMS_Risk_Acknowledged', false); prop('WB_Active', false);
 
+
+echo "\n8d5) Zweisprachigkeit Schritt 2: Wochentage, Laufzeittexte, Merkliste\n";
+$memo = new ReflectionProperty('EMS', 'emsTextMemo');
+$ems = freshEms(); prop('WB_Active', true); prop('WB_Count', 1);
+// gespeicherte Wochen-Frist aus 0.98.0 (deutsche Bezeichnungen) und eine Liste ohne Day-Feld (nur Spalten, Zeilenposition zaehlt)
+prop('WB1_WeekTargets', json_encode([['Day' => 1, 'Label' => 'Montag', 'Time' => '07:00', 'Kwh' => 12.0], ['Day' => 2, 'Label' => 'Dienstag', 'Time' => '', 'Kwh' => 0.0], ['Day' => 3, 'Label' => 'Mittwoch', 'Time' => '', 'Kwh' => 0.0], ['Day' => 4, 'Label' => 'Donnerstag', 'Time' => '', 'Kwh' => 0.0], ['Day' => 5, 'Label' => 'Freitag', 'Time' => '06:30', 'Kwh' => 0.0], ['Day' => 6, 'Label' => 'Samstag', 'Time' => '', 'Kwh' => 0.0], ['Day' => 7, 'Label' => 'Sonntag', 'Time' => '', 'Kwh' => 0.0]]));
+prop('WB2_WeekTargets', json_encode([['Label' => 'Montag', 'Time' => '', 'Kwh' => 0.0], ['Label' => 'Dienstag', 'Time' => '08:15', 'Kwh' => 5.0]]));
+$GLOBALS['EMS_LANG_EN'] = true; $memo->setValue(null, []);
+$wEn = call($ems, 'weekTargets', [1]); $w2En = call($ems, 'weekTargets', [2]);
+$GLOBALS['EMS_LANG_EN'] = false; $memo->setValue(null, []);
+$wDe = call($ems, 'weekTargets', [1]);
+check('Wochen-Frist: gespeicherte deutsche Werte gelten weiter (Zeiten/kWh je Tag unveraendert)', $wEn[0]['Time'] === '07:00' && $wEn[0]['Kwh'] === 12.0 && $wEn[4]['Time'] === '06:30' && $w2En[1]['Time'] === '08:15' && $w2En[1]['Kwh'] === 5.0, json_encode([$wEn, $w2En]));
+check('Wochen-Frist: Wochentag in der Anzeigesprache (englisch Monday, deutsch Montag wie bisher)', $wEn[0]['Label'] === 'Monday' && $wEn[6]['Label'] === 'Sunday' && $wDe[0]['Label'] === 'Montag' && $wDe[6]['Label'] === 'Sonntag', json_encode([$wEn[0], $wDe[0]]));
+$fW = null; foreach (json_decode($ems->GetConfigurationForm(), true)['elements'] as $e) { foreach ($e['items'] ?? [] as $it) { if (($it['name'] ?? '') === 'WB1_WeekTargets') { $fW = $it; } } }
+check('Formular: Wochen-Frist mit eingesetzten Werten (Listenzellen selbst uebersetzt, nicht aus der Konfiguration)', $fW !== null && ($fW['loadValuesFromConfiguration'] ?? true) === false && ($fW['values'][0]['Label'] ?? '') === 'Montag' && ($fW['values'][0]['Time'] ?? '') === '07:00', json_encode($fW['values'][0] ?? null));
+check('Wochen-Frist: Frist am Montag wirkt weiterhin (Logik nur ueber Tag/Uhrzeit)', call($ems, 'weekTargetsActive', [1]) === true);
+// Englisch: Laufzeittexte enthalten kein Deutsch mehr
+$GLOBALS['EMS_LANG_EN'] = true; $memo->setValue(null, []);
+$en = [call($ems, 'getDiscoverySummaryLine'), call($ems, 'getBoostStatusLine'), call($ems, 'priceThresholdLine', ['charge', array_fill(0, 96, 0.30)]), call($ems, 'cycleCostText'), call($ems, 'chargeCurveStatusLine'), call($ems, 'getSpotStatusLine'), $ems->GetStatus(), call($ems, 'statusText', ['x']), $ems->EnableArchiving(), $ems->RecomputeSelfBalance(), call($ems, 'getPT15MStatusLine'), call($ems, 'getBatterySocStatusLine'), call($ems, 'getGridFieldStatusLine', ['total'])];
+foreach (call($ems, 'configCheckLines') as $l) { $en[] = $l['text']; }
+foreach (call($ems, 'wallboxLinkLines', [1]) as $l) { $en[] = $l['caption']; }
+$ml = call($ems, 'wallboxModeStatusLine', [1]); $en[] = is_array($ml) ? $ml['caption'] : $ml;
+$deLeft = array_values(array_filter(array_map(function ($x) { return is_array($x) ? ($x['caption'] ?? '') : (string)$x; }, $en), function ($x) { return preg_match('/[äöüÄÖÜß]|\b(nicht|keine?|wird|Wallbox gefunden|Preis)\b/u', str_replace('Börsenpreis', '', $x)); }));
+check('Englisch: Statuszeilen, Rueckmeldungen und Konfigurationspruefung ohne Deutsch', count($deLeft) === 0, json_encode($deLeft, JSON_UNESCAPED_UNICODE));
+$GLOBALS['EMS_LANG_EN'] = false; $memo->setValue(null, []);
+// Merkliste (Stolperstein 24): zweiter Regelzyklus fragt Symcon nicht mehr
+$GLOBALS['TRANSLATE_CALLS'] = 0; $ems->Update(); json_decode($ems->GetConfigurationForm(), true); $ems->Update(); $first = $GLOBALS['TRANSLATE_CALLS']; // zwei Durchlaeufe zum Fuellen (der erste setzt Zustaende, die der zweite anzeigt)
+$GLOBALS['TRANSLATE_CALLS'] = 0; $t0 = microtime(true); $ems->Update(); json_decode($ems->GetConfigurationForm(), true); $dt = microtime(true) - $t0; $second = $GLOBALS['TRANSLATE_CALLS'];
+$t1 = microtime(true); for ($i = 0; $i < 10000; $i++) { call($ems, 't', ['OK: %s']); } $per = (microtime(true) - $t1) / 10000 * 1e6;
+echo sprintf("        (Merkliste: Fuellen %d Translate-Aufrufe, danach %d; t() je Aufruf %.2f us inkl. Reflection; Zyklus+Formular %.1f ms)\n", $first, $second, $per, $dt * 1000);
+check('Merkliste: weiterer Durchlauf (Regelzyklus + Formular) ohne Translate()-Aufruf', $first > 0 && $second === 0, "$first / $second " . ($GLOBALS["TRANSLATE_LAST"] ?? ""));
+prop('WB_Active', false); prop('WB_Count', 1); prop('WB1_WeekTargets', json_encode(call($ems, 'defaultWeekTargets'))); prop('WB2_WeekTargets', json_encode(call($ems, 'defaultWeekTargets')));
+
 echo "\n8e) Andere Nutzer, andere Konstellationen: Netzladen ohne feste Einspeiseverguetung\n";
 $ems = freshEms();
 prop('ANL_Verguetung_ct', 0.0); // Verguetung unbekannt
@@ -1112,11 +1152,11 @@ prop('BAT_Capacity_kWh', 40.0); prop('BAT_Price_EUR', 9998.0); prop('BAT_Cycles'
 $pW = []; for ($i = 0; $i < 96; $i++) { $pW[] = 0.30 + $i * (0.25 / 95); }
 prop('NETZLADUNG_Referenz', 1);
 $info = []; $thW = call($ems, 'priceThresholdsCore', [$pW, &$info]);
-check('Winter 30-55 ct, Referenz Ersatzpreis: Ladeschwelle bleibt unteres Viertel (wirtschaftliche Grenze ~39 ct lockert nicht)', abs($thW['charge'] - $pW[(int)round(0.25 * 95)]) < 1e-9 && strpos($info['charge'], 'unteres Viertel') !== false, json_encode([$thW, $info]));
+check('Winter 30-55 ct, Referenz Ersatzpreis: Ladeschwelle bleibt unteres Viertel (wirtschaftliche Grenze ~39 ct lockert nicht)', abs($thW['charge'] - $pW[(int)round(0.25 * 95)]) < 1e-9 && $info['charge'] === 'auto_low', json_encode([$thW, $info]));
 // b) enger Verlauf 30..34 ct: Verschleiss 3,1 ct + Mindestspanne 3 ct + Wandlungsverluste machen Laden unwirtschaftlich
 $pN = []; for ($i = 0; $i < 96; $i++) { $pN[] = 0.30 + $i * (0.04 / 95); }
 $info = []; $thN = call($ems, 'priceThresholdsCore', [$pN, &$info]);
-check('enger Verlauf 30-34 ct: Ladeschwelle wird auf die wirtschaftliche Grenze (unter 30 ct) gesenkt, nichts gilt als guenstig', $thN['charge'] < 0.30 && $thN['charge'] < $pN[(int)round(0.25 * 95)] && strpos($info['charge'], 'Wirtschaftlichkeit') !== false, json_encode([$thN, $info]));
+check('enger Verlauf 30-34 ct: Ladeschwelle wird auf die wirtschaftliche Grenze (unter 30 ct) gesenkt, nichts gilt als guenstig', $thN['charge'] < 0.30 && $thN['charge'] < $pN[(int)round(0.25 * 95)] && in_array($info['charge'], ['auto_econ_replace', 'auto_econ_feed'], true), json_encode([$thN, $info]));
 // c) eingetragen gilt unveraendert, auch wenn unwirtschaftlich
 prop('TIB_Threshold_Charge', 0.07);
 $info = []; $thE = call($ems, 'priceThresholdsCore', [$pN, &$info]);
@@ -1127,21 +1167,22 @@ prop('ANL_Verguetung_ct', 18.36);
 $pC = []; for ($i = 0; $i < 96; $i++) { $pC[] = 0.10 + $i * (0.08 / 95); }
 $info = []; $thC = call($ems, 'priceThresholdsCore', [$pC, &$info]);
 $floorD = 0.1836 * 0.95 + 0.0312;
-check('billiger Tarif: Entladeschwelle mindestens Verguetung x 0,95 + Verschleiss (~20,5 ct) statt oberes Viertel (16 ct)', abs($thC['discharge'] - $floorD) < 0.001 && strpos($info['discharge'], 'Einspeisevergütung') !== false, json_encode([$thC, $info]));
+check('billiger Tarif: Entladeschwelle mindestens Verguetung x 0,95 + Verschleiss (~20,5 ct) statt oberes Viertel (16 ct)', abs($thC['discharge'] - $floorD) < 0.001 && $info['discharge'] === 'auto_floor_feed', json_encode([$thC, $info]));
 // e) teurer Tarif: oberes Viertel liegt ueber der Untergrenze, bleibt unveraendert
 $info = []; $thH = call($ems, 'priceThresholdsCore', [$pW, &$info]);
-check('Winter-Tarif: Entladeschwelle bleibt oberes Viertel (Untergrenze 20,5 ct lockert nicht)', abs($thH['discharge'] - $pW[(int)round(0.75 * 95)]) < 1e-9 && strpos($info['discharge'], 'oberes Viertel') !== false, json_encode([$thH, $info]));
+check('Winter-Tarif: Entladeschwelle bleibt oberes Viertel (Untergrenze 20,5 ct lockert nicht)', abs($thH['discharge'] - $pW[(int)round(0.75 * 95)]) < 1e-9 && $info['discharge'] === 'auto_high', json_encode([$thH, $info]));
 // f) ohne bekannte Verguetung keine Untergrenze fuer Entladen
 prop('ANL_Verguetung_ct', 0.0);
 $thNF = call($ems, 'priceThresholds', [$pC]);
 check('ohne bekannte Einspeiseverguetung: keine Untergrenze, Entladeschwelle = oberes Viertel', abs($thNF['discharge'] - $pC[(int)round(0.75 * 95)]) < 1e-9, json_encode($thNF));
 // g) flacher Tarif: unveraendert keine Preissteuerung
 $infoF = []; $thFl = call($ems, 'priceThresholdsCore', [array_fill(0, 96, 0.30), &$infoF]);
-check('flacher Tarif: weiter keine Preissteuerung, Statuszeile sagt es', $thFl['charge'] >= 1e8 && strpos($infoF['charge'], 'flacher Preisverlauf') !== false, json_encode([$thFl, $infoF]));
+$lineF = call($ems, 'priceThresholdLine', ['charge', array_fill(0, 96, 0.30)]);
+check('flacher Tarif: weiter keine Preissteuerung, Statuszeile sagt es', $thFl['charge'] >= 1e8 && $infoF['charge'] === 'auto_flat' && $lineF === 'ℹ️ Wirksam: keine Preissteuerung (flacher Preisverlauf).', json_encode([$thFl, $infoF]));
 // h) Referenz Verguetung (Standard bei bekannter Verguetung): Ladegrenze = Verguetung x 0,95 - Verschleiss (~14,3 ct)
 prop('ANL_Verguetung_ct', 18.36); prop('NETZLADUNG_Referenz', 0);
 $info = []; $thV = call($ems, 'priceThresholdsCore', [$pW, &$info]);
-check('Referenz Verguetung: Ladeschwelle auf Verguetung x 0,95 - Verschleiss (~14,3 ct) begrenzt', abs($thV['charge'] - (0.1836 * 0.95 - 0.0312)) < 0.001 && strpos($info['charge'], 'Einspeisevergütung') !== false, json_encode([$thV, $info]));
+check('Referenz Verguetung: Ladeschwelle auf Verguetung x 0,95 - Verschleiss (~14,3 ct) begrenzt', abs($thV['charge'] - (0.1836 * 0.95 - 0.0312)) < 0.001 && $info['charge'] === 'auto_econ_feed', json_encode([$thV, $info]));
 // i) Statuszeile fuers Formular
 prop('NETZLADUNG_Referenz', 1); prop('ANL_Verguetung_ct', 0.0);
 $line = call($ems, 'priceThresholdLine', ['charge', $pW]);
@@ -3823,5 +3864,6 @@ $r = call($ems, 'GetGridImportOutlook', [$now, $now + 3600, 0.0, false]);
 check('Batteriespeicher im EMS aus: ok=false', $r['ok'] === false && strpos($r['reason'], 'Batterie') !== false, json_encode($r));
 
 // ===========================================================================
+if (getenv('EMS_DUMP')) { file_put_contents(getenv('EMS_DUMP'), implode("\n", $GLOBALS['DUMP'] ?? []) . "\n"); }
 echo "\n" . ($fails === 0 ? "ALLE SZENARIEN BESTANDEN" : "$fails SZENARIO(S) VERLETZT") . "\n\n";
 exit($fails === 0 ? 0 : 1);

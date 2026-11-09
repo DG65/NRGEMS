@@ -197,6 +197,12 @@ class EMS extends IPSModule
         return $text;
     }
 
+    /** Zahl in der Schreibweise der Sprache: Dezimal- und Tausenderzeichen kommen aus locale.json ("." -> ",", "," -> "."). */
+    private function num(float $v, int $dec, bool $thousands = false): string
+    {
+        return number_format($v, $dec, $this->t('.'), $thousands ? $this->t(',') : '');
+    }
+
     // "🪟 Formular: Aufbau" (SUITE.md Punkt 3a, 0.97.4): waehlbare Fachpanels, Panel-name => stabiler Schluessel, Standardreihenfolge.
     // Panels werden ueber 'name' gefunden, nie ueber die (uebersetzte) Caption (SUITE.md Konventionen Punkt 9).
     private const FORM_LAYOUT_PANELS = array(
@@ -821,9 +827,9 @@ class EMS extends IPSModule
         $this->WriteAttributeBoolean('DryRunAuto', false);
         $this->emsLog(EMS_LOG_BASIC, 'EMS live geschaltet (Einführungs-Trockenlauf beendet)');
         if ($this->ReadPropertyBoolean('EMS_DryRun')) {
-            return '⚠️ Der Trockenlauf im Formular (Bereich „Allgemein“) ist weiter eingeschaltet: dort ausschalten, damit EMS schreibt.';
+            return $this->t('⚠️ Dry run is still switched on in the form (section "General"): switch it off there so that EMS writes.');
         }
-        return '✅ EMS schreibt ab dem nächsten Zyklus an Wechselrichter und Wallbox.';
+        return $this->t('✅ From the next cycle on, EMS writes to the inverter and wallbox.');
     }
 
     // ----------------------------------------------------------------
@@ -950,7 +956,7 @@ class EMS extends IPSModule
                     if (($item['name'] ?? '') === 'VAR_TIB_PT15M_Today') {
                         $ptLine = $this->getPT15MStatusLine();
                         $ptText = is_array($ptLine) ? (string)$ptLine['caption'] : (string)$ptLine;
-                        $ptAuto = (strpos($ptText, '✅') === 0) && (int)$this->ReadPropertyInteger('VAR_TIB_PT15M_Today') === 0 && (int)$this->ReadPropertyInteger('VAR_TIB_PT15M_Tomorrow') === 0;
+                        $ptAuto = $this->isAutoLine($ptText) && (int)$this->ReadPropertyInteger('VAR_TIB_PT15M_Today') === 0 && (int)$this->ReadPropertyInteger('VAR_TIB_PT15M_Tomorrow') === 0;
                         if ($ptAuto) {
                             $ptLine = $this->autoLineText($ptText);
                         }
@@ -1256,6 +1262,26 @@ class EMS extends IPSModule
             )
         );
 
+        // 3f. Wochen-Frist: Listenzellen (Wochentag) uebersetzt die Konsole nicht -- Werte selbst einsetzen (SUITE.md Store-Punkte 3/25).
+        // Gespeicherte Bezeichnungen (frueher deutsch) werden nie ausgewertet; massgeblich sind Day bzw. die Zeilenposition.
+        foreach ($form['elements'] as &$element) {
+            if (($element['type'] ?? '') !== 'ExpansionPanel' || !isset($element['items'])) { continue; }
+            foreach ($element['items'] as $idx => $item) {
+                if (preg_match('/^WB([12])_WeekTargets$/', (string)($item['name'] ?? ''), $wm)) {
+                    $element['items'][$idx]['loadValuesFromConfiguration'] = false;
+                    $element['items'][$idx]['values'] = $this->weekTargets((int)$wm[1]);
+                }
+            }
+        }
+        unset($element);
+
+        // 3g. Rueckmeldetext des Knopfs "Übernehmen erzwingen" in der Sprache der Anzeige (onClick-Text uebersetzt die Konsole nicht)
+        foreach ($form['actions'] as $k => $a) {
+            if (($a['name'] ?? '') === 'ForceApplyButton') {
+                $form['actions'][$k]['onClick'] = 'IPS_ApplyChanges($id); echo "' . addslashes($this->t('✅ ApplyChanges() executed.')) . '";';
+            }
+        }
+
         // 4a. "🪟 Formular: Aufbau" (SUITE.md Punkt 3a): Reihenfolge, Auf-/Zuklappen, Ausblenden der Fachpanels, Panel selbst dahinter
         $form['elements'] = $this->formLayoutApply($form['elements'], self::FORM_LAYOUT_PANELS);
 
@@ -1315,7 +1341,7 @@ class EMS extends IPSModule
     {
         $line = $this->getPT15MStatusLine($instanceId);
         $line = is_array($line) ? (string)$line['caption'] : (string)$line;
-        $auto = (strpos($line, '✅') === 0 && (int)$this->ReadPropertyInteger('VAR_TIB_PT15M_Today') === 0);
+        $auto = ($this->isAutoLine($line) && (int)$this->ReadPropertyInteger('VAR_TIB_PT15M_Today') === 0);
         if ($auto) { $line = $this->autoLineText($line); }
         $this->UpdateFormField('PT15MStatusLabel', 'caption', $line);
         $this->UpdateFormField('PT15MStatusLabel', 'color', $auto ? EMS_COLOR_AUTO : -1);
@@ -1491,7 +1517,7 @@ class EMS extends IPSModule
         if (!$this->ReadPropertyBoolean('EMS_Active')) {
             if ($this->ReadPropertyBoolean('WB_Active')) {
                 for ($n = 1; $n <= min(2, max(1, $this->ReadPropertyInteger('WB_Count'))); $n++) {
-                    try { $this->publishWallboxPlan($n, 'EMS ist ausgeschaltet: die Wallbox wird nicht gesteuert.'); } catch (Throwable $e) {}
+                    try { $this->publishWallboxPlan($n, $this->t('EMS is switched off: the wallbox is not controlled.')); } catch (Throwable $e) {}
                 }
             }
             // Dietmars Vorgabe 29.08.2026: Ist EMS aus, MUSS ctl_ems_enable
@@ -1686,7 +1712,7 @@ class EMS extends IPSModule
             if ($s['situation'] === 'B') { $countB++; }
         }
         $situationSummary = sprintf(
-            '%d Geräte gesamt, davon %d in Situation B (Fremdsteuerung, EMS beobachtet nur)',
+            $this->t('%d devices in total, %d of them in situation B (controlled externally, EMS only monitors)'),
             count($situation), $countB
         );
         $this->SetValue('EMS_Situation', $situationSummary);
@@ -1827,7 +1853,7 @@ class EMS extends IPSModule
                 $entries[] = array(
                     'module'     => $module,
                     'instanceID' => $id,
-                    'label'      => IPS_InstanceExists($id) ? IPS_GetName($id) : '(geloescht)',
+                    'label'      => IPS_InstanceExists($id) ? IPS_GetName($id) : $this->t('(deleted)'),
                     'status'     => $status,
                     'healthy'    => $healthy,
                     'sleeping'   => $sleeping,
@@ -1857,7 +1883,7 @@ class EMS extends IPSModule
             $entries[] = array(
                 'module'     => $module,
                 'instanceID' => $id,
-                'label'      => IPS_InstanceExists($id) ? IPS_GetName($id) : '(geloescht)',
+                'label'      => IPS_InstanceExists($id) ? IPS_GetName($id) : $this->t('(deleted)'),
                 'status'     => $status,
                 'healthy'    => $healthy,
             );
@@ -1880,34 +1906,34 @@ class EMS extends IPSModule
                 $missing[] = array(
                     'module'     => $module,
                     'instanceID' => (int)$id,
-                    'label'      => IPS_InstanceExists($id) ? IPS_GetName($id) : '(geloescht)',
+                    'label'      => IPS_InstanceExists($id) ? IPS_GetName($id) : $this->t('(deleted)'),
                 );
             }
         }
 
         $summary = sprintf(
-            '%d/%d Partnerinstanzen gesund',
+            $this->t('%d/%d partner instances healthy'),
             $activeCount - count($unhealthy), $activeCount
         );
         if (!empty($unhealthy)) {
             $labels = array_map(function ($e) {
-                return $e['label'] . ' (Status ' . $e['status'] . ')';
+                return sprintf($this->t('%s (status %s)'), $e['label'], $e['status']);
             }, $unhealthy);
-            $summary .= ' -- auffaellig: ' . implode(', ', $labels);
+            $summary .= sprintf($this->t(' -- conspicuous: %s'), implode(', ', $labels));
         }
         if (!empty($sleeping)) {
             $labels = array_map(function ($e) { return $e['label']; }, $sleeping);
-            $summary .= ' -- schlaeft: ' . implode(', ', $labels);
+            $summary .= sprintf($this->t(' -- asleep: %s'), implode(', ', $labels));
         }
         if (!empty($inactive)) {
             $labels = array_map(function ($e) { return $e['label']; }, $inactive);
-            $summary .= ' -- deaktiviert: ' . implode(', ', $labels);
+            $summary .= sprintf($this->t(' -- disabled: %s'), implode(', ', $labels));
         }
         if (!empty($missing)) {
             $labels = array_map(function ($m) {
                 return $m['label'] . ' (' . $m['module'] . ')';
             }, $missing);
-            $summary .= ' -- installiert, aber ohne Antwort: ' . implode(', ', $labels);
+            $summary .= sprintf($this->t(' -- installed but not responding: %s'), implode(', ', $labels));
         }
 
         $this->SetValue('EMS_FederationHealth', $summary);
@@ -1971,7 +1997,7 @@ class EMS extends IPSModule
             if ($wasAlarmed) {
                 @WFC_PushNotification(
                     $visID,
-                    '✅ NRG-Stack Verbund wieder normal',
+                    $this->t('✅ NRG-Stack federation back to normal'),
                     $health['summary'],
                     'info',
                     0
@@ -1993,8 +2019,8 @@ class EMS extends IPSModule
         if (!$wasAlarmed && (time() - $since) >= $graceSec) {
             @WFC_PushNotification(
                 $visID,
-                '⚠️ NRG-Stack Verbund gestoert',
-                $health['summary'] . sprintf(' (seit %d Min. anhaltend)', (int)round((time() - $since) / 60)),
+                $this->t('⚠️ NRG-Stack federation disrupted'),
+                sprintf($this->t('%s (ongoing for %d min.)'), $health['summary'], (int)round((time() - $since) / 60)),
                 'alert',
                 0
             );
@@ -2439,32 +2465,33 @@ class EMS extends IPSModule
         $out = array();
         $inst = $get('Instance', 'WB' . $n . '_Instance');
         if ($inst > 0) {
-            $out['Instanz'] = array('caption' => sprintf('✏️ Wallbox %d: eigene Zuordnung Instanz #%d (%s)', $n, $inst, IPS_ObjectExists($inst) ? IPS_GetName($inst) : 'existiert nicht'), 'color' => -1);
+            $out['Instanz'] = array('caption' => sprintf($this->t('✏️ Wallbox %d: own assignment instance #%d (%s)'), $n, $inst, IPS_ObjectExists($inst) ? IPS_GetName($inst) : $this->t('does not exist')), 'color' => -1);
         } elseif ($hub !== '') {
-            $out['Instanz'] = array('caption' => sprintf('🔗 Wallbox %d: automatisch verbunden über %s', $n, $hub), 'color' => EMS_COLOR_AUTO);
+            $out['Instanz'] = array('caption' => sprintf($this->t('🔗 Wallbox %d: connected automatically via %s'), $n, $hub), 'color' => EMS_COLOR_AUTO);
         } else {
-            $out['Instanz'] = array('caption' => sprintf('⚠️ Wallbox %d: keine Wallbox gefunden. Sobald ChargerHub oder OCPPHub eine meldet, verbindet EMS sie selbst.', $n), 'color' => -1);
+            $out['Instanz'] = array('caption' => sprintf($this->t('⚠️ Wallbox %d: no wallbox found. As soon as ChargerHub or OCPPHub reports one, EMS connects it by itself.'), $n), 'color' => -1);
         }
         $fields = array(
-            'Power'  => array('Leistung',   'VAR_WB' . $n . '_Power',  'powerID',     ', EMS rechnet ohne Ladeleistung'),
-            'Cable'  => array('Angesteckt', 'VAR_WB' . $n . '_Cable',  'plugStateID', ', EMS weiß nicht, ob ein Fahrzeug angesteckt ist'),
-            'Status' => array('Status',     'VAR_WB' . $n . '_Status', 'stateID',     ' (nur Anzeige)'),
-            'Error'  => array('Fehler',     'VAR_WB' . $n . '_Error',  'errorCodeID', ', die Freigabe wird nicht auf Fehler geprüft'),
+            // [0] = interner Schluessel (Formularfeld WBnLink<Schluessel>, nie uebersetzen), [4] = angezeigte Bezeichnung
+            'Power'  => array('Leistung',   'VAR_WB' . $n . '_Power',  'powerID',     $this->t(', EMS calculates without charging power'), $this->t('Power')),
+            'Cable'  => array('Angesteckt', 'VAR_WB' . $n . '_Cable',  'plugStateID', $this->t(', EMS does not know whether a vehicle is plugged in'), $this->t('Plugged in')),
+            'Status' => array('Status',     'VAR_WB' . $n . '_Status', 'stateID',     $this->t(' (display only)'), $this->t('Status')),
+            'Error'  => array('Fehler',     'VAR_WB' . $n . '_Error',  'errorCodeID', $this->t(', enabling is not checked for errors'), $this->t('Error')),
         );
         foreach ($fields as $k => $f) {
-            list($label, $prop, $field, $missing) = $f;
+            list($key, $prop, $field, $missing, $label) = $f;
             $man = $get($k, $prop);
             if ($man > 0) {
-                $out[$label] = IPS_VariableExists($man)
-                    ? array('caption' => sprintf('✏️ %s: eigene Variable #%d (%s), aktuell %s', $label, $man, IPS_GetName($man), $this->wallboxLinkValue($k, GetValue($man), true)), 'color' => -1)
-                    : array('caption' => sprintf('⚠️ %s: die eigene Variable #%d existiert nicht', $label, $man), 'color' => -1);
+                $out[$key] = IPS_VariableExists($man)
+                    ? array('caption' => sprintf($this->t('✏️ %s: own variable #%d (%s), currently %s'), $label, $man, IPS_GetName($man), $this->wallboxLinkValue($k, GetValue($man), true)), 'color' => -1)
+                    : array('caption' => sprintf($this->t('⚠️ %s: the own variable #%d does not exist'), $label, $man), 'color' => -1);
                 continue;
             }
             $vid = (int)($entry[$field] ?? 0);
             if ($vid > 0 && IPS_VariableExists($vid)) {
-                $out[$label] = array('caption' => sprintf('🔗 %s: automatisch von %s, aktuell %s', $label, $hub, $this->wallboxLinkValue($k, GetValue($vid), false)), 'color' => EMS_COLOR_AUTO);
+                $out[$key] = array('caption' => sprintf($this->t('🔗 %s: automatically from %s, currently %s'), $label, $hub, $this->wallboxLinkValue($k, GetValue($vid), false)), 'color' => EMS_COLOR_AUTO);
             } else {
-                $out[$label] = array('caption' => sprintf('⚠️ %s: nicht verbunden%s', $label, ($hub !== '' ? ' (' . $src . ' meldet diesen Wert für die Wallbox nicht)' : '') . $missing), 'color' => -1);
+                $out[$key] = array('caption' => sprintf($this->t('⚠️ %s: not connected%s'), $label, ($hub !== '' ? sprintf($this->t(' (%s does not report this value for the wallbox)'), $src) : '') . $missing), 'color' => -1);
             }
         }
         return $out;
@@ -2474,10 +2501,10 @@ class EMS extends IPSModule
     private function wallboxLinkValue(string $k, $v, bool $manual): string
     {
         switch ($k) {
-            case 'Power':  $w = $manual ? (float)$v * 1000.0 : (float)$v; return number_format($w, 0, ',', '.') . ' W';
-            case 'Cable':  return ((int)(bool)$v === 1) ? 'angesteckt' : 'nicht angesteckt';
-            case 'Status': return 'Wert ' . (is_bool($v) ? (int)$v : (string)$v) . ' (Bedeutung je Hersteller)';
-            case 'Error':  return ((int)$v === 0) ? 'kein Fehler' : 'Fehler ' . (int)$v . ', Freigabe gesperrt';
+            case 'Power':  $w = $manual ? (float)$v * 1000.0 : (float)$v; return $this->num($w, 0, true) . ' W';
+            case 'Cable':  return ((int)(bool)$v === 1) ? $this->t('plugged in') : $this->t('not plugged in');
+            case 'Status': return sprintf($this->t('value %s (meaning depends on the manufacturer)'), (is_bool($v) ? (int)$v : (string)$v));
+            case 'Error':  return ((int)$v === 0) ? $this->t('no error') : sprintf($this->t('error %d, enabling blocked'), (int)$v);
         }
         return (string)$v;
     }
@@ -2486,11 +2513,11 @@ class EMS extends IPSModule
     private function priceLinkLine(?int $ov = null): array
     {
         $id = ($ov !== null) ? $ov : (int)$this->ReadPropertyInteger('VAR_TIB_Price');
-        $ct = function ($eur) { return number_format((float)$eur * 100, 2, ',', '') . ' ct/kWh'; };
+        $ct = function ($eur) { return $this->num((float)$eur * 100, 2) . ' ct/kWh'; };
         if ($id > 0) {
             return IPS_VariableExists($id)
-                ? array('caption' => sprintf('✏️ Strompreis: eigene Variable #%d (%s), aktuell %s', $id, IPS_GetName($id), $ct(GetValue($id))), 'color' => -1)
-                : array('caption' => sprintf('⚠️ Strompreis: die eigene Variable #%d existiert nicht', $id), 'color' => -1);
+                ? array('caption' => sprintf($this->t('✏️ Electricity price: own variable #%d (%s), currently %s'), $id, IPS_GetName($id), $ct(GetValue($id))), 'color' => -1)
+                : array('caption' => sprintf($this->t('⚠️ Electricity price: the own variable #%d does not exist'), $id), 'color' => -1);
         }
         $p = null;
         try {
@@ -2499,9 +2526,9 @@ class EMS extends IPSModule
             $p = $prices[$slot] ?? null;
         } catch (Throwable $e) { $p = null; }
         if ($p !== null) {
-            return array('caption' => '🔗 Strompreis: automatisch aus der Viertelstunden-Preiskurve, aktuell ' . $ct($p), 'color' => EMS_COLOR_AUTO);
+            return array('caption' => sprintf($this->t('🔗 Electricity price: automatically from the quarter-hour price curve, currently %s'), $ct($p)), 'color' => EMS_COLOR_AUTO);
         }
-        return array('caption' => '⚠️ Strompreis: keine Quelle gefunden (keine Variable verknüpft, keine Preiskurve). Ohne Preis prüft EMS die Wallbox nicht auf den Preis.', 'color' => -1);
+        return array('caption' => $this->t('⚠️ Electricity price: no source found (no variable linked, no price curve). Without a price, EMS does not check the wallbox against the price.'), 'color' => -1);
     }
 
     /** onChange der Wallbox-Felder: die Quellzeilen folgen der Auswahl im offenen Formular. */
@@ -3194,9 +3221,9 @@ class EMS extends IPSModule
     private function manualPlanActions(): array
     {
         return array(
-            array('value' => EMS_OP_NET_CHARGE, 'key' => 'charge', 'label' => 'Netz laden', 'usesPower' => true),
-            array('value' => EMS_OP_HOLD,       'key' => 'hold',   'label' => 'Akku halten (Haus aus dem Netz)', 'usesPower' => false),
-            array('value' => EMS_OP_AUTO,       'key' => 'auto',   'label' => 'Automatik (Akku deckt das Haus, kein Netzladen)', 'usesPower' => false),
+            array('value' => EMS_OP_NET_CHARGE, 'key' => 'charge', 'label' => $this->t('Grid charging'), 'usesPower' => true),
+            array('value' => EMS_OP_HOLD,       'key' => 'hold',   'label' => $this->t('Hold battery (house from the grid)'), 'usesPower' => false),
+            array('value' => EMS_OP_AUTO,       'key' => 'auto',   'label' => $this->t('Automatic (battery supplies the house, no grid charging)'), 'usesPower' => false),
         );
     }
 
@@ -3246,48 +3273,48 @@ class EMS extends IPSModule
         $errors = array();
         $in = json_decode($json, true);
         if (!is_array($in) || !isset($in['entries']) || !is_array($in['entries'])) {
-            $errors[] = array('field' => 'entries', 'message' => 'Erwartet wird {"entries": [...]} mit einer Liste von Einträgen.');
+            $errors[] = array('field' => 'entries', 'message' => $this->t('Expected is {"entries": [...]} with a list of entries.'));
             return array('ok' => false, 'errors' => $errors, 'plan' => $this->GetManualPlan(), 'revision' => $this->GetManualPlan()['revision']);
         }
         $cur = $this->GetManualPlan();
         if (isset($in['revision']) && (string)$in['revision'] !== $cur['revision']) {
-            $errors[] = array('field' => 'revision', 'message' => 'Der Plan wurde zwischenzeitlich geändert (z. B. im Formular). Bitte neu laden und erneut speichern.');
+            $errors[] = array('field' => 'revision', 'message' => $this->t('The plan has been changed in the meantime (e.g. in the form). Please reload and save again.'));
         }
         if (count($in['entries']) > $cur['maxEntries']) {
-            $errors[] = array('field' => 'entries', 'message' => 'Höchstens ' . $cur['maxEntries'] . ' Einträge.');
+            $errors[] = array('field' => 'entries', 'message' => sprintf($this->t('At most %d entries.'), $cur['maxEntries']));
         }
         $valid = array(EMS_OP_AUTO, EMS_OP_NET_CHARGE, EMS_OP_HOLD);
         $today = date('Y-m-d');
         $norm = array(); $sets = array(); $removed = array();
         foreach (array_values($in['entries']) as $i => $e) {
             $f = 'entries[' . $i . ']';
-            if (!is_array($e)) { $errors[] = array('field' => $f, 'message' => 'Kein Eintrag.'); continue; }
+            if (!is_array($e)) { $errors[] = array('field' => $f, 'message' => $this->t('Not an entry.')); continue; }
             $bad = false;
             $d = $this->manualEntryDate((string)($e['date'] ?? ''));
-            if ($d === null) { $errors[] = array('field' => $f . '.date', 'message' => 'Das Datum ist nicht lesbar (JJJJ-MM-TT oder TT.MM.JJJJ, leer = jeden Tag).'); $bad = true; }
+            if ($d === null) { $errors[] = array('field' => $f . '.date', 'message' => $this->t('The date cannot be read (YYYY-MM-DD or DD.MM.YYYY, empty = every day).')); $bad = true; }
             elseif ($d !== '' && $d < $today) {
                 // Vergangene Eintraege werden still entfernt statt die ganze Speicherung abzulehnen (Befund Pauls Anlage 25.10.2026:
                 // der Editor schickt die geladene Liste samt erledigtem Eintrag zurueck, kein neuer Eintrag wurde gespeichert).
-                $removed[] = array('field' => $f . '.date', 'message' => 'Der Eintrag vom ' . date('d.m.Y', strtotime($d)) . ' liegt in der Vergangenheit und wurde entfernt.');
+                $removed[] = array('field' => $f . '.date', 'message' => sprintf($this->t('The entry of %s is in the past and has been removed.'), date($this->t('Y-m-d'), strtotime($d))));
                 continue;
             }
             $act = isset($e['action']) ? (int)$e['action'] : -1;
-            if (!in_array($act, $valid, true)) { $errors[] = array('field' => $f . '.action', 'message' => 'Unbekannte Aktion (erlaubt: 0 Automatik, 2 Netz laden, 8 Akku halten).'); $bad = true; }
+            if (!in_array($act, $valid, true)) { $errors[] = array('field' => $f . '.action', 'message' => $this->t('Unknown action (allowed: 0 automatic, 2 grid charging, 8 hold battery).')); $bad = true; }
             $from = trim((string)($e['from'] ?? '')); $to = trim((string)($e['to'] ?? ''));
             $fm = null; $tm = null;
-            if (!preg_match('/^(\d{1,2}):(\d{2})$/', $from, $a) || (int)$a[1] > 23 || (int)$a[2] > 59) { $errors[] = array('field' => $f . '.from', 'message' => 'Die Uhrzeit „von“ muss HH:MM sein (00:00 bis 23:59).'); $bad = true; }
+            if (!preg_match('/^(\d{1,2}):(\d{2})$/', $from, $a) || (int)$a[1] > 23 || (int)$a[2] > 59) { $errors[] = array('field' => $f . '.from', 'message' => $this->t('The time "from" must be HH:MM (00:00 to 23:59).')); $bad = true; }
             else { $fm = (int)$a[1] * 60 + (int)$a[2]; $from = sprintf('%02d:%02d', (int)$a[1], (int)$a[2]); }
             if ($to === '') { $tm = 1440; }
-            elseif (!preg_match('/^(\d{1,2}):(\d{2})$/', $to, $b) || (int)$b[2] > 59 || ((int)$b[1] * 60 + (int)$b[2]) > 1440) { $errors[] = array('field' => $f . '.to', 'message' => 'Die Uhrzeit „bis“ muss HH:MM sein (bis 24:00) oder leer (bis Mitternacht).'); $bad = true; }
+            elseif (!preg_match('/^(\d{1,2}):(\d{2})$/', $to, $b) || (int)$b[2] > 59 || ((int)$b[1] * 60 + (int)$b[2]) > 1440) { $errors[] = array('field' => $f . '.to', 'message' => $this->t('The time "to" must be HH:MM (up to 24:00) or empty (until midnight).')); $bad = true; }
             else { $tm = (int)$b[1] * 60 + (int)$b[2]; $to = sprintf('%02d:%02d', (int)$b[1], (int)$b[2]); }
-            if ($fm !== null && $tm !== null && $tm <= $fm) { $errors[] = array('field' => $f . '.to', 'message' => 'Das Ende muss nach dem Beginn liegen.'); $bad = true; }
+            if ($fm !== null && $tm !== null && $tm <= $fm) { $errors[] = array('field' => $f . '.to', 'message' => $this->t('The end must be after the start.')); $bad = true; }
             $pw = $e['power'] ?? 0;
-            if (!is_numeric($pw) || (float)$pw < 0 || (float)$pw > 100000) { $errors[] = array('field' => $f . '.power', 'message' => 'Die Leistung muss zwischen 0 und 100000 W liegen.'); $bad = true; }
+            if (!is_numeric($pw) || (float)$pw < 0 || (float)$pw > 100000) { $errors[] = array('field' => $f . '.power', 'message' => $this->t('The power must be between 0 and 100000 W.')); $bad = true; }
             if ($bad) { continue; }
             // Ueberlappung: gleicher Tag oder einer der beiden gilt jeden Tag
             foreach ($sets as $j => $o) {
                 if (($o['d'] === '' || $d === '' || $o['d'] === $d) && $fm < $o['tm'] && $o['fm'] < $tm) {
-                    $errors[] = array('field' => $f, 'message' => 'Überschneidet sich mit Eintrag ' . $j . ' (gleicher Tag und gleiche Uhrzeit).'); $bad = true; break;
+                    $errors[] = array('field' => $f, 'message' => sprintf($this->t('Overlaps with entry %d (same day and same time).'), $j)); $bad = true; break;
                 }
             }
             if ($bad) { continue; }
@@ -3333,26 +3360,26 @@ class EMS extends IPSModule
             $n = $i + 1;
             $act = (int)($r['Action'] ?? -1);
             if (!in_array($act, array(EMS_OP_AUTO, EMS_OP_NET_CHARGE, EMS_OP_HOLD), true)) {
-                $out[] = array('ok' => false, 'text' => sprintf('Zeile %d: Die Aktion fehlt oder ist unbekannt, der Eintrag wird ignoriert.', $n)); continue;
+                $out[] = array('ok' => false, 'text' => sprintf($this->t('Row %d: the action is missing or unknown, the entry is ignored.'), $n)); continue;
             }
             if (!preg_match('/^(\d{1,2}):(\d{2})$/', trim((string)($r['From'] ?? '')))) {
-                $out[] = array('ok' => false, 'text' => sprintf('Zeile %d: Die Uhrzeit „Von“ ist nicht lesbar (Format HH:MM), der Eintrag wird ignoriert.', $n)); continue;
+                $out[] = array('ok' => false, 'text' => sprintf($this->t('Row %d: the time "From" cannot be read (format HH:MM), the entry is ignored.'), $n)); continue;
             }
             $dRaw = trim((string)($r['Date'] ?? ''));
             $d = $this->manualEntryDate($dRaw);
             if ($d === null) {
-                $out[] = array('ok' => false, 'text' => sprintf('Zeile %d: Das Datum „%s“ ist nicht lesbar (JJJJ-MM-TT oder TT.MM.JJJJ), der Eintrag wird ignoriert.', $n, $dRaw)); continue;
+                $out[] = array('ok' => false, 'text' => sprintf($this->t('Row %d: the date "%s" cannot be read (YYYY-MM-DD or DD.MM.YYYY), the entry is ignored.'), $n, $dRaw)); continue;
             }
-            if ($d === '') { $out[] = array('ok' => true, 'text' => sprintf('Zeile %d: gilt jeden Tag.', $n)); continue; }
-            $dShow = date('d.m.Y', strtotime($d));
+            if ($d === '') { $out[] = array('ok' => true, 'text' => sprintf($this->t('Row %d: applies every day.'), $n)); continue; }
+            $dShow = date($this->t('Y-m-d'), strtotime($d));
             if ($d < $today) {
-                $out[] = array('ok' => false, 'text' => sprintf('Zeile %d: Das Datum %s liegt in der Vergangenheit, der Eintrag wird ignoriert.', $n, $dShow));
+                $out[] = array('ok' => false, 'text' => sprintf($this->t('Row %d: the date %s is in the past, the entry is ignored.'), $n, $dShow));
             } elseif ($d === $today) {
-                $out[] = array('ok' => true, 'text' => sprintf('Zeile %d: gilt heute (%s).', $n, $dShow));
+                $out[] = array('ok' => true, 'text' => sprintf($this->t('Row %d: applies today (%s).'), $n, $dShow));
             } elseif ($d === $tomorrow) {
-                $out[] = array('ok' => true, 'text' => sprintf('Zeile %d: gilt morgen (%s), sobald der Plan für morgen berechnet ist (Preise kommen am Nachmittag).', $n, $dShow));
+                $out[] = array('ok' => true, 'text' => sprintf($this->t('Row %d: applies tomorrow (%s) as soon as the plan for tomorrow has been calculated (prices arrive in the afternoon).'), $n, $dShow));
             } else {
-                $out[] = array('ok' => true, 'text' => sprintf('Zeile %d: Das Datum %s liegt weiter in der Zukunft. Der Plan umfasst heute und morgen, der Eintrag wirkt ab dem Vortag.', $n, $dShow));
+                $out[] = array('ok' => true, 'text' => sprintf($this->t('Row %d: the date %s is further in the future. The plan covers today and tomorrow; the entry takes effect from the day before.'), $n, $dShow));
             }
         }
         return $out;
@@ -4600,15 +4627,15 @@ class EMS extends IPSModule
      */
     private function autoLineText(string $text): string
     {
-        $text = preg_replace('/^✅ Automatisch verbunden:/u', '🔗 Automatisch übernommen:', $text);
-        return preg_replace('/\s+—\s+Felder? unten (?:werden|wird) ignoriert\./u', '.', $text);
+        // Kurzform aus connectedLine(), nie per Textmuster (Zweisprachigkeit: Logik nie an angezeigtem Text)
+        return $this->autoLines[$text] ?? $text;
     }
 
     private function pushAutoField(array &$out, array $item, $line): bool
     {
         $text = is_array($line) ? (string)$line['caption'] : (string)$line;
         $name = (string)($item['name'] ?? '');
-        $auto = (strpos($text, '✅') === 0) && $name !== '' && (int)$this->ReadPropertyInteger($name) === 0;
+        $auto = $this->isAutoLine($text) && $name !== '' && (int)$this->ReadPropertyInteger($name) === 0;
         if ($auto) {
             $text = $this->autoLineText($text);
             $item['visible'] = false;
@@ -4644,7 +4671,7 @@ class EMS extends IPSModule
     {
         $ts = $this->ReadAttributeInteger('LastDiscoveryTs');
         if ($ts === 0) {
-            return 'ℹ️ Noch nicht gesucht — Button unten drücken.';
+            return $this->t('ℹ️ Not searched yet — press the button below.');
         }
         $partners = json_decode($this->ReadAttributeString('PartnerCache'), true) ?: array();
         $count = 0;
@@ -4652,7 +4679,7 @@ class EMS extends IPSModule
             $count += is_array($list) ? count($list) : 0;
         }
         $icon = $count > 0 ? '✅' : '⚠️';
-        return sprintf('%s %d Partnermodul-Instanz(en) gefunden (zuletzt %s Uhr).', $icon, $count, date('H:i:s', $ts));
+        return sprintf($this->t('%s %d partner module instance(s) found (last search %s).'), $icon, $count, date('H:i:s', $ts));
     }
 
     /**
@@ -4664,21 +4691,55 @@ class EMS extends IPSModule
     {
         $inv = $this->getInverterEntry();
         if ($inv === null) {
-            return 'ℹ️ Kein Wechselrichter (InverterHub) gefunden.';
+            return $this->t('ℹ️ No inverter (InverterHub) found.');
         }
         $mark = function ($id) { return ((int)$id > 0) ? '✓' : '✗'; };
         $line = sprintf(
-            'Wechselrichter #%d: PV %s, Netz %s, Batterie %s, SOC %s, AC %s',
+            $this->t('Inverter #%d: PV %s, grid %s, battery %s, SOC %s, AC %s'),
             (int)$inv['instanceID'],
             $mark($inv['pvPowerID'] ?? 0), $mark($inv['gridPowerID'] ?? 0), $mark($inv['batPowerID'] ?? 0),
             $mark($inv['socID'] ?? 0), $mark($inv['acPowerID'] ?? 0)
         );
         $line .= (!empty($inv['controllable']) && ($inv['controlAuthority'] ?? 'none') === 'ems')
-            ? ' — EMS darf steuern.' : ' — EMS beobachtet nur.';
+            ? $this->t(' — EMS may control.') : $this->t(' — EMS only monitors.');
         if (!$this->ReadPropertyBoolean('EMS_Active')) {
-            $line .= ' EMS ist deaktiviert (Formularfeld „EMS aktiv“), daher werden keine Entscheidungen angezeigt.';
+            $line .= $this->t(' EMS is disabled (form field "EMS active"), so no decisions are shown.');
         }
         return $line;
+    }
+
+    /** Zeilen "Automatisch verbunden": vollstaendige Zeile => Kurzform fuer ausgeblendete Felder (autoLineText), je Prozess gemerkt. */
+    private $autoLines = array();
+
+    /**
+     * Statuszeile "✅ Automatisch verbunden: <Inhalt> ..." und ihre Kurzform "🔗 Automatisch übernommen: <Inhalt>." in einem.
+     * $suffix: 'fields' (Felder unten werden ignoriert), 'field' (Feld unten wird ignoriert), 'none' (Hinweis steht schon im Inhalt).
+     * Die Kurzform wird ueber die erzeugte Zeile nachgeschlagen, nie per Textmuster aus ihr herausgelesen.
+     */
+    private function connectedLine(string $body, string $suffix): string
+    {
+        if ($suffix === 'fields') {
+            $full = sprintf($this->t('✅ Connected automatically: %s — fields below are ignored.'), $body);
+            $auto = sprintf($this->t('🔗 Applied automatically: %s.'), $body);
+        } elseif ($suffix === 'field') {
+            $full = sprintf($this->t('✅ Connected automatically: %s — field below is ignored.'), $body);
+            $auto = sprintf($this->t('🔗 Applied automatically: %s.'), $body);
+        } elseif ($suffix === 'fieldKeep') {
+            // Symcon-Strompreis: Kurzform behaelt den Hinweis, wie bis 0.98.0 angezeigt (das alte Textmuster griff bei dieser Zeile nicht)
+            $full = sprintf($this->t('✅ Connected automatically: %s — field below is ignored.'), $body);
+            $auto = sprintf($this->t('🔗 Applied automatically: %s — field below is ignored.'), $body);
+        } else {
+            $full = sprintf($this->t('✅ Connected automatically: %s'), $body);
+            $auto = sprintf($this->t('🔗 Applied automatically: %s'), $body);
+        }
+        $this->autoLines[$full] = $auto;
+        return $full;
+    }
+
+    /** Ist die Zeile eine "Automatisch verbunden"-Zeile (Wert kommt automatisch)? Ueber die erzeugten Zeilen, nicht ueber den Text. */
+    private function isAutoLine(string $text): bool
+    {
+        return isset($this->autoLines[$text]);
     }
 
     private function getBatterySocStatusLine()
@@ -4686,21 +4747,21 @@ class EMS extends IPSModule
         $twoStrings = $this->ReadPropertyInteger('BAT_String_Count') >= 2;
         $inv = $this->getInverterEntry();
         if ($inv !== null && ($inv['socID'] ?? 0) > 0) {
-            return sprintf(
-                '✅ Automatisch verbunden: InverterHub #%d liefert den Batterie-SOC%s — Felder unten werden ignoriert.',
+            return $this->connectedLine(sprintf(
+                $this->t('InverterHub #%d supplies the battery SOC%s'),
                 $inv['instanceID'],
-                $twoStrings ? ' (InverterHub liefert bereits EINEN über beide Batteriestrings aggregierten Wert, gilt also auch für Batteriestring 2)' : ''
-            );
+                $twoStrings ? $this->t(' (InverterHub already supplies ONE value aggregated over both battery strings, so it also applies to battery string 2)') : ''
+            ), 'fields');
         }
         if (!$this->ReadPropertyBoolean('BAT_Active')) {
-            return 'ℹ️ Batteriespeicher ist deaktiviert — Feld unten wird nicht benötigt.';
+            return $this->t('ℹ️ Battery storage is disabled — the field below is not needed.');
         }
         if ($this->ReadPropertyInteger('VAR_BAT1_SOC') > 0) {
-            return '⚠️ Keine InverterHub-Instanz gefunden — Feld unten als manueller Fallback aktiv.';
+            return $this->t('⚠️ No InverterHub instance found — the field below is active as a manual fallback.');
         }
         return array(
             'type'    => 'Label',
-            'caption' => '⛔ PFLICHTFELD: Keine InverterHub-Instanz gefunden UND kein Fallback verknüpft — EMS rechnet sonst mit SOC=0% und trifft falsche Entscheidungen (z. B. unnötiges Nachladen). Bitte unten verknüpfen.',
+            'caption' => $this->t('⛔ REQUIRED FIELD: no InverterHub instance found AND no fallback linked — otherwise EMS calculates with SOC=0% and makes wrong decisions (e.g. unnecessary recharging). Please link below.'),
             'color'   => 0xFF0000,
         );
     }
@@ -4722,37 +4783,34 @@ class EMS extends IPSModule
         switch ($field) {
             case 'control': // VAR_WR_EMS_Mode + VAR_WR_EMS_Power (setGoodweMode())
                 if ($inv === null) {
-                    return 'ℹ️ Keine InverterHub-Instanz gefunden — Felder unten werden für die Steuerung benötigt.';
+                    return $this->t('ℹ️ No InverterHub instance found — the fields below are needed for control.');
                 }
                 $authority = $inv['controlAuthority'] ?? 'none';
                 if ($authority === 'ems' && ($inv['controllable'] ?? false) && $this->isSolisDriver((int)$inv['instanceID'])) {
-                    return sprintf(
-                        '✅ Automatisch verbunden: EMS steuert den Solis über InverterHub #%d (Netzladen per Zwangsladen, sonst Automatik; Felder unten werden ignoriert).',
+                    return $this->connectedLine(sprintf(
+                        $this->t('EMS controls the Solis via InverterHub #%d (grid charging via forced charging, otherwise automatic mode; fields below are ignored).'),
                         $inv['instanceID']
-                    );
+                    ), 'none');
                 }
                 if ($authority === 'ems' && ($inv['controllable'] ?? false)) {
-                    return sprintf(
-                        '✅ Automatisch verbunden: EMS steuert InverterHub #%d direkt (ctl_ems_*) — Felder unten werden ignoriert.',
-                        $inv['instanceID']
-                    );
+                    return $this->connectedLine(sprintf($this->t('EMS controls InverterHub #%d directly (ctl_ems_*)'), $inv['instanceID']), 'fields');
                 }
                 return sprintf(
-                    '⚠️ InverterHub #%d gefunden, aber Steuerhoheit liegt nicht bei EMS ("%s") — EMS schreibt hier bewusst nichts, auch nicht über die Felder unten.',
+                    $this->t('⚠️ InverterHub #%d found, but control authority is not with EMS ("%s") — EMS deliberately writes nothing here, not even via the fields below.'),
                     $inv['instanceID'], $authority
                 );
             case 'pv_total':
                 if ($inv !== null && ($inv['pvPowerID'] ?? 0) > 0) {
-                    return sprintf('✅ Automatisch verbunden: InverterHub #%d liefert die PV-Gesamtleistung — Feld unten wird ignoriert.', $inv['instanceID']);
+                    return $this->connectedLine(sprintf($this->t('InverterHub #%d supplies the total PV power'), $inv['instanceID']), 'field');
                 }
-                return 'ℹ️ Keine automatische PV-Gesamtleistung gefunden — Feld unten wird benötigt.';
+                return $this->t('ℹ️ No automatic total PV power found — the field below is needed.');
             case 'wr_total':
                 if ($inv !== null && ($inv['acPowerID'] ?? 0) > 0) {
-                    return sprintf('✅ Automatisch verbunden: InverterHub #%d liefert die WR-Gesamtleistung — Feld unten wird ignoriert.', $inv['instanceID']);
+                    return $this->connectedLine(sprintf($this->t('InverterHub #%d supplies the total inverter power'), $inv['instanceID']), 'field');
                 }
-                return 'ℹ️ Keine automatische WR-Gesamtleistung gefunden — Feld unten wird benötigt.';
+                return $this->t('ℹ️ No automatic total inverter power found — the field below is needed.');
             case 'unused':
-                return '🚫 Wird von EMS aktuell nicht ausgewertet (weder automatisch noch über dieses Feld) — eine Verknüpfung hat derzeit keine Wirkung.';
+                return $this->t('🚫 Currently not evaluated by EMS (neither automatically nor via this field) — linking it currently has no effect.');
         }
         return '';
     }
@@ -4762,20 +4820,17 @@ class EMS extends IPSModule
         if ($field === 'total') {
             $inv = $this->getInverterEntry();
             if ($inv === null) {
-                return 'ℹ️ Keine InverterHub-Instanz gefunden — Feld unten wird benötigt.';
+                return $this->t('ℹ️ No InverterHub instance found — the field below is needed.');
             }
             if (($inv['gridPowerID'] ?? 0) > 0) {
-                return sprintf(
-                    '✅ Automatisch verbunden: InverterHub #%d liefert die Netz-Gesamtleistung — Feld unten wird ignoriert.',
-                    $inv['instanceID']
-                );
+                return $this->connectedLine(sprintf($this->t('InverterHub #%d supplies the total grid power'), $inv['instanceID']), 'field');
             }
             return sprintf(
-                '⚠️ InverterHub #%d gefunden, liefert aber keine Netzleistung — Feld unten als Fallback aktiv.',
+                $this->t('⚠️ InverterHub #%d found, but it supplies no grid power — the field below is active as a fallback.'),
                 $inv['instanceID']
             );
         }
-        return 'ℹ️ EMS liest diesen Wert aktuell nicht automatisch von einem Partnermodul — nur diese manuelle Verknüpfung wird genutzt, falls gesetzt.';
+        return $this->t('ℹ️ EMS currently does not read this value automatically from a partner module — only this manual link is used, if set.');
     }
 
     /**
@@ -4795,29 +4850,29 @@ class EMS extends IPSModule
             $ppList = is_array($ppList) ? $ppList : array();
             if ($this->getPowerPriceInstance($sourceOverride) > 0 && $this->getPowerPriceCurveJson($sourceOverride) !== '' && (int)$this->ReadPropertyInteger('VAR_TIB_PT15M_Today') === 0) {
                 $ppId = $this->getPowerPriceInstance($sourceOverride);
-                return sprintf('✅ Automatisch verbunden: Symcon-Strompreis #%d ("%s") — Preis inklusive der dort eingestellten Aufschläge, ohne zeitvariable Netzentgelte (§ 14a Modul 3) — Feld unten wird ignoriert.', $ppId, IPS_GetName($ppId));
+                return $this->connectedLine(sprintf($this->t('Symcon electricity price #%d ("%s") — price including the surcharges configured there, without time-variable grid fees (§ 14a module 3)'), $ppId, IPS_GetName($ppId)), 'fieldKeep');
             }
             if (count($ppList) > 1 && ($sourceOverride !== null ? $sourceOverride : (int)$this->ReadPropertyInteger('PRICE_Source_Instance')) === 0) {
-                return '⚠️ Mehrere Symcon-Strompreis-Instanzen gefunden — bitte unten die zu verwendende auswählen (oder das Feld verknüpfen).';
+                return $this->t('⚠️ Several Symcon electricity price instances found — please select the one to use below (or link the field).');
             }
-            return 'ℹ️ Keine Tibber-Grid-Reward-Instanz und kein Symcon-Strompreis gefunden — Feld unten wird benötigt.';
+            return $this->t('ℹ️ No Tibber Grid Reward instance and no Symcon electricity price found — the field below is needed.');
         }
         try {
             $curve = TIBBERGR_GetPriceCurve($tibberId);
             if (is_array($curve) && !empty($curve)) {
                 $name = IPS_GetName($tibberId);
-                return sprintf(
-                    '✅ Automatisch verbunden: Tibber Grid Reward #%d ("%s"), %d Preis-Slots geladen — Feld unten wird ignoriert.',
+                return $this->connectedLine(sprintf(
+                    $this->t('Tibber Grid Reward #%d ("%s"), %d price slots loaded'),
                     $tibberId, $name, count($curve)
-                );
+                ), 'field');
             }
             return sprintf(
-                '⚠️ Tibber Grid Reward #%d gefunden, liefert aber gerade keine Preiskurve — Feld unten als Fallback aktiv.',
+                $this->t('⚠️ Tibber Grid Reward #%d found, but it currently supplies no price curve — the field below is active as a fallback.'),
                 $tibberId
             );
         } catch (Throwable $e) {
             return sprintf(
-                '⚠️ Tibber Grid Reward #%d gefunden, TIBBERGR_GetPriceCurve fehlgeschlagen (%s) — Feld unten als Fallback aktiv.',
+                $this->t('⚠️ Tibber Grid Reward #%d found, TIBBERGR_GetPriceCurve failed (%s) — the field below is active as a fallback.'),
                 $tibberId, $e->getMessage()
             );
         }
@@ -4912,7 +4967,7 @@ class EMS extends IPSModule
      */
     public function GetWeekTargets(int $n): array
     {
-        if ($n < 1 || $n > 2) { return array('ok' => false, 'errors' => array(array('field' => 'n', 'message' => 'Wallbox 1 oder 2.'))); }
+        if ($n < 1 || $n > 2) { return array('ok' => false, 'errors' => array(array('field' => 'n', 'message' => $this->t('Wallbox 1 or 2.')))); }
         $raw  = $this->ReadPropertyString('WB' . $n . '_WeekTargets');
         $days = array();
         foreach ($this->weekTargets($n) as $r) { $days[] = array('day' => $r['Day'], 'label' => $r['Label'], 'time' => $r['Time'], 'kwh' => $r['Kwh']); }
@@ -4927,25 +4982,25 @@ class EMS extends IPSModule
      */
     public function SetWeekTargets(int $n, string $json): array
     {
-        if ($n < 1 || $n > 2) { return array('ok' => false, 'errors' => array(array('field' => 'n', 'message' => 'Wallbox 1 oder 2.'))); }
+        if ($n < 1 || $n > 2) { return array('ok' => false, 'errors' => array(array('field' => 'n', 'message' => $this->t('Wallbox 1 or 2.')))); }
         $cur = $this->GetWeekTargets($n);
         $in  = json_decode($json, true);
         if (!is_array($in) || !isset($in['days']) || !is_array($in['days'])) {
-            return array('ok' => false, 'errors' => array(array('field' => 'days', 'message' => 'Erwartet wird JSON mit einer Liste "days".')), 'targets' => $cur, 'revision' => $cur['revision']);
+            return array('ok' => false, 'errors' => array(array('field' => 'days', 'message' => $this->t('Expected is JSON with a list "days".'))), 'targets' => $cur, 'revision' => $cur['revision']);
         }
         if (isset($in['revision']) && (string)$in['revision'] !== $cur['revision']) {
-            return array('ok' => false, 'errors' => array(array('field' => 'revision', 'message' => 'Die Wochen-Frist wurde inzwischen geändert, bitte neu laden.')), 'targets' => $cur, 'revision' => $cur['revision']);
+            return array('ok' => false, 'errors' => array(array('field' => 'revision', 'message' => $this->t('The weekly deadline has been changed in the meantime, please reload.'))), 'targets' => $cur, 'revision' => $cur['revision']);
         }
         $rows = $this->weekTargets($n); $errors = array();
         foreach (array_values($in['days']) as $i => $d) {
             $f = 'days[' . $i . ']';
             $day = is_array($d) ? (int)($d['day'] ?? 0) : 0;
-            if ($day < 1 || $day > 7) { $errors[] = array('field' => $f . '.day', 'message' => 'Tag 1 (Montag) bis 7 (Sonntag).'); continue; }
+            if ($day < 1 || $day > 7) { $errors[] = array('field' => $f . '.day', 'message' => $this->t('Day 1 (Monday) to 7 (Sunday).')); continue; }
             $t = trim((string)($d['time'] ?? ''));
-            if ($t !== '' && (!preg_match('/^(\d{1,2}):(\d{2})$/', $t, $m) || (int)$m[1] > 23 || (int)$m[2] > 59)) { $errors[] = array('field' => $f . '.time', 'message' => 'Uhrzeit HH:MM oder leer (keine Frist).'); continue; }
+            if ($t !== '' && (!preg_match('/^(\d{1,2}):(\d{2})$/', $t, $m) || (int)$m[1] > 23 || (int)$m[2] > 59)) { $errors[] = array('field' => $f . '.time', 'message' => $this->t('Time HH:MM or empty (no deadline).')); continue; }
             if ($t !== '') { $t = sprintf('%02d:%02d', (int)$m[1], (int)$m[2]); }
             $k = isset($d['kwh']) ? (float)$d['kwh'] : (float)$rows[$day - 1]['Kwh'];
-            if ($k < 0 || $k > 200) { $errors[] = array('field' => $f . '.kwh', 'message' => 'Ladeziel 0 bis 200 kWh (0 = einheitliches Ladeziel).'); continue; }
+            if ($k < 0 || $k > 200) { $errors[] = array('field' => $f . '.kwh', 'message' => $this->t('Charging target 0 to 200 kWh (0 = common charging target).')); continue; }
             $rows[$day - 1]['Time'] = $t; $rows[$day - 1]['Kwh'] = round($k, 1);
         }
         if (!empty($errors)) { return array('ok' => false, 'errors' => $errors, 'targets' => $cur, 'revision' => $cur['revision']); }
@@ -5194,20 +5249,20 @@ class EMS extends IPSModule
     public function GetStatus()
     {
         $modeNames = array(
-            EMS_OP_AUTO        => 'Automatik',
-            EMS_OP_PV_SELFUSE  => 'PV-Eigenverbrauch',
-            EMS_OP_NET_CHARGE  => 'Netz-Laden',
-            EMS_OP_DISCHARGE   => 'Entladen',
-            EMS_OP_STANDBY     => 'Bereitschaft',
-            EMS_OP_EXPORT      => 'Export',
-            EMS_OP_BACKUP      => 'Notbetrieb',
+            EMS_OP_AUTO        => $this->t('Automatic'),
+            EMS_OP_PV_SELFUSE  => $this->t('PV self-consumption'),
+            EMS_OP_NET_CHARGE  => $this->t('Charging from grid'),
+            EMS_OP_DISCHARGE   => $this->t('Discharging'),
+            EMS_OP_STANDBY     => $this->t('Standby'),
+            EMS_OP_EXPORT      => $this->t('Export'),
+            EMS_OP_BACKUP      => $this->t('Emergency mode'),
             EMS_OP_GRIDREWARDS => 'Grid Rewards',
-            EMS_OP_HOLD        => 'Akku halten (Netzbezug)',
+            EMS_OP_HOLD        => $this->t('Hold battery (grid import)'),
         );
         $mode     = $this->GetValue('EMS_Mode');
-        $modeName = isset($modeNames[$mode]) ? $modeNames[$mode] : 'Unbekannt';
+        $modeName = isset($modeNames[$mode]) ? $modeNames[$mode] : $this->t('Unknown');
         return sprintf(
-            'Modus: %s | SOC: %.0f%% | Netz: %.0f W | PV: %.0f W | Tibber: %.2f ct | Aktion: %s',
+            $this->t('Mode: %s | SOC: %.0f%% | Grid: %.0f W | PV: %.0f W | Tibber: %.2f ct | Action: %s'),
             $modeName,
             $this->GetValue('EMS_BatSOC'),
             $this->GetValue('EMS_GridPower'),
@@ -5329,9 +5384,9 @@ class EMS extends IPSModule
         $until = $this->ReadAttributeInteger('BatteryBoostUntil');
         if ($until > time()) {
             $remainMin = (int)ceil(($until - time()) / 60);
-            return sprintf('🚀 Batterie-Boost aktiv, noch ca. %d Min.', $remainMin);
+            return sprintf($this->t('🚀 Battery boost active, about %d min. left'), $remainMin);
         }
-        return 'Batterie-Boost: nicht aktiv';
+        return $this->t('Battery boost: not active');
     }
 
     /**
@@ -5420,7 +5475,7 @@ class EMS extends IPSModule
         $signature = $this->dayPlanSignature($prices, $tomorrowPrices, $vehicleReserveKwh, $nowSlot);
 
         if (!$force && $this->ReadAttributeString('DayPlanSignature') === $signature) {
-            return 'ℹ️ Tagesplan unverändert (gleiche Preisdaten wie beim letzten Lauf) — keine Neuberechnung nötig.';
+            return $this->t('ℹ️ Day plan unchanged (same price data as in the last run) — no recalculation needed.');
         }
 
         if (empty($todayJson)
@@ -5429,7 +5484,7 @@ class EMS extends IPSModule
             $this->WriteAttributeString('DayPlan', '[]');
             $this->WriteAttributeString('DayPlanSignature', $signature);
             $this->emsLog(EMS_LOG_BASIC, 'BuildDayPlan: keine PT15M-Preisdaten (weder von Tibber Grid Reward automatisch noch manuell verknuepft) oder Tibber/Batterie inaktiv -- kein Tagesplan moeglich');
-            return '⛔ Kein Tagesplan möglich: keine PT15M-Preisdaten (weder automatisch von Tibber Grid Reward noch manuell verknüpft) oder Tibber/Batteriespeicher deaktiviert.';
+            return $this->t('⛔ No day plan possible: no PT15M price data (neither automatically from Tibber Grid Reward nor linked manually) or Tibber/battery storage disabled.');
         }
 
         $pvfSlots = $this->getPvfSlotsWatt(); // Index 0-191 (heute+morgen), hier nur 0-95 genutzt
@@ -5775,9 +5830,9 @@ class EMS extends IPSModule
         // bestehender "Status anzeigen"-Button), damit ein sofortiges Popup
         // erscheint statt gar nichts.
         if ($written['failed'] > 0) {
-            return sprintf('⚠️ Tagesplan berechnet, aber %d/%d Slots konnten nicht in den Kalender geschrieben werden (siehe Instanz-Debug für Details).', $written['failed'], $written['ok'] + $written['failed']);
+            return sprintf($this->t('⚠️ Day plan calculated, but %d/%d slots could not be written to the calendar (see instance debug for details).'), $written['failed'], $written['ok'] + $written['failed']);
         }
-        return sprintf('✅ Tagesplan neu berechnet und in den Kalender geschrieben (%d Viertelstunden ab Slot %d/96).', $written['ok'], $nowSlot);
+        return sprintf($this->t('✅ Day plan recalculated and written to the calendar (%d quarter-hours from slot %d/96).'), $written['ok'], $nowSlot);
     }
 
     /**
@@ -6355,7 +6410,7 @@ class EMS extends IPSModule
     {
         $key = trim($key);
         $this->WriteAttributeString('AI_ApiKey', $key);
-        return $key === '' ? 'Schlüssel gelöscht.' : 'Schlüssel gespeichert.';
+        return $key === '' ? $this->t('Key deleted.') : $this->t('Key saved.');
     }
 
     /** Geprueftes Faktenpaket fuer die KI (JSON). Vertrag 1.0, rein lesend. */
@@ -6400,9 +6455,9 @@ class EMS extends IPSModule
     public function Ask(string $question): string
     {
         $provider = $this->ReadPropertyInteger('AI_Provider');
-        if ($provider === 0) { return 'Der KI-Assistent ist aus. Wähle unter „🤖 KI-Assistent“ einen Anbieter.'; }
-        if ($provider === 1 && $this->ReadAttributeString('AI_ApiKey') === '') { return 'Für Claude fehlt noch der API-Schlüssel.'; }
-        $question = trim($question) !== '' ? trim($question) : 'Was macht das EMS gerade und warum?';
+        if ($provider === 0) { return $this->t('The AI assistant is off. Select a provider under "🤖 AI assistant".'); }
+        if ($provider === 1 && $this->ReadAttributeString('AI_ApiKey') === '') { return $this->t('The API key for Claude is still missing.'); }
+        $question = trim($question) !== '' ? trim($question) : $this->t('What is the EMS doing right now and why?');
         $req = $this->buildAiRequest($provider, $question, $this->GetExplainContext());
         $ch = curl_init($req['url']);
         curl_setopt_array($ch, array(CURLOPT_POST => true, CURLOPT_POSTFIELDS => $req['body'], CURLOPT_HTTPHEADER => $req['headers'],
@@ -6411,23 +6466,20 @@ class EMS extends IPSModule
         $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
         $err  = curl_error($ch);
         curl_close($ch);
-        if ($raw === false) { return 'KI nicht erreichbar: ' . $err; }
+        if ($raw === false) { return sprintf($this->t('AI not reachable: %s'), $err); }
         return $this->parseAiResponse($provider, $code, (string)$raw);
     }
 
     private function aiSystemPrompt(): string
     {
-        return "Du erklärst einem Hausbesitzer auf Deutsch, was sein Energiemanagement (EMS) für Batterie, Wechselrichter und Wallbox tut und warum. "
-            . "Stütze dich ausschließlich auf das mitgelieferte JSON. Fehlt eine Angabe, sag das, statt zu raten. "
-            . "Die Spalte 'aktion' im Plan ist die Begründung des EMS selbst; gib sie verständlich wieder und nenne Preise in ct/kWh. "
-            . "Antworte kurz (höchstens etwa 8 Sätze), ohne Fachjargon. Du steuerst nichts und gibst keine Befehle; "
-            . "wenn etwas unplausibel wirkt, sag es offen.";
+        // Ein Satz je Sprache: die Antwortsprache folgt der Symcon-Sprache
+        return $this->t("You explain to a homeowner in English what their energy management system (EMS) does for battery, inverter and wallbox, and why. Rely exclusively on the supplied JSON. If information is missing, say so instead of guessing. The column 'aktion' in the plan is the EMS's own reasoning; render it understandably and state prices in ct/kWh. Answer briefly (at most about 8 sentences), without jargon. You control nothing and give no commands; if something seems implausible, say so openly.");
     }
 
     private function buildAiRequest(int $provider, string $question, string $contextJson): array
     {
         $model = trim($this->ReadPropertyString('AI_Model'));
-        $user  = "Daten:\n" . $contextJson . "\n\nFrage: " . $question;
+        $user  = sprintf($this->t("Data:\n%s\n\nQuestion: %s"), $contextJson, $question);
         if ($provider === 2) {
             $base = rtrim($this->ReadPropertyString('AI_OllamaUrl'), '/');
             return array('url' => $base . '/api/chat', 'headers' => array('Content-Type: application/json'),
@@ -6451,21 +6503,21 @@ class EMS extends IPSModule
         $d = json_decode($raw, true);
         if ($code !== 200 || !is_array($d)) {
             $msg = is_array($d) ? (string)($d['error']['message'] ?? $d['error'] ?? '') : '';
-            if ($code === 401) { return 'Der API-Schlüssel wurde abgelehnt (401). Bitte prüfen.'; }
-            return sprintf('KI-Anfrage fehlgeschlagen (HTTP %d)%s', $code, $msg !== '' ? ': ' . $msg : '.');
+            if ($code === 401) { return $this->t('The API key was rejected (401). Please check it.'); }
+            return $msg !== '' ? sprintf($this->t('AI request failed (HTTP %d): %s'), $code, $msg) : sprintf($this->t('AI request failed (HTTP %d).'), $code);
         }
         if ($provider === 2) {
             $t = trim((string)($d['message']['content'] ?? ''));
-            return $t !== '' ? $t : 'Die KI hat keine Antwort geliefert.';
+            return $t !== '' ? $t : $this->t('The AI did not return an answer.');
         }
-        if (($d['stop_reason'] ?? '') === 'refusal') { return 'Die KI hat die Anfrage abgelehnt.'; }
+        if (($d['stop_reason'] ?? '') === 'refusal') { return $this->t('The AI declined the request.'); }
         $out = '';
         foreach (($d['content'] ?? array()) as $b) {
             if (($b['type'] ?? '') === 'text') { $out .= $b['text']; }
         }
         $out = trim($out);
-        if (($d['stop_reason'] ?? '') === 'max_tokens') { $out .= ' …(gekürzt)'; }
-        return $out !== '' ? $out : 'Die KI hat keine Antwort geliefert.';
+        if (($d['stop_reason'] ?? '') === 'max_tokens') { $out .= $this->t(' …(truncated)'); }
+        return $out !== '' ? $out : $this->t('The AI did not return an answer.');
     }
 
     // ── Selbstbilanz ─────────────────────────────────────────────────────────
@@ -6537,16 +6589,16 @@ class EMS extends IPSModule
     {
         $archive = $this->getArchiveInstanceId();
         $inv = $this->getInverterEntry();
-        if ($archive <= 0 || !function_exists('AC_GetAggregatedValues')) { return array('error' => 'Kein Archiv gefunden.'); }
+        if ($archive <= 0 || !function_exists('AC_GetAggregatedValues')) { return array('error' => $this->t('No archive found.')); }
         if ($inv === null || (int)($inv['gridPowerID'] ?? 0) <= 0 || (int)($inv['pvPowerID'] ?? 0) <= 0 || (int)($inv['batPowerID'] ?? 0) <= 0) {
-            return array('error' => 'Netz-, PV- oder Akkuleistung des Wechselrichters nicht verfügbar.');
+            return array('error' => $this->t('Grid, PV or battery power of the inverter not available.'));
         }
         $ids = array('grid' => (int)$inv['gridPowerID'], 'pv' => (int)$inv['pvPowerID'], 'bat' => (int)$inv['batPowerID']);
         foreach ($ids as $name => $vid) {
-            if (!@AC_GetLoggingStatus($archive, $vid)) { return array('error' => sprintf('Variable #%d (%s) wird nicht geloggt.', $vid, $name)); }
+            if (!@AC_GetLoggingStatus($archive, $vid)) { return array('error' => sprintf($this->t('Variable #%d (%s) is not being logged.'), $vid, $name)); }
         }
         $priceId = $this->GetIDForIdent('EMS_TibberPrice');
-        if (!@AC_GetLoggingStatus($archive, $priceId)) { return array('error' => 'Der Preis (Tibber Preis) wird nicht geloggt.'); }
+        if (!@AC_GetLoggingStatus($archive, $priceId)) { return array('error' => $this->t('The price (Tibber price) is not being logged.')); }
         $n = 96; $day1 = $day0 + 86400; $n = (int)round(($day1 - $day0) / 900); // Zeitumstellung: 92/100 Viertelstunden
         $series = function (int $vid) use ($archive, $day0, $day1, $n) {
             $sum = array_fill(0, $n, 0.0); $cnt = array_fill(0, $n, 0);
@@ -6566,13 +6618,13 @@ class EMS extends IPSModule
         foreach ((array)($inv['extraPvIDs'] ?? array()) as $xid) {
             if ((int)$xid > 0 && @AC_GetLoggingStatus($archive, (int)$xid)) { list($xs) = $series((int)$xid); for ($k = 0; $k < $n; $k++) { $pv[$k] += $xs[$k]; } }
         }
-        if (max($m1, $m2, $m3) > 8) { return array('error' => 'Zu viele Lücken im Archiv (mehr als 2 Stunden).'); }
+        if (max($m1, $m2, $m3) > 8) { return array('error' => $this->t('Too many gaps in the archive (more than 2 hours).')); }
         $log = array_reverse((array)@AC_GetLoggedValues($archive, $priceId, $day0 - 86400, $day1, 0));
         $price = array(); $j = 0; $cur = null;
         for ($k = 0; $k < $n; $k++) {
             $ts = $day0 + $k * 900 + 450;
             while ($j < count($log) && (int)$log[$j]['TimeStamp'] <= $ts) { $cur = (float)$log[$j]['Value']; $j++; }
-            if ($cur === null) { return array('error' => 'Für den Tagesbeginn liegt kein Preis im Archiv.'); }
+            if ($cur === null) { return array('error' => $this->t('There is no price in the archive for the start of the day.')); }
             $price[$k] = $cur;
         }
         $socStart = 50.0;
@@ -6645,13 +6697,13 @@ class EMS extends IPSModule
         $dis = (float)($c['dischargeKwh'] ?? 0);
         $parts = array();
         if (($c['gridChargeKwh'] ?? 0) >= 0.5) {
-            $parts[] = sprintf('Netzladen %.1f kWh zu Ø %.1f ct%s', $c['gridChargeKwh'], $c['gridChargeEur'] / $c['gridChargeKwh'] * 100,
-                $dis >= 0.5 ? sprintf(' (Akku ersetzte Ø %.1f ct)', $c['dischargeValueEur'] / $dis * 100) : '');
+            $parts[] = sprintf($this->t('Grid charging %.1f kWh at Ø %.1f ct%s'), $c['gridChargeKwh'], $c['gridChargeEur'] / $c['gridChargeKwh'] * 100,
+                $dis >= 0.5 ? sprintf($this->t(' (battery replaced Ø %.1f ct)'), $c['dischargeValueEur'] / $dis * 100) : '');
         }
-        if (($c['holdKwh'] ?? 0) >= 0.5) { $parts[] = sprintf('Halten %.1f kWh Netzbezug zu Ø %.1f ct', $c['holdKwh'], $c['holdEur'] / $c['holdKwh'] * 100); }
-        if (($c['pvExportKwh'] ?? 0) >= 0.5) { $parts[] = sprintf('PV eingespeist trotz Platz im Akku %.1f kWh (≈ %.2f € entgangen)', $c['pvExportKwh'], $c['pvExportLossEur'] ?? 0); }
-        if (($c['batExportKwh'] ?? 0) >= 0.5) { $parts[] = sprintf('Akku ins Netz entladen %.1f kWh', $c['batExportKwh']); }
-        return empty($parts) ? 'keine Auffälligkeiten' : implode(' · ', $parts);
+        if (($c['holdKwh'] ?? 0) >= 0.5) { $parts[] = sprintf($this->t('Holding %.1f kWh grid import at Ø %.1f ct'), $c['holdKwh'], $c['holdEur'] / $c['holdKwh'] * 100); }
+        if (($c['pvExportKwh'] ?? 0) >= 0.5) { $parts[] = sprintf($this->t('PV fed in despite free battery capacity %.1f kWh (≈ %.2f € lost)'), $c['pvExportKwh'], $c['pvExportLossEur'] ?? 0); }
+        if (($c['batExportKwh'] ?? 0) >= 0.5) { $parts[] = sprintf($this->t('Battery discharged into the grid %.1f kWh'), $c['batExportKwh']); }
+        return empty($parts) ? $this->t('nothing conspicuous') : implode(' · ', $parts);
     }
 
     private function selfBalanceCatSum(array $hist, int $days): ?array
@@ -6743,8 +6795,8 @@ class EMS extends IPSModule
         $this->selfBalanceTick(30);
         $sum = $this->selfBalanceSum(json_decode($this->ReadAttributeString('SelfBalance'), true) ?: array(), 30);
         return $sum['days'] > 0
-            ? sprintf('%d Tage gerechnet: Ist %.2f €, reine WR-Automatik %.2f €, Unterschied %+.2f €, mit Bewertung der Akkuenergie %+.2f € (+ = EMS hat gespart).', $sum['days'], $sum['ist'], $sum['auto'], $sum['auto'] - $sum['ist'], $sum['fair'])
-            : 'Keine Tage auswertbar, Gründe stehen im Bereich „📊 EMS-Bilanz“.';
+            ? sprintf($this->t('%d days calculated: actual %.2f €, inverter automatic mode only %.2f €, difference %+.2f €, with valuation of the battery energy %+.2f € (+ = EMS saved).'), $sum['days'], $sum['ist'], $sum['auto'], $sum['auto'] - $sum['ist'], $sum['fair'])
+            : $this->t('No days could be evaluated; the reasons are shown in the section "📊 EMS balance".');
     }
 
     private function selfBalancePanel(): array
@@ -6756,7 +6808,7 @@ class EMS extends IPSModule
         if ($sum['days'] > 0) {
             $cs = $this->selfBalanceCatSum($hist, 30);
             if ($sum['reward'] > 0.004) { $items[] = array('type' => 'Label', 'caption' => sprintf($this->t('Tibber Grid Rewards (30 days, since logging began): %.2f € credited. The vehicle receives this reward with or without EMS; it reduces the real costs but does not change the comparison.'), $sum['reward'])); }
-            if ($cs !== null) { $items[] = array('type' => 'Label', 'caption' => 'Wohin ging das Geld (30 Tage): ' . $this->selfBalanceCatText($cs)); }
+            if ($cs !== null) { $items[] = array('type' => 'Label', 'caption' => sprintf($this->t('Where the money went (30 days): %s'), $this->selfBalanceCatText($cs))); }
             $diff = $sum['fairDays'] > 0 ? $sum['fair'] : $sum['auto'] - $sum['ist'];
             $items[] = array('type' => 'Label', 'bold' => true, 'caption' => sprintf($diff >= 0
                     ? $this->t('✅ Last %d days: with EMS %.2f €, automatic mode only %.2f € → saved %.2f € (energy left in the battery at the end of the day, more or less than in the morning, is valued at the day\'s price)')
@@ -6767,9 +6819,9 @@ class EMS extends IPSModule
         foreach ($hist as $date => $r) {
             if ($n++ >= 10) { break; }
             $items[] = array('type' => 'Label', 'caption' => isset($r['ist'])
-                ? sprintf('%s: mit EMS %.2f €, Automatik %.2f €, Ergebnis %+.2f € inkl. Akkuenergie, Bezug %.1f kWh, Einspeisung %.1f kWh%s', date('d.m.', strtotime($date)), $r['ist'], $r['auto'], $r['fair'] ?? ($r['auto'] - $r['ist']), $r['imp'], $r['exp'],
+                ? sprintf($this->t('%s: with EMS %.2f €, automatic mode %.2f €, result %+.2f € incl. battery energy, import %.1f kWh, feed-in %.1f kWh%s'), date($this->t('M j'), strtotime($date)), $r['ist'], $r['auto'], $r['fair'] ?? ($r['auto'] - $r['ist']), $r['imp'], $r['exp'],
                     !empty($r['reward']) ? sprintf(', Grid Rewards %.2f €', $r['reward']) : '')
-                : sprintf('%s: nicht auswertbar – %s', date('d.m.', strtotime($date)), $r['error'] ?? '?'));
+                : sprintf($this->t('%s: cannot be evaluated – %s'), date($this->t('M j'), strtotime($date)), $r['error'] ?? '?'));
             if (isset($r['cat'])) { $items[] = array('type' => 'Label', 'caption' => '      ' . $this->selfBalanceCatText($r['cat'])); }
         }
         $f = $this->forecastFactors();
@@ -6791,12 +6843,14 @@ class EMS extends IPSModule
     public function EnableArchiving(): string
     {
         $archiveId = $this->getArchiveInstanceId();
-        if ($archiveId <= 0 || !function_exists('AC_SetLoggingStatus')) { return 'Kein Archiv gefunden, Logging wurde nicht eingeschaltet.'; }
+        if ($archiveId <= 0 || !function_exists('AC_SetLoggingStatus')) { return $this->t('No archive found, logging was not enabled.'); }
         $missing = $this->archivingMissing();
-        if (empty($missing)) { return 'Das Logging ist für alle benötigten Variablen schon eingeschaltet.'; }
+        if (empty($missing)) { return $this->t('Logging is already enabled for all required variables.'); }
         foreach ($missing as $varId) { AC_SetLoggingStatus($archiveId, $varId, true); }
         IPS_ApplyChanges($archiveId);
-        return sprintf('Logging für %d Variablen eingeschaltet. Tagesplan und EMS-Bilanz haben Ist-Werte ab jetzt; die Bilanz rechnet ab dem ersten vollständigen Tag.', count($missing));
+        return sprintf(count($missing) === 1
+            ? $this->t('Logging enabled for 1 variable. Day plan and EMS balance have actual values from now on; the balance calculates from the first complete day.')
+            : $this->t('Logging enabled for %d variables. Day plan and EMS balance have actual values from now on; the balance calculates from the first complete day.'), count($missing));
     }
 
     private function ensureDayPlanEvent()
@@ -7003,14 +7057,15 @@ class EMS extends IPSModule
         $off = array('charge' => 1.0e9, 'discharge' => 1.0e9, 'wb' => 1.0e9);
         if (count($v) < 8 || ($v[count($v) - 1] - $v[0]) < 0.02) {
             $auto = $off;
-            $why = (count($v) < 8) ? 'automatisch: noch zu wenige Preise' : 'automatisch: flacher Preisverlauf';
+            // $info enthaelt interne Kennungen (Herkunft), der Klartext entsteht erst in priceThresholdLine()
+            $why = (count($v) < 8) ? 'auto_few' : 'auto_flat';
             foreach (array('charge', 'discharge', 'wb') as $k) { if (empty($entered[$k])) { $info[$k] = $why; } }
         } else {
             $q = function (float $f) use ($v) { $i = (int)round($f * (count($v) - 1)); return $v[max(0, min(count($v) - 1, $i))]; };
             $auto = array('charge' => $q(0.25), 'wb' => $q(0.50), 'discharge' => $q(0.75));
-            $info['charge']    = $entered['charge']    ? 'eingetragen' : 'automatisch: unteres Viertel der nächsten 24 Stunden';
-            $info['discharge'] = $entered['discharge'] ? 'eingetragen' : 'automatisch: oberes Viertel der nächsten 24 Stunden';
-            $info['wb']        = $entered['wb']        ? 'eingetragen' : 'automatisch: Mitte der nächsten 24 Stunden';
+            $info['charge']    = $entered['charge']    ? 'eingetragen' : 'auto_low';
+            $info['discharge'] = $entered['discharge'] ? 'eingetragen' : 'auto_high';
+            $info['wb']        = $entered['wb']        ? 'eingetragen' : 'auto_mid';
             $eff   = $this->convEff();
             $cycle = $this->cycleCostCt() / 100.0;
             $feed  = $this->planFeedTariffEur();
@@ -7022,15 +7077,15 @@ class EMS extends IPSModule
                 if ($lim > -PHP_FLOAT_MAX / 2 && $lim < PHP_FLOAT_MAX / 2 && $lim < $auto['charge']) {
                     $auto['charge'] = $lim;
                     $info['charge'] = ($ctxE['refMode'] === 1)
-                        ? 'automatisch: begrenzt durch die Wirtschaftlichkeit (erwarteter Ersatzpreis nach Verlusten, Verschleiß und Mindestspanne)'
-                        : 'automatisch: begrenzt durch die Wirtschaftlichkeit (Einspeisevergütung nach Verlusten und Verschleiß)';
+                        ? 'auto_econ_replace'
+                        : 'auto_econ_feed';
                 }
             }
             if (empty($entered['discharge']) && $feed > 0.0) {
                 $floor = $feed * $eff + $cycle;
                 if ($floor > $auto['discharge']) {
                     $auto['discharge'] = $floor;
-                    $info['discharge'] = 'automatisch: mindestens Einspeisevergütung nach Verlusten plus Verschleiß (darunter lohnt Einspeisen mehr)';
+                    $info['discharge'] = 'auto_floor_feed';
                 }
             }
         }
@@ -7044,9 +7099,23 @@ class EMS extends IPSModule
         $info = array();
         $th = $this->priceThresholdsCore($prices24, $info);
         $val = $th[$key] ?? 0.0;
-        $why = $info[$key] ?? 'automatisch';
-        if ($val >= 1.0e8) { return 'ℹ️ Wirksam: keine Preissteuerung (' . preg_replace('/^automatisch: /', '', $why) . ').'; }
-        return sprintf('ℹ️ Wirksam: %.1f ct/kWh (%s).', $val * 100.0, $why);
+        $code = $info[$key] ?? 'auto';
+        // Herkunft: [Klartext neben dem Wert, Klartext bei "keine Preissteuerung"]
+        $texts = array(
+            'eingetragen'       => array($this->t('entered'), $this->t('entered')),
+            'auto'              => array($this->t('automatic'), $this->t('automatic')),
+            'auto_few'          => array($this->t('automatic: too few prices yet'), $this->t('too few prices yet')),
+            'auto_flat'         => array($this->t('automatic: flat price curve'), $this->t('flat price curve')),
+            'auto_low'          => array($this->t('automatic: lowest quarter of the next 24 hours'), $this->t('lowest quarter of the next 24 hours')),
+            'auto_high'         => array($this->t('automatic: highest quarter of the next 24 hours'), $this->t('highest quarter of the next 24 hours')),
+            'auto_mid'          => array($this->t('automatic: middle of the next 24 hours'), $this->t('middle of the next 24 hours')),
+            'auto_econ_replace' => array($this->t('automatic: limited by economic viability (expected replacement price after losses, wear and minimum margin)'), $this->t('limited by economic viability (expected replacement price after losses, wear and minimum margin)')),
+            'auto_econ_feed'    => array($this->t('automatic: limited by economic viability (feed-in tariff after losses and wear)'), $this->t('limited by economic viability (feed-in tariff after losses and wear)')),
+            'auto_floor_feed'   => array($this->t('automatic: at least the feed-in tariff after losses plus wear (below that, feeding in pays off more)'), $this->t('at least the feed-in tariff after losses plus wear (below that, feeding in pays off more)')),
+        );
+        $why = $texts[$code] ?? $texts['auto'];
+        if ($val >= 1.0e8) { return sprintf($this->t('ℹ️ Effective: no price control (%s).'), $why[1]); }
+        return sprintf($this->t('ℹ️ Effective: %.1f ct/kWh (%s).'), $val * 100.0, $why[0]);
     }
 
     /** Preise der naechsten 24 Stunden aus dem gespeicherten Tagesplan (heute ab jetzt, dann morgen). */
@@ -7304,13 +7373,13 @@ class EMS extends IPSModule
         $parts = array(); $today = false;
         if ($this->ReadPropertyBoolean('TIBBER_Active') && $known($prices) < 4) {
             $y = $this->estimatePricesFromHistory(strtotime('yesterday'));
-            if ($known($y) >= 90) { $prices = $y; $today = true; $parts[] = 'heute (Vortag)'; }
+            if ($known($y) >= 90) { $prices = $y; $today = true; $parts[] = $this->t('today (previous day)'); }
         }
         if ($known($tomorrow) === 0 && $known($prices) >= 90 && $hour >= 15) {
             $tomorrow = $prices;
-            $parts[] = 'morgen (wie heute)';
+            $parts[] = $this->t('tomorrow (same as today)');
         }
-        $text = empty($parts) ? '' : 'Preise geschätzt: ' . implode(', ', $parts) . '. Vorentladen ins Netz ist ausgesetzt, bis echte Preise vorliegen.';
+        $text = empty($parts) ? '' : sprintf($this->t('Prices estimated: %s. Pre-discharging into the grid is suspended until real prices are available.'), implode(', ', $parts));
         return array('prices' => $prices, 'tomorrow' => $tomorrow, 'today' => $today, 'text' => $text);
     }
 
@@ -7440,11 +7509,11 @@ class EMS extends IPSModule
         $stale = array();
         if ($fromIhub && ($inv['gridPowerID'] ?? 0) > 0) {
             $s['grid_total_w'] = (float)$this->readDiscoveredVar($inv['gridPowerID'], 0);
-            if (!$this->isFreshVar((int)$inv['gridPowerID'], 'Netzleistung')) { $stale[] = 'Netzleistung'; }
+            if (!$this->isFreshVar((int)$inv['gridPowerID'], 'Netzleistung')) { $stale[] = $this->t('grid power'); }
         } else {
             $s['grid_total_w'] = (float)$this->readVar('VAR_SM_Total_Power', 0);
             $gid = (int)$this->ReadPropertyInteger('VAR_SM_Total_Power');
-            if ($gid > 0 && !$this->isFreshVar($gid, 'Netzleistung')) { $stale[] = 'Netzleistung'; }
+            if ($gid > 0 && !$this->isFreshVar($gid, 'Netzleistung')) { $stale[] = $this->t('grid power'); }
         }
         $s['grid_l1_w']     = (float)$this->readVar('VAR_SM_L1_Power',    0);
         $s['grid_l2_w']     = (float)$this->readVar('VAR_SM_L2_Power',    0);
@@ -7453,11 +7522,11 @@ class EMS extends IPSModule
         // PV
         if ($fromIhub && ($inv['pvPowerID'] ?? 0) > 0) {
             $s['pv_total_w'] = (float)$this->readDiscoveredVar($inv['pvPowerID'], 0);
-            if (!$this->isFreshVar((int)$inv['pvPowerID'], 'PV-Leistung')) { $stale[] = 'PV-Leistung'; }
+            if (!$this->isFreshVar((int)$inv['pvPowerID'], 'PV-Leistung')) { $stale[] = $this->t('PV power'); }
         } else {
             $s['pv_total_w'] = (float)$this->readVar('VAR_PV_Total_Power', 0);
             $pid = (int)$this->ReadPropertyInteger('VAR_PV_Total_Power');
-            if ($pid > 0 && !$this->isFreshVar($pid, 'PV-Leistung')) { $stale[] = 'PV-Leistung'; }
+            if ($pid > 0 && !$this->isFreshVar($pid, 'PV-Leistung')) { $stale[] = $this->t('PV power'); }
         }
         $staleTxt = implode(', ', $stale);
         if ($this->ReadAttributeString('DataStaleText') !== $staleTxt) {
@@ -8334,10 +8403,10 @@ class EMS extends IPSModule
     {
         $manual = ($manualIn !== null) ? $manualIn : (float)$this->ReadPropertyFloat('BAT_CycleCost_ct');
         $cyc = $this->cycleCostCt($manualIn, $priceIn, $cyclesIn);
-        if ($manual > 0.0) { return sprintf('ℹ️ Es gilt der eingetragene Wert von %.2f ct/kWh.', $cyc); }
+        if ($manual > 0.0) { return sprintf($this->t('ℹ️ The entered value of %.2f ct/kWh applies.'), $cyc); }
         return ($cyc > 0.0)
-            ? sprintf('✅ Berechnet aus Preis und Zyklen (bei %.1f kWh Kapazität): %.2f ct/kWh Verschleiß. Wird bei der Planung abgezogen.', $this->batteryCapacityKwh(), $cyc)
-            : 'ℹ️ Ohne Angabe werden keine Verschleißkosten berücksichtigt.';
+            ? sprintf($this->t('✅ Calculated from price and cycles (at %.1f kWh capacity): %.2f ct/kWh wear. Deducted during planning.'), $this->batteryCapacityKwh(), $cyc)
+            : $this->t('ℹ️ Without an entry, no wear costs are taken into account.');
     }
 
     private function cycleCostCt(?float $manualIn = null, ?float $priceIn = null, ?int $cyclesIn = null): float
@@ -8356,17 +8425,17 @@ class EMS extends IPSModule
     {
         $inv = $this->getInverterEntry();
         if ($inv === null || ($inv['source'] ?? '') !== 'inverterhub') {
-            return 'ℹ️ Ladeleistung je Ladestand: Es wird nichts gelernt, weil der Wechselrichter nicht über den InverterHub angebunden ist. Es gilt der eingetragene Wert.';
+            return $this->t('ℹ️ Charging power per state of charge: nothing is learned because the inverter is not connected via InverterHub. The entered value applies.');
         }
         $curve = $this->chargeCurveKw();
         if (empty($curve)) {
-            return 'ℹ️ Ladeleistung je Ladestand: Noch nichts gelernt. Das EMS lernt sie, sobald die Batterie lädt (Meldung des Batteriemanagements und beobachtete Leistung).';
+            return $this->t('ℹ️ Charging power per state of charge: nothing learned yet. The EMS learns it as soon as the battery charges (BMS report and observed power).');
         }
         $parts = array();
         foreach ($curve as $b => $kw) { $parts[] = sprintf('%d–%d %%: %.1f kW', $b * 5, $b * 5 + 5, $kw); }
         // bei vielen Stufen nur jede zweite zeigen, damit die Zeile lesbar bleibt
         if (count($parts) > 8) { $parts = array_values(array_filter($parts, function ($k) { return $k % 2 === 0; }, ARRAY_FILTER_USE_KEY)); }
-        return sprintf('✅ Ladeleistung je Ladestand (gelernt aus Batteriemanagement und Beobachtung, %d Stufen): %s.', count($curve), implode(', ', $parts));
+        return sprintf($this->t('✅ Charging power per state of charge (learned from the BMS and observation, %d steps): %s.'), count($curve), implode(', ', $parts));
     }
 
     private function batteryCapacityKwh(): float
@@ -8554,21 +8623,21 @@ class EMS extends IPSModule
     {
         $curve = $this->getSpotCurveLive();
         if (empty($curve)) {
-            return 'ℹ️ Keine Börsenpreis-Quelle gefunden (weder das Börsenpreis-Modul noch eine Tibber-Tarifzerlegung): Die Negativpreis-Pflicht (§ 51 EEG) kann nicht geprüft werden. Nötig nur, wenn sie für deine Anlage gilt.';
+            return $this->t('ℹ️ No spot price source found (neither the Börsenpreis module nor a Tibber tariff breakdown): the negative price obligation (§ 51 EEG) cannot be checked. Only needed if it applies to your system.');
         }
         $q = (string)($curve[0]['quelle'] ?? '');
         if ($q !== 'boersenpreis') {
-            return 'ℹ️ Kein Börsenpreis-Modul gefunden: Ersatz ist der aus dem Tibber-Endpreis zurückgerechnete Börsenpreis (nur mit aktiver Tarifzerlegung). Für die Negativpreis-Pflicht (§ 51 EEG) gilt das trotzdem.';
+            return $this->t('ℹ️ No Börsenpreis module found: the substitute is the spot price derived back from the Tibber final price (only with an active tariff breakdown). It still applies to the negative price obligation (§ 51 EEG).');
         }
         $list = @IPS_GetInstanceListByModuleID(GUID_SPOTPRICE);
         $id = (is_array($list) && !empty($list)) ? (int)$list[0] : 0;
         $end = 0; foreach ($curve as $e) { $end = max($end, (int)($e['end'] ?? 0)); }
         $now = $this->spotPriceAt($curve, time());
-        $text = sprintf('Börsenpreis #%d „%s“ liefert die Kurve für die Negativpreis-Pflicht (§ 51 EEG): %d Viertelstunden, bis %s%s.',
-            $id, $id > 0 ? IPS_GetName($id) : '?', count($curve), $end > 0 ? date('d.m.Y H:i', $end) : 'unbekannt',
-            $now !== null ? sprintf(', aktuell %.2f ct/kWh (Börsenpreis netto)', (float)$now['price']) : '');
+        $text = sprintf($this->t('Börsenpreis #%d "%s" supplies the curve for the negative price obligation (§ 51 EEG): %d quarter-hours, until %s%s.'),
+            $id, $id > 0 ? IPS_GetName($id) : '?', count($curve), $end > 0 ? date($this->t('Y-m-d H:i'), $end) : $this->t('unknown'),
+            $now !== null ? sprintf($this->t(', currently %.2f ct/kWh (net spot price)'), (float)$now['price']) : '');
         if (is_array($list) && count($list) > 1) {
-            return '⚠️ Mehrere Börsenpreis-Instanzen gefunden, das EMS nutzt die erste. ' . $text;
+            return sprintf($this->t('⚠️ Several Börsenpreis instances found, the EMS uses the first one. %s'), $text);
         }
         return '✅ ' . $text;
     }
@@ -9450,7 +9519,7 @@ class EMS extends IPSModule
             $reason = $b1Now ? ($d['reason'] ?? '') : '🌞 Netzdienlich beendet, Freigabe an WR-Automatik | ' . ($d['reason'] ?? '');
             $this->SetValue('EMS_Mode',       $d['op_mode']);
             $this->SetValue('EMS_LastAction', $reason);
-            $this->SetValue('EMS_Status',     'OK: ' . $reason);
+            $this->SetValue('EMS_Status',     sprintf($this->t('OK: %s'), $reason));
             $this->WriteAttributeString('LastDecisionSource', $b1Now ? 'netzdienlich' : ($d['source'] ?? 'ems'));
             return;
         }
@@ -9494,7 +9563,7 @@ class EMS extends IPSModule
             }
             $this->SetValue('EMS_Mode',       $d['op_mode']);
             $this->SetValue('EMS_LastAction', $d['reason']);
-            $this->SetValue('EMS_Status',     'OK: ' . $d['reason']);
+            $this->SetValue('EMS_Status',     sprintf($this->t('OK: %s'), $d['reason']));
             $this->WriteAttributeString('LastDecisionSource', $d['source'] ?? 'tibber');
             return;
         }
@@ -9548,9 +9617,9 @@ class EMS extends IPSModule
     private function statusText(string $reason): string
     {
         $why = $this->ReadAttributeString('NoControlReason');
-        $text = ($why !== '') ? ('Nur beobachtend (' . $why . '): ' . $reason) : ('OK: ' . $reason);
+        $text = ($why !== '') ? sprintf($this->t('Monitoring only (%s): %s'), $why, $reason) : sprintf($this->t('OK: %s'), $reason);
         $stale = $this->ReadAttributeString('DataStaleText');
-        return ($stale !== '') ? ('⚠️ Messwerte veraltet (' . $stale . ') | ' . $text) : $text;
+        return ($stale !== '') ? sprintf($this->t('⚠️ Measurements outdated (%s) | %s'), $stale, $text) : $text;
     }
 
     private function applyDryRun($d): void
@@ -9575,10 +9644,10 @@ class EMS extends IPSModule
                 (int)($d['gw_mode'] ?? 0), (int)($d['gw_power_w'] ?? 0), !empty($d['gw_enable']) ? 'ja' : 'nein',
                 $wb1Txt, $wb2Txt, $d['reason'] ?? ''));
         }
-        $text = 'Trockenlauf (nichts geschrieben): ' . ($d['reason'] ?? '');
+        $text = sprintf($this->t('Dry run (nothing written): %s'), ($d['reason'] ?? ''));
         $this->SetValue('EMS_Mode',       $d['op_mode'] ?? EMS_OP_AUTO);
         $this->SetValue('EMS_LastAction', $text);
-        $this->SetValue('EMS_Status',     'OK: ' . $text);
+        $this->SetValue('EMS_Status',     sprintf($this->t('OK: %s'), $text));
         $this->WriteAttributeString('LastDecisionSource', $d['source'] ?? 'ems');
     }
 
@@ -9655,7 +9724,7 @@ class EMS extends IPSModule
             }
             return true;
         }
-        $text = sprintf('Instanz #%d, %s%s', (int)$id, (string)$ident, $err !== '' ? ' (' . $err . ')' : ' (abgelehnt)');
+        $text = $err !== '' ? sprintf($this->t('instance #%d, %s (%s)'), (int)$id, (string)$ident, $err) : sprintf($this->t('instance #%d, %s (rejected)'), (int)$id, (string)$ident);
         $first = ($this->ReadAttributeInteger('WriteFailAt') === 0 || $now - $this->ReadAttributeInteger('WriteFailAt') > 300);
         $this->WriteAttributeInteger('WriteFailAt', $now);
         $this->WriteAttributeString('WriteFailText', $text);
@@ -9695,49 +9764,49 @@ class EMS extends IPSModule
         $out = array();
         $add = function (string $level, string $text) use (&$out) { $out[] = array('level' => $level, 'text' => $text); };
         if ($this->ReadAttributeBoolean('DryRunAuto')) {
-            $add('warn', 'EMS läuft zur Einführung im Trockenlauf: Es rechnet und zeigt Entscheidungen, schreibt aber nichts. Nach dem Prüfen „Jetzt live schalten“ wählen.');
+            $add('warn', $this->t('EMS is running in dry run as an introduction: it calculates and shows decisions but writes nothing. After checking, select "Go live now".'));
         } elseif ($this->ReadPropertyBoolean('EMS_DryRun')) {
-            $add('info', 'Trockenlauf ist im Bereich „Allgemein“ eingeschaltet: EMS schreibt nichts an Wechselrichter und Wallbox.');
+            $add('info', $this->t('Dry run is switched on in the section "General": EMS writes nothing to the inverter and wallbox.'));
         }
         if ($this->getInverterEntry() === null && $this->ReadPropertyBoolean('BAT_Active')) {
-            $add('warn', 'Kein Wechselrichter über den InverterHub gefunden: Ohne Messwerte kann EMS die Batterie nicht sinnvoll steuern.');
+            $add('warn', $this->t('No inverter found via InverterHub: without measurements EMS cannot control the battery sensibly.'));
         }
         $stale = $this->ReadAttributeString('DataStaleText');
         if ($stale !== '') {
-            $add('warn', 'Messwerte seit über 10 Minuten nicht aktualisiert (' . $stale . '): Hauslast und PV-Überschuss können falsch sein. Verbindung zum Gerät prüfen.');
+            $add('warn', sprintf($this->t('Measurements not updated for more than 10 minutes (%s): house load and PV surplus may be wrong. Check the connection to the device.'), $stale));
         }
         $failAt = $this->ReadAttributeInteger('WriteFailAt');
         if ($failAt > 0 && time() - $failAt < 3600) {
-            $add('warn', 'Ein Schreibzugriff ist fehlgeschlagen (' . $this->ReadAttributeString('WriteFailText') . ', ' . date('H:i', $failAt) . ' Uhr). Gerät oder Instanz prüfen; EMS kann dort nichts schalten.');
+            $add('warn', sprintf($this->t('A write access failed (%s, %s). Check the device or instance; EMS cannot switch anything there.'), $this->ReadAttributeString('WriteFailText'), date('H:i', $failAt)));
         }
         $est = $this->ReadAttributeString('PriceEstimate');
-        if ($est !== '') { $add('warn', $est . ' Die Preisquelle liefert gerade nicht alle Tage.'); }
+        if ($est !== '') { $add('warn', sprintf($this->t('%s The price source is currently not supplying all days.'), $est)); }
         if ($this->ReadPropertyBoolean('TIBBER_Active')) {
             $src = $this->ReadAttributeString('PriceSourceNote');
             if ($src === '') {
-                $add('warn', 'Die Preisoptimierung ist an, aber der aktuelle Preis ist unbekannt (keine Preisvariable verknüpft und keine Preiskurve gefunden). Die Wallbox bleibt dann ohne Preisprüfung freigegeben. Tibber oder eine Preisquelle verbinden.');
+                $add('warn', $this->t('Price optimisation is on, but the current price is unknown (no price variable linked and no price curve found). The wallbox then stays enabled without a price check. Connect Tibber or a price source.'));
             } else {
-                $add('ok', 'Aktueller Preis: ' . (($src === 'Preiskurve') ? 'automatisch aus der Preiskurve' : 'aus der verknüpften Preisvariable') . '.');
+                $add('ok', ($src === 'Preiskurve') ? $this->t('Current price: automatically from the price curve.') : $this->t('Current price: from the linked price variable.'));
             }
         }
         $cap = $this->getPlantStorageKwh();
         if ($this->ReadPropertyBoolean('BAT_Active') && ($cap['quelle'] ?? '') !== 'wechselrichter' && abs((float)$this->ReadPropertyFloat('BAT_Capacity_kWh') - 10.0) < 0.001) {
-            $add('warn', 'Die Batteriekapazität steht auf dem Standardwert 10 kWh und kommt nicht vom Wechselrichter. Bitte die echte nutzbare Kapazität eintragen.');
+            $add('warn', $this->t('The battery capacity is at the default value of 10 kWh and does not come from the inverter. Please enter the real usable capacity.'));
         }
-        $th = array('TIB_Threshold_Charge' => 'Laden', 'TIB_Threshold_Discharge' => 'Entladen', 'TIB_Threshold_WB' => 'Fahrzeugladung');
+        $th = array('TIB_Threshold_Charge' => $this->t('charging'), 'TIB_Threshold_Discharge' => $this->t('discharging'), 'TIB_Threshold_WB' => $this->t('vehicle charging'));
         $fixed = array();
         foreach ($th as $prop => $label) { $v = (float)$this->ReadPropertyFloat($prop); if ($v > 0) { $fixed[] = sprintf('%s %.2f €', $label, $v); } }
         if (!empty($fixed)) {
-            $add('warn', 'Feste Preisschwellen eingetragen (' . implode(', ', $fixed) . '): Sie überstimmen die Automatik. Bei Tibber-Preisen ab 30 ct sind alte Standardwerte wie 0,15 € oder 0,07 € meist zu niedrig. 0 = automatisch.');
+            $add('warn', sprintf($this->t('Fixed price thresholds entered (%s): they override the automatic mode. With Tibber prices from 30 ct, old default values such as 0.15 € or 0.07 € are usually too low. 0 = automatic.'), implode(', ', $fixed)));
         }
         if ($this->planFeedTariffEur() <= 0.0) {
-            $add('info', 'Die Einspeisevergütung ist unbekannt: Inbetriebnahmedatum und Anlagengröße im Bereich „Anlage“ eintragen, dann rechnet EMS die Wirtschaftlichkeit genauer.');
+            $add('info', $this->t('The feed-in tariff is unknown: enter the commissioning date and system size in the section "System", then EMS calculates economic viability more precisely.'));
         }
         if ((int)$this->ReadPropertyInteger('EMS_Max_Power_W') === 11000 && (int)$this->ReadPropertyInteger('SITE_Max_Grid_Import_W') === 0) {
-            $add('info', 'Die Netzanschlussgrenze steht auf dem vorsichtigen Standard 11 kW. Bei größerem Anschluss im Bereich „Optimierungsparameter“ anpassen.');
+            $add('info', $this->t('The grid connection limit is at the conservative default of 11 kW. For a larger connection, adjust it in the section "Optimisation parameters".'));
         }
         if (empty($out) || count(array_filter($out, function ($l) { return $l['level'] === 'warn'; })) === 0) {
-            array_unshift($out, array('level' => 'ok', 'text' => 'Keine Auffälligkeiten in der Konfiguration.'));
+            array_unshift($out, array('level' => 'ok', 'text' => $this->t('Nothing conspicuous in the configuration.')));
         }
         return $out;
     }
@@ -9977,12 +10046,12 @@ class EMS extends IPSModule
         $dischW = $wantCharge ? 0 : $this->solisDischargeW($iid, $mode, $powerW);
         $wantDisch = ($dischW > 0);
         $unsupported = (!$wantCharge && !$wantHold && !$wantDisch && $mode !== GW_MODE_AUTO && $mode !== GW_MODE_STOP);
-        $why = $unsupported ? sprintf('Solis: Modus %d wird nicht unterstützt, der Wechselrichter bleibt in Automatik', $mode) : '';
+        $why = $unsupported ? sprintf($this->t('Solis: mode %d is not supported, the inverter stays in automatic mode'), $mode) : '';
         if ($unsupported && ($mode === GW_MODE_DISCHARGE || $mode === GW_MODE_BAT_DISCH)) {
-            $why = 'Solis: Entladen auf Vorgabe pausiert (kein Bedarf über PV und Reserve), der Wechselrichter bleibt in Automatik';
+            $why = $this->t('Solis: discharging on demand paused (no demand beyond PV and reserve), the inverter stays in automatic mode');
         }
         if ($unsupported && $isHold && $holdCapable) {
-            $why = 'Solis: Akku halten pausiert (PV-Überschuss, Ladestand über dem Reserve-SOC des Geräts oder Wartezeit), der Wechselrichter bleibt in Automatik';
+            $why = $this->t('Solis: hold battery paused (PV surplus, state of charge above the device\'s reserve SOC, or waiting time), the inverter stays in automatic mode');
         }
         if ($this->ReadAttributeString('NoControlReason') !== $why) { $this->WriteAttributeString('NoControlReason', $why); }
 
@@ -10124,7 +10193,7 @@ class EMS extends IPSModule
                 }
                 $hasKids = count(IPS_GetChildrenIDs($iid)) > 0;
                 if ($hasKids && ($modeVarId <= 0 || $this->findChildVariableIdByIdent($iid, 'ctl_ems_power') <= 0 || $this->findChildVariableIdByIdent($iid, 'ctl_ems_enable') <= 0)) {
-                    $this->WriteAttributeString('NoControlReason', 'Wechselrichter ohne EMS-Stellglieder');
+                    $this->WriteAttributeString('NoControlReason', $this->t('inverter without EMS actuators'));
                     if (time() - $this->ReadAttributeInteger('NoControlLoggedAt') > 3600) {
                         $this->WriteAttributeInteger('NoControlLoggedAt', time());
                         $this->emsLog(EMS_LOG_BASIC, sprintf('Wechselrichtersteuerung: WR #%d hat keine EMS-Stellglieder (ctl_ems_mode/-power/-enable) -- EMS beobachtet nur', $iid));
@@ -10146,7 +10215,7 @@ class EMS extends IPSModule
                 if ($this->ReadAttributeString('NoControlReason') !== '') { $this->WriteAttributeString('NoControlReason', ''); }
                 return;
             }
-            $this->WriteAttributeString('NoControlReason', 'Steuerhoheit liegt nicht beim EMS');
+            $this->WriteAttributeString('NoControlReason', $this->t('control authority is not with the EMS'));
             if (time() - $this->ReadAttributeInteger('NoControlLoggedAt') > 3600) {
                 $this->WriteAttributeInteger('NoControlLoggedAt', time());
                 $this->emsLog(EMS_LOG_BASIC, sprintf(
@@ -10160,7 +10229,7 @@ class EMS extends IPSModule
         // Fallback: alte manuelle Variablenverknuepfung (kein Partnermodul gefunden)
         $varMode  = $this->ReadPropertyInteger('VAR_WR_EMS_Mode');
         $varPower = $this->ReadPropertyInteger('VAR_WR_EMS_Power');
-        $want = ($varMode > 0) ? '' : 'kein Wechselrichter mit Stellgliedern gefunden oder verknuepft';
+        $want = ($varMode > 0) ? '' : $this->t('no inverter with actuators found or linked');
         if ($this->ReadAttributeString('NoControlReason') !== $want) { $this->WriteAttributeString('NoControlReason', $want); }
         if ($varMode  > 0) { $this->writeVar($varMode, $mode); }
         if ($varPower > 0 && $powerW > 0) { $this->writeVar($varPower, $powerW); }
@@ -10284,44 +10353,44 @@ class EMS extends IPSModule
         $m   = $this->wallboxMode($n, $override, $vehicleOverride);
         $has = (count($this->getChargerList()) >= $n) || $this->ReadPropertyInteger('WB' . $n . '_Instance') > 0;
         $t   = $m['tibber'] ?? null;
-        $who = ($t !== null && $t['name'] !== '') ? '„' . $t['name'] . '“' : 'dem zugeordneten Fahrzeug';
-        $old = ($t !== null && $t['stale']) ? ' (letzter bekannter Stand, Tibber meldet das Fahrzeug gerade nicht)' : '';
+        $who = ($t !== null && $t['name'] !== '') ? sprintf($this->t('"%s"'), $t['name']) : $this->t('the assigned vehicle');
+        $old = ($t !== null && $t['stale']) ? $this->t(' (last known state, Tibber is currently not reporting the vehicle)') : '';
 
         if (!$has && !$m['manual'] && $t === null) {
-            return 'ℹ️ Wallbox ' . $n . ': keine Wallbox gefunden. Sobald ChargerHub oder OCPPHub eine meldet, erkennt EMS selbst, ob es sie schalten darf.';
+            return sprintf($this->t('ℹ️ Wallbox %d: no wallbox found. As soon as ChargerHub or OCPPHub reports one, EMS detects by itself whether it may switch it.'), $n);
         }
         if ($m['mode'] === 'smart') {
             if (!$m['manual']) {
-                return array('caption' => '🔗 Wallbox ' . $n . ': Smart Charging (automatisch erkannt: Tibber meldet es für ' . $who . ' als an' . $old . '). Tibber hat die Hoheit, EMS sperrt und erzwingt nichts.', 'color' => EMS_COLOR_AUTO);
+                return array('caption' => sprintf($this->t('🔗 Wallbox %d: Smart Charging (detected automatically: Tibber reports it as on for %s%s). Tibber is in charge, EMS neither blocks nor forces anything.'), $n, $who, $old), 'color' => EMS_COLOR_AUTO);
             }
-            $text = '✏️ Wallbox ' . $n . ': Smart Charging (eigene Wahl). Tibber hat die Hoheit, EMS sperrt und erzwingt nichts. Hat EMS die Wallbox früher selbst gesperrt, gibt es sie einmal wieder frei.';
+            $text = sprintf($this->t('✏️ Wallbox %d: Smart Charging (own choice). Tibber is in charge, EMS neither blocks nor forces anything. If EMS blocked the wallbox itself earlier, it releases it once.'), $n);
             if ($t !== null && $t['smart'] === false) {
-                return '⚠️ Wallbox ' . $n . ': Smart Charging gewählt, aber bei Tibber ist Smart Charging für ' . $who . ' aus' . $old . '. Grid Rewards kann hier nicht greifen, und niemand lädt das Fahrzeug gezielt.';
+                return sprintf($this->t('⚠️ Wallbox %d: Smart Charging selected, but Smart Charging is off at Tibber for %s%s. Grid Rewards cannot take effect here, and nobody charges the vehicle deliberately.'), $n, $who, $old);
             }
             return array('caption' => $text, 'color' => -1);
         }
         if ($m['mode'] === 'observe') {
             $who = $this->chargerControlInfo($n);
             if (!$m['manual']) {
-                return array('caption' => '🔗 Wallbox ' . $n . ': fremd gesteuert (automatisch erkannt, EMS darf dort nicht schalten). EMS misst nur, die Leistung zählt zum Hausverbrauch.' . $who, 'color' => EMS_COLOR_AUTO);
+                return array('caption' => sprintf($this->t('🔗 Wallbox %d: controlled externally (detected automatically, EMS may not switch it). EMS only measures; the power counts towards house consumption.%s'), $n, $who), 'color' => EMS_COLOR_AUTO);
             }
-            return array('caption' => '✏️ Wallbox ' . $n . ': nur beobachten (eigene Wahl). EMS misst die Leistung und schaltet nichts.' . $who, 'color' => -1);
+            return array('caption' => sprintf($this->t('✏️ Wallbox %d: monitor only (own choice). EMS measures the power and switches nothing.%s'), $n, $who), 'color' => -1);
         }
         if ($t !== null && $t['smart'] === true) {
-            return '⚠️ Wallbox ' . $n . ': „EMS steuert“ gewählt, aber bei Tibber ist Smart Charging für ' . $who . ' an' . $old . '. Dann regeln zwei Stellen dieselbe Wallbox. Stelle Smart Charging im Fahrzeug aus oder wähle hier Smart Charging.';
+            return sprintf($this->t('⚠️ Wallbox %d: "EMS controls" selected, but Smart Charging is on at Tibber for %s%s. Then two parties control the same wallbox. Switch off Smart Charging in the vehicle or select Smart Charging here.'), $n, $who, $old);
         }
         if (!$m['writable']) {
-            return '⚠️ Wallbox ' . $n . ': „EMS steuert“ gewählt, aber EMS darf diese Wallbox nicht schalten (fremd gesteuert). Es passiert nichts.';
+            return sprintf($this->t('⚠️ Wallbox %d: "EMS controls" selected, but EMS may not switch this wallbox (controlled externally). Nothing happens.'), $n);
         }
-        $tail = ($t !== null) ? ' Tibber meldet Smart Charging für ' . $who . ' als aus' . $old . '.' : ' Smart Charging im Fahrzeug sollte aus sein, sonst regeln zwei Stellen.';
+        $tail = ($t !== null) ? sprintf($this->t(' Tibber reports Smart Charging as off for %s%s.'), $who, $old) : $this->t(' Smart Charging in the vehicle should be off, otherwise two parties control it.');
         if ($override === null && ($this->ReadPropertyInteger('WB' . $n . '_ChargeMode') > 0 || $this->wallboxTargetConfigured($n))) {
             $ct = trim($this->ReadAttributeString('WB' . $n . 'ChargeText'));
-            if ($ct !== '') { $tail = ' Ladeart: ' . $ct . '.' . $tail; }
+            if ($ct !== '') { $tail = sprintf($this->t(' Charging mode: %s.'), $ct) . $tail; }
         }
         if (!$m['manual']) {
-            return array('caption' => '🔗 Wallbox ' . $n . ': EMS steuert die Freigabe (automatisch erkannt, Wallbox ist schaltbar).' . $tail, 'color' => EMS_COLOR_AUTO);
+            return array('caption' => sprintf($this->t('🔗 Wallbox %d: EMS controls enabling (detected automatically, wallbox is switchable).%s'), $n, $tail), 'color' => EMS_COLOR_AUTO);
         }
-        return array('caption' => '✏️ Wallbox ' . $n . ': EMS steuert die Freigabe (eigene Wahl).' . $tail, 'color' => -1);
+        return array('caption' => sprintf($this->t('✏️ Wallbox %d: EMS controls enabling (own choice).%s'), $n, $tail), 'color' => -1);
     }
 
     /**
@@ -10337,8 +10406,8 @@ class EMS extends IPSModule
         if (mb_strlen($reason) > 160) { $reason = mb_substr($reason, 0, 157) . '...'; }
         $since = (int)($entry['controlSince'] ?? 0);
         $when = '';
-        if ($since > 0) { $when = ' (seit ' . (date('Y-m-d', $since) === date('Y-m-d') ? date('H:i', $since) : date('d.m. H:i', $since)) . ')'; }
-        return ' Geregelt wird sie laut ChargerHub so: ' . $reason . $when . '.';
+        if ($since > 0) { $when = sprintf($this->t(' (since %s)'), (date('Y-m-d', $since) === date('Y-m-d') ? date('H:i', $since) : date($this->t('M j H:i'), $since))); }
+        return sprintf($this->t(' According to ChargerHub it is controlled like this: %s%s.'), $reason, $when);
     }
 
     /** Vorschlag, wenn Tibber genau ein Fahrzeug meldet und genau eine Wallbox da ist (nie stilles Uebernehmen). */
@@ -10348,7 +10417,7 @@ class EMS extends IPSModule
         $tib = $this->getTibberVehicles();
         if (count($tib['vehicles']) !== 1) { return ''; }
         $v = reset($tib['vehicles']);
-        return ' ℹ️ Tibber meldet genau ein Fahrzeug (' . $this->tibberVehicleLabel($v) . '). Wähle es bei „Tibber-Fahrzeug“, dann erkennt EMS Smart Charging automatisch.';
+        return sprintf($this->t(' ℹ️ Tibber reports exactly one vehicle (%s). Select it under "Tibber vehicle", then EMS detects Smart Charging automatically.'), $this->tibberVehicleLabel($v));
     }
 
     /** onChange der Modus- oder Fahrzeug-Auswahl: die Statuszeile folgt der Auswahl im offenen Formular, nicht dem Speicherstand. */
@@ -10392,7 +10461,7 @@ class EMS extends IPSModule
         }
         if (!empty($d['wb_hands_off'])) {
             for ($n = 1; $n <= $count; $n++) {
-                $this->publishWallboxPlan($n, ($modes[$n] === 'smart') ? 'Smart Charging: Tibber steuert die Ladung, EMS greift nicht ein.' : 'Grid Rewards: Tibber steuert die Ladung, EMS greift nicht ein.');
+                $this->publishWallboxPlan($n, ($modes[$n] === 'smart') ? $this->t('Smart Charging: Tibber controls the charging, EMS does not intervene.') : $this->t('Grid Rewards: Tibber controls the charging, EMS does not intervene.'));
             }
             return;
         }
@@ -10434,32 +10503,32 @@ class EMS extends IPSModule
     {
         $src = (string)($d['source'] ?? '');
         $plugged = (int)($s['wb' . $n . '_cable'] ?? 0) > 0;
-        $head = $plugged ? '' : 'Kein Fahrzeug angesteckt. ';
-        if ($mode === 'smart') { return $head . 'Smart Charging: Tibber steuert die Ladung, EMS greift nicht ein.'; }
+        $head = $plugged ? '' : $this->t('No vehicle plugged in. ');
+        if ($mode === 'smart') { return $head . $this->t('Smart Charging: Tibber controls the charging, EMS does not intervene.'); }
         if ($mode === 'observe') {
             $who = trim($this->chargerControlInfo($n));
-            return $head . 'Nur beobachten: EMS schaltet diese Wallbox nicht.' . ($who !== '' ? ' ' . $who : '');
+            return $head . $this->t('Monitor only: EMS does not switch this wallbox.') . ($who !== '' ? ' ' . $who : '');
         }
-        if ($src === 'netzbetreiber') { return $head . '§14a: Der Netzbetreiber begrenzt gerade, Laden ist gesperrt.'; }
-        if ($src === 'nutzer') { return $head . 'Batterie-Boost: Wallbox freigegeben mit Höchststrom, bis der Boost endet.'; }
-        if ((int)($s['wb' . $n . '_error'] ?? 0) !== 0) { return $head . sprintf('Die Wallbox meldet Fehler %d, Laden ist gesperrt.', (int)$s['wb' . $n . '_error']); }
+        if ($src === 'netzbetreiber') { return $head . $this->t('§14a: the grid operator is currently limiting, charging is blocked.'); }
+        if ($src === 'nutzer') { return $head . $this->t('Battery boost: wallbox enabled with maximum current until the boost ends.'); }
+        if ((int)($s['wb' . $n . '_error'] ?? 0) !== 0) { return $head . sprintf($this->t('The wallbox reports error %d, charging is blocked.'), (int)$s['wb' . $n . '_error']); }
         $enabled = !empty($d['wb' . $n . '_enable']);
         if ($plan !== null) {
             $t = (string)$plan['text'];
-            if ($plan['enable'] && !$enabled) { $t .= ' (gerade gesperrt durch das Netzanschluss-Budget)'; }
+            if ($plan['enable'] && !$enabled) { $t .= $this->t(' (currently blocked by the grid connection budget)'); }
             return $head . $t . '.';
         }
         $note = $this->ReadAttributeString('WB' . $n . 'TargetNote');
         $th = $this->priceThresholds()['wb'];
         $price = $this->currentPriceEur()['eur'];
-        $pv = $this->ReadPropertyBoolean('WB_PV_Ueberschuss') ? ' oder bei PV-Überschuss' : '';
-        $pTxt = ($price !== null) ? sprintf(' (Preis %s ct)', number_format($price * 100, 1, ',', '')) : '';
+        $pv = $this->ReadPropertyBoolean('WB_PV_Ueberschuss') ? $this->t(' or with PV surplus') : '';
+        $pTxt = ($price !== null) ? sprintf($this->t(' (price %s ct)'), $this->num($price * 100, 1)) : '';
         if (!$plugged) {
-            $state = ($price !== null && $price < $th) ? 'Preis gerade darunter, lädt sofort nach dem Anstecken' . $pTxt : 'wartet' . $pTxt;
+            $state = ($price !== null && $price < $th) ? $this->t('price currently below, charges immediately after plugging in') . $pTxt : $this->t('waiting') . $pTxt;
         } else {
-            $state = ($enabled ? 'jetzt freigegeben' : 'jetzt gesperrt') . $pTxt;
+            $state = ($enabled ? $this->t('enabled now') : $this->t('blocked now')) . $pTxt;
         }
-        $txt = sprintf('Preisgesteuert: lädt bei Preis unter %s ct%s; %s.', number_format($th * 100, 1, ',', ''), $pv, $state);
+        $txt = sprintf($this->t('Price-controlled: charges at a price below %s ct%s; %s.'), $this->num($th * 100, 1), $pv, $state);
         return $head . ($note !== '' ? $note . ' ' : '') . $txt;
     }
 
@@ -10546,12 +10615,12 @@ class EMS extends IPSModule
                 array('type' => 'ValidationTextBox', 'name' => 'FormWB' . $n . 'TargetTime', 'caption' => 'Deadline (HH:MM)', 'validate' => '^([01]?\\d|2[0-3]):[0-5]\\d$',
                     'value' => (string)$this->ReadPropertyString('WB' . $n . '_TargetTime')),
                 array('type' => 'Button', 'caption' => 'Apply target',
-                    'onClick' => 'IPS_RequestAction($id, "EMS_WB' . $n . '_TargetTime", $FormWB' . $n . 'TargetTime); IPS_RequestAction($id, "EMS_WB' . $n . '_TargetKwh", $FormWB' . $n . 'TargetKwh); echo "Ladeziel für Wallbox ' . $n . ' übernommen.";'),
+                    'onClick' => 'IPS_RequestAction($id, "EMS_WB' . $n . '_TargetTime", $FormWB' . $n . 'TargetTime); IPS_RequestAction($id, "EMS_WB' . $n . '_TargetKwh", $FormWB' . $n . 'TargetKwh); echo "' . addslashes(sprintf($this->t('Charging target for wallbox %d applied.'), $n)) . '";'),
             ));
             $items[] = array('type' => 'RowLayout', 'items' => array(
-                array('type' => 'Button', 'caption' => '⚡ Charge now for 1 hour', 'onClick' => 'IPS_RequestAction($id, "EMS_WB' . $n . '_Command", 1); echo "Wallbox ' . $n . ': Jetzt laden für 1 Stunde gestartet.";'),
-                array('type' => 'Button', 'caption' => '⏹ End override', 'onClick' => 'IPS_RequestAction($id, "EMS_WB' . $n . '_Command", 2); echo "Wallbox ' . $n . ': Übersteuerung beendet, es gilt wieder die Ladeart.";'),
-                array('type' => 'Button', 'caption' => '🗑 Delete charging target', 'onClick' => 'IPS_RequestAction($id, "EMS_WB' . $n . '_Command", 3); echo "Wallbox ' . $n . ': Ladeziel gelöscht.";'),
+                array('type' => 'Button', 'caption' => '⚡ Charge now for 1 hour', 'onClick' => 'IPS_RequestAction($id, "EMS_WB' . $n . '_Command", 1); echo "' . addslashes(sprintf($this->t('Wallbox %d: charge now started for 1 hour.'), $n)) . '";'),
+                array('type' => 'Button', 'caption' => '⏹ End override', 'onClick' => 'IPS_RequestAction($id, "EMS_WB' . $n . '_Command", 2); echo "' . addslashes(sprintf($this->t('Wallbox %d: override ended, the charging mode applies again.'), $n)) . '";'),
+                array('type' => 'Button', 'caption' => '🗑 Delete charging target', 'onClick' => 'IPS_RequestAction($id, "EMS_WB' . $n . '_Command", 3); echo "' . addslashes(sprintf($this->t('Wallbox %d: charging target deleted.'), $n)) . '";'),
             ));
         }
         $items[] = array('type' => 'Label', 'caption' => 'The same controls are available in the WebFront as the variables "Wallbox n: charging mode / charging target / deadline / command / plan" below this instance (create links there for a category of your own). The settings in the section "🚗 Wallboxes" further down show the same values.');
@@ -10729,41 +10798,41 @@ class EMS extends IPSModule
         $floor = function (float $a) use ($step) { return floor($a / $step + 1e-9) * $step; };
         $clamp = function (float $a) use ($minA, $maxA, $floor) { return max($minA, min($maxA, $floor($a))); };
         if ($mode === 5) {
-            return array('enable' => false, 'currentA' => 0.0, 'text' => 'Aus: Laden gesperrt');
+            return array('enable' => false, 'currentA' => 0.0, 'text' => $this->t('Off: charging blocked'));
         }
         if ($mode === 1) {
             $a = ((int)$in['manualA'] > 0) ? $clamp((float)$in['manualA']) : $maxA;
-            return array('enable' => true, 'currentA' => $a, 'text' => sprintf('Manuell: fest %s A', $this->fmtA($a)));
+            return array('enable' => true, 'currentA' => $a, 'text' => sprintf($this->t('Manual: fixed %s A'), $this->fmtA($a)));
         }
         $surplus = max(0.0, (float)$in['surplusW']);
         if ($mode === 3) { $surplus *= max(0, min(100, (int)$in['shareP'])) / 100.0; }
         $raw = $surplus / ($v * $ph);
         if ($mode === 4) {
             $a = $clamp($raw);
-            return array('enable' => true, 'currentA' => $a, 'text' => sprintf('Hybrid: %s A (Mindeststrom %s A plus PV-Überschuss %.0f W)', $this->fmtA($a), $this->fmtA($minA), (float)$in['surplusW']));
+            return array('enable' => true, 'currentA' => $a, 'text' => sprintf($this->t('Hybrid: %s A (minimum current %s A plus PV surplus %.0f W)'), $this->fmtA($a), $this->fmtA($minA), (float)$in['surplusW']));
         }
-        $label = ($mode === 3) ? sprintf('PV-Anteil %d %%', (int)$in['shareP']) : 'Nur PV';
+        $label = ($mode === 3) ? sprintf($this->t('PV share %d %%'), (int)$in['shareP']) : $this->t('PV only');
         $enough = ($raw + 1e-9 >= $minA);
         $since = (int)$in['sinceSwitchS'];
         if ($enough) {
             if (!$on && $since < (int)$in['cooldownS']) {
-                return array('enable' => false, 'currentA' => 0.0, 'text' => sprintf('%s: Überschuss %.0f W reicht, Start in %d s (Wartezeit)', $label, (float)$in['surplusW'], max(0, (int)$in['cooldownS'] - $since)));
+                return array('enable' => false, 'currentA' => 0.0, 'text' => sprintf($this->t('%s: surplus %.0f W is sufficient, start in %d s (waiting time)'), $label, (float)$in['surplusW'], max(0, (int)$in['cooldownS'] - $since)));
             }
             $a = $clamp($raw);
-            return array('enable' => true, 'currentA' => $a, 'text' => sprintf('%s: %s A bei %.0f W Überschuss', $label, $this->fmtA($a), (float)$in['surplusW']));
+            return array('enable' => true, 'currentA' => $a, 'text' => sprintf($this->t('%s: %s A at %.0f W surplus'), $label, $this->fmtA($a), (float)$in['surplusW']));
         }
         if ($on) {
             $hold = max((int)$in['cooldownS'], (int)$in['minChargeS']);
             if ($since < $hold) {
-                return array('enable' => true, 'currentA' => $minA, 'text' => sprintf('%s: Überschuss %.0f W unter dem Mindeststrom, Stopp in %d s (Wartezeit), bis dahin %s A', $label, (float)$in['surplusW'], $hold - $since, $this->fmtA($minA)));
+                return array('enable' => true, 'currentA' => $minA, 'text' => sprintf($this->t('%s: surplus %.0f W below the minimum current, stop in %d s (waiting time), %s A until then'), $label, (float)$in['surplusW'], $hold - $since, $this->fmtA($minA)));
             }
         }
-        return array('enable' => false, 'currentA' => 0.0, 'text' => sprintf('%s: wartet auf Überschuss (%.0f W, nötig ab %.0f W)', $label, (float)$in['surplusW'], $minA * $v * $ph));
+        return array('enable' => false, 'currentA' => 0.0, 'text' => sprintf($this->t('%s: waiting for surplus (%.0f W, required from %.0f W)'), $label, (float)$in['surplusW'], $minA * $v * $ph));
     }
 
     private function fmtA(float $a): string
     {
-        return (abs($a - round($a)) < 0.05) ? (string)(int)round($a) : number_format($a, 1, ',', '');
+        return (abs($a - round($a)) < 0.05) ? (string)(int)round($a) : $this->num($a, 1);
     }
 
     // ----------------------------------------------------------------
@@ -10785,12 +10854,12 @@ class EMS extends IPSModule
         $now = (int)$in['now'];
         $dl = (int)$in['deadline'];
         $hhmm = date('H:i', $dl);
-        $base = sprintf('Ziel %s kWh bis %s: %s kWh geladen', $this->fmtKwh($target), $hhmm, $this->fmtKwh($charged));
+        $base = sprintf($this->t('Target %s kWh by %s: %s kWh charged'), $this->fmtKwh($target), $hhmm, $this->fmtKwh($charged));
         if ($rest <= 0.05) {
-            return array('state' => 'done', 'enable' => false, 'text' => $base . ', Ziel erreicht', 'slots' => array());
+            return array('state' => 'done', 'enable' => false, 'text' => sprintf($this->t('%s, target reached'), $base), 'slots' => array());
         }
         if ($now >= $dl) {
-            return array('state' => 'expired', 'enable' => false, 'text' => sprintf('%s, Frist vorbei, es fehlen %s kWh', $base, $this->fmtKwh($rest)), 'slots' => array());
+            return array('state' => 'expired', 'enable' => false, 'text' => sprintf($this->t('%s, deadline passed, %s kWh missing'), $base, $this->fmtKwh($rest)), 'slots' => array());
         }
         $cur = $now - ($now % 900);
         $all = array();
@@ -10803,8 +10872,8 @@ class EMS extends IPSModule
             $possible = $kw * (count($all) - (($now - $cur) / 900.0)) / 4.0;
             $late = ($kw <= 0.0) || ($possible + $charged < $target);
             $txt = $late
-                ? sprintf('%s, Frist nicht erreichbar: bis %s gehen nur etwa %s kWh, lädt sofort', $base, $hhmm, $this->fmtKwh(min($target, $charged + $possible)))
-                : sprintf('%s, noch %s kWh, knapp: lädt sofort durch', $base, $this->fmtKwh($rest));
+                ? sprintf($this->t('%1$s, deadline cannot be met: only about %3$s kWh are possible by %2$s, charging immediately'), $base, $hhmm, $this->fmtKwh(min($target, $charged + $possible)))
+                : sprintf($this->t('%s, %s kWh to go, tight: charging straight through now'), $base, $this->fmtKwh($rest));
             return array('state' => $late ? 'late' : 'charge', 'enable' => true, 'text' => $txt, 'slots' => $all);
         }
         $ranked = $all;
@@ -10818,14 +10887,14 @@ class EMS extends IPSModule
         $known = array_filter($pick, function ($t) use ($prices) { return isset($prices[$t]) && $prices[$t] !== null; });
         $avg = count($known) ? array_sum(array_map(function ($t) use ($prices) { return (float)$prices[$t]; }, $known)) / count($known) : null;
         $on = in_array($cur, $pick, true);
-        $txt = sprintf('%s, noch %s kWh, %d Viertelstunden geplant ab %s%s: %s', $base, $this->fmtKwh($rest), $need, date('H:i', $pick[0]),
-            $avg !== null ? sprintf(', Ø %s ct', number_format($avg * 100, 1, ',', '')) : ' (ohne Preise)', $on ? 'lädt jetzt' : 'wartet aufs nächste Fenster');
+        $txt = sprintf($this->t('%s, %s kWh to go, %d quarter-hours planned from %s%s: %s'), $base, $this->fmtKwh($rest), $need, date('H:i', $pick[0]),
+            $avg !== null ? sprintf(', Ø %s ct', $this->num($avg * 100, 1)) : $this->t(' (without prices)'), $on ? $this->t('charging now') : $this->t('waiting for the next window'));
         return array('state' => $on ? 'charge' : 'wait', 'enable' => $on, 'text' => $txt, 'slots' => $pick);
     }
 
     private function fmtKwh(float $k): string
     {
-        return number_format($k, 1, ',', '');
+        return $this->num($k, 1);
     }
 
     /** Naechstes Auftreten der Uhrzeit HH:MM nach $from; null bei ungueltiger Eingabe. */
@@ -10839,10 +10908,18 @@ class EMS extends IPSModule
         return $out;
     }
 
-    /** Wochen-Frist der Wallbox $n, immer 7 Zeilen nach Tag 1..7 (fehlende/kaputte Zeilen = ohne Frist). */
+    /** Angezeigter Wochentag 1..7 (Mo..So). Gespeichert ist nur die Tagesnummer (Day bzw. Zeilenposition); die Bezeichnung wird nie ausgewertet. */
+    private function weekdayLabel(int $day): string
+    {
+        $names = array(1 => 'Monday', 2 => 'Tuesday', 3 => 'Wednesday', 4 => 'Thursday', 5 => 'Friday', 6 => 'Saturday', 7 => 'Sunday');
+        return $this->t($names[$day] ?? 'Monday');
+    }
+
+    /** Wochen-Frist der Wallbox $n, immer 7 Zeilen nach Tag 1..7 (fehlende/kaputte Zeilen = ohne Frist). Label in der Sprache der Anzeige. */
     private function weekTargets(int $n): array
     {
         $rows = $this->defaultWeekTargets();
+        foreach ($rows as $i => $r) { $rows[$i]['Label'] = $this->weekdayLabel((int)$r['Day']); }
         $raw = json_decode($this->ReadPropertyString('WB' . $n . '_WeekTargets'), true);
         if (is_array($raw)) {
             foreach (array_values($raw) as $i => $r) {
@@ -10886,15 +10963,15 @@ class EMS extends IPSModule
                 if ($dl <= $now) { continue; }
                 $kwh = ($row['Kwh'] > 0) ? (float)$row['Kwh'] : $single;
                 if ($kwh <= 0.0) {
-                    return array('deadline' => null, 'kwh' => 0.0, 'source' => 'week', 'note' => sprintf('Ladeziel aus: Frist %s %s ohne Ladeziel (weder für den Tag noch einheitlich).', $row['Label'], $row['Time']));
+                    return array('deadline' => null, 'kwh' => 0.0, 'source' => 'week', 'note' => sprintf($this->t('Charging target off: deadline %s %s without a charging target (neither for the day nor common).'), $row['Label'], $row['Time']));
                 }
                 return array('deadline' => $dl, 'kwh' => $kwh, 'source' => 'week', 'note' => '');
             }
-            return array('deadline' => null, 'kwh' => 0.0, 'source' => 'week', 'note' => 'Ladeziel aus: keine gültige Wochen-Frist (HH:MM).');
+            return array('deadline' => null, 'kwh' => 0.0, 'source' => 'week', 'note' => $this->t('Charging target off: no valid weekly deadline (HH:MM).'));
         }
         if ($single <= 0.0) { return array('deadline' => null, 'kwh' => 0.0, 'source' => 'single', 'note' => ''); }
         $dl = $this->nextClockTs($this->ReadPropertyString('WB' . $n . '_TargetTime'), $now);
-        return array('deadline' => $dl, 'kwh' => $single, 'source' => 'single', 'note' => $dl === null ? 'Ladeziel aus: Frist ist keine gültige Uhrzeit (HH:MM).' : '');
+        return array('deadline' => $dl, 'kwh' => $single, 'source' => 'single', 'note' => $dl === null ? $this->t('Charging target off: the deadline is not a valid time (HH:MM).') : '');
     }
 
     private function nextClockTs(string $hhmm, int $from): ?int
@@ -10960,13 +11037,13 @@ class EMS extends IPSModule
             return null;
         }
         if ($this->ReadAttributeBoolean('WB' . $n . 'TargetCleared')) {
-            $this->WriteAttributeString('WB' . $n . 'TargetNote', 'Ladeziel für diese Ladesitzung gelöscht.');
+            $this->WriteAttributeString('WB' . $n . 'TargetNote', $this->t('Charging target deleted for this charging session.'));
             return null;
         }
         if (!$this->wallboxTargetConfigured($n)) { return null; }
         $eId = (int)($entry['sessionEnergyID'] ?? 0);
         if ($eId <= 0 || !IPS_VariableExists($eId)) {
-            $this->WriteAttributeString('WB' . $n . 'TargetNote', 'Ladeziel nicht unterstützt: die Wallbox meldet keine Energie der Ladesitzung.');
+            $this->WriteAttributeString('WB' . $n . 'TargetNote', $this->t('Charging target not supported: the wallbox does not report the energy of the charging session.'));
             return null;
         }
         $now = time();
@@ -10992,7 +11069,7 @@ class EMS extends IPSModule
         $target = ($wk > 0.0) ? $wk : (float)$this->ReadPropertyFloat('WB' . $n . '_TargetKwh');
         if ($target <= 0.0) { return null; }
         if ($this->ReadAttributeBoolean('WB' . $n . 'TargetDone')) {
-            $this->WriteAttributeString('WB' . $n . 'TargetNote', sprintf('Ladeziel %s kWh erreicht.', $this->fmtKwh($target)));
+            $this->WriteAttributeString('WB' . $n . 'TargetNote', sprintf($this->t('Charging target %s kWh reached.'), $this->fmtKwh($target)));
             return null;
         }
         $kw = $maxA * 230.0 * $phases / 1000.0;
@@ -11030,7 +11107,7 @@ class EMS extends IPSModule
     {
         $entry = $this->wallboxWriteEntry($n);
         if ($entry === null || (int)($entry['instanceID'] ?? 0) <= 0 || (int)($entry['currentLimitID'] ?? 0) <= 0) {
-            $this->WriteAttributeString('WB' . $n . 'ChargeText', 'Ladeart nicht möglich: die Wallbox meldet keinen schreibbaren Stromsollwert, es gilt die Preissteuerung');
+            $this->WriteAttributeString('WB' . $n . 'ChargeText', $this->t('Charging mode not possible: the wallbox reports no writable current setpoint, price control applies'));
             return null;
         }
         $phSet = $this->ReadPropertyInteger('WB' . $n . '_PhaseSetting');
@@ -11045,7 +11122,7 @@ class EMS extends IPSModule
             $na = $this->ReadPropertyInteger('WB' . $n . '_NowCurrentA');
             $a = ($na > 0) ? max($minA, min($maxA, (float)$na)) : $maxA;
             $idN = (int)($entry['chargeEnableID'] ?? 0);
-            $txt = sprintf('Manuell: Jetzt laden mit %s A, noch %d min (bis %s)', $this->fmtA($a), (int)ceil(($nowUntil - time()) / 60), date('H:i', $nowUntil));
+            $txt = sprintf($this->t('Manual: charge now with %s A, %d min left (until %s)'), $this->fmtA($a), (int)ceil(($nowUntil - time()) / 60), date('H:i', $nowUntil));
             $this->WriteAttributeString('WB' . $n . 'ChargeText', $txt);
             return array('enable' => true, 'currentA' => $a, 'text' => $txt, 'entry' => $entry,
                 'on' => ($idN > 0 && IPS_VariableExists($idN)) ? (bool)GetValue($idN) : $this->ReadAttributeBoolean('WB' . $n . 'LastSentEnable'));
@@ -11153,7 +11230,7 @@ class EMS extends IPSModule
         // laufen (siehe Fund 30.07.2026), nicht scharfgeschaltet auf einen
         // Sollwert warten, der wegen der Kommunikationsstoerung ausbleibt.
         $this->setGoodweMode($fallbackMode, 0, false);
-        $this->SetValue('EMS_Status', 'FALLBACK - Kommunikationsfehler');
+        $this->SetValue('EMS_Status', $this->t('FALLBACK - communication error'));
         $this->SetStatus(200);
     }
 

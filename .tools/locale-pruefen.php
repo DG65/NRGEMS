@@ -112,7 +112,24 @@ $alt = json_decode((string)shell_exec('git -C ' . escapeshellarg($root) . ' show
 if (!is_array($alt)) {
     $fail("form.json aus $ref nicht lesbar");
 } else {
-    $neueNamen = '/^(Panel[A-Za-z0-9]+|GridOverviewHint|InverterFallbackHint)$/';
+    // Vergleichsstand schon zweisprachig (ab 0.98.0)? Dann beide Seiten mit der jeweils eigenen locale.json auf Deutsch bringen.
+    $altLoc = json_decode((string)shell_exec('git -C ' . escapeshellarg($root) . ' show ' . escapeshellarg($ref . ':EMS/locale.json') . ' 2>/dev/null'), true);
+    $altDe = is_array($altLoc) ? ($altLoc['translations']['de'] ?? []) : [];
+    $neueNamen = '/^(Panel[A-Za-z0-9]+|GridOverviewHint|InverterFallbackHint|ForceApplyButton)$/';
+    $mkDe = function (array $de) use ($neueNamen) {
+        $f = function ($n) use (&$f, $de, $neueNamen) {
+            if (!is_array($n)) { return $n; }
+            $o = [];
+            foreach ($n as $k => $v) {
+                if ($k === 'name' && is_string($v) && preg_match($neueNamen, $v)) { continue; }
+                if ($k !== 'values' && is_string($v) && in_array($k, ['caption', 'label', 'suffix', 'prefix'], true)) { $o[$k] = $de[$v] ?? $v; }
+                else { $o[$k] = is_array($v) && $k !== 'values' ? $f($v) : $v; }
+            }
+            return $o;
+        };
+        return $f;
+    };
+    $alt = $mkDe($altDe)($alt);
     $toDe = function ($n) use (&$toDe, $de, $neueNamen) {
         if (!is_array($n)) { return $n; }
         $o = [];
@@ -133,7 +150,7 @@ if (!is_array($alt)) {
         echo "form.json auf Deutsch == $ref (alle " . count($formTexte) . " Texte identisch)\n";
     }
     $altMod = (string)shell_exec('git -C ' . escapeshellarg($root) . ' show ' . escapeshellarg($ref . ':EMS/module.php') . ' 2>/dev/null');
-    $newsAlt = newsAus($altMod);
+    $newsAlt = array_map(function ($z) use ($altDe) { return array_map(function ($l) use ($altDe) { return $altDe[$l] ?? $l; }, $z); }, newsAus($altMod));
     $newsDe = array_map(function ($z) use ($de) { return array_map(function ($l) use ($de) { return $de[$l] ?? $l; }, $z); }, $newsNeu);
     if ($newsDe !== $newsAlt) { $fail("NEWS auf Deutsch weicht von $ref ab"); } else { echo 'NEWS auf Deutsch == ' . $ref . ' (' . array_sum(array_map('count', $newsNeu)) . " Zeilen)\n"; }
 }
