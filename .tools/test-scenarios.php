@@ -995,6 +995,27 @@ echo sprintf("        (Merkliste: Fuellen %d Translate-Aufrufe, danach %d; t() j
 check('Merkliste: weiterer Durchlauf (Regelzyklus + Formular) ohne Translate()-Aufruf', $first > 0 && $second === 0, "$first / $second " . ($GLOBALS["TRANSLATE_LAST"] ?? ""));
 prop('WB_Active', false); prop('WB_Count', 1); prop('WB1_WeekTargets', json_encode(call($ems, 'defaultWeekTargets'))); prop('WB2_WeekTargets', json_encode(call($ems, 'defaultWeekTargets')));
 
+echo "\n8d6) Zweisprachigkeit Schritt 3: Vertragsdaten, Codefelder sprachneutral\n";
+$ems = freshEms();
+$memo3 = new ReflectionProperty('EMS', 'emsTextMemo');
+$deWort3 = '/[äöüÄÖÜß]|\b(und|oder|nicht|nur|wird|ist|der|die|das|Akku|Batterie|Netz|Einspeis\w*|Vergütung|Automatik|Bereich|Schalter|keine?)\b/u';
+prop('ANL_IBN_Datum', '01.06.2025'); prop('ANL_kWp_Manuell', 9.18);
+$GLOBALS['EMS_LANG_EN'] = true; $memo3->setValue(null, []);
+$piEn = $ems->GetPlantInfo(); $cdEn = $ems->GetCurrentDecision(); $unEn = call($ems, 'dayPlanUnavailableReason');
+$lbEn = array_map(fn($op) => call($ems, 'addDayPlanSwitching', [['op' => $op, 'gw' => 1, 'power' => 0]]), [EMS_OP_AUTO, EMS_OP_NET_CHARGE, EMS_OP_HOLD, EMS_OP_EXPORT]);
+$ioEn = $ems->GetGridImportOutlook(time() + 3600, time(), 0.0, false);
+$GLOBALS['EMS_LANG_EN'] = false; $memo3->setValue(null, []);
+$piDe = $ems->GetPlantInfo(); $cdDe = $ems->GetCurrentDecision();
+$lbDe = array_map(fn($op) => call($ems, 'addDayPlanSwitching', [['op' => $op, 'gw' => 1, 'power' => 0]]), [EMS_OP_AUTO, EMS_OP_NET_CHARGE, EMS_OP_HOLD, EMS_OP_EXPORT]);
+$en3 = array_merge(array_column($piEn['pflichten'], 'text'), [$piEn['hinweis'], $piEn['eegFassung'], $unEn, (string)($ioEn['reason'] ?? '')], array_column($lbEn, 'gwModeLabel'));
+check('Englisch: Pflichten, Hinweis, EEG-Fassung, Tagesplan-Grund, Schaltbeschriftung, Outlook-Grund ohne Deutsch', count(preg_grep($deWort3, $en3)) === 0, json_encode(array_values(preg_grep($deWort3, $en3)), JSON_UNESCAPED_UNICODE));
+check('Codefelder sprachneutral: pflichten.code, Quellen, mode/modeCode/source, gwMode gleich in beiden Sprachen',
+    array_column($piEn['pflichten'], 'code') === array_column($piDe['pflichten'], 'code') && $piEn['verguetungQuelle'] === $piDe['verguetungQuelle'] && $piEn['einspeisemanagement'] === $piDe['einspeisemanagement']
+    && $cdEn['mode'] === $cdDe['mode'] && $cdEn['modeCode'] === $cdDe['modeCode'] && $cdEn['source'] === $cdDe['source'] && array_column($lbEn, 'gwMode') === array_column($lbDe, 'gwMode'),
+    json_encode([$cdEn['mode'], array_column($piEn['pflichten'], 'code')], JSON_UNESCAPED_UNICODE));
+check('Deutsch: Schaltbeschriftung und Pflichten wie bisher', array_column($lbDe, 'gwModeLabel') === ['Automatik', 'Netz laden', 'Akku halten', 'Einspeisen'] && in_array('Registrierung im Marktstammdatenregister ist Pflicht.', array_column($piDe['pflichten'], 'text'), true), json_encode(array_column($lbDe, 'gwModeLabel'), JSON_UNESCAPED_UNICODE));
+check('Einheit der Preisvertraege bleibt "ct/kWh brutto" (Szenariorechner vergleicht sie)', $ems->GetPurchasePriceHistory(time() - 3600, time())['einheit'] === 'ct/kWh brutto');
+
 echo "\n8e) Andere Nutzer, andere Konstellationen: Netzladen ohne feste Einspeiseverguetung\n";
 $ems = freshEms();
 prop('ANL_Verguetung_ct', 0.0); // Verguetung unbekannt
@@ -1050,6 +1071,15 @@ check('Akku 86 % ueber dem Bedarf: keine Ladeviertelstunde im Nachtfenster', $nw
 $nwN2 = call($ems, 'nightWindowPlan', [$tagU, 0, 20.0, $ctxNB]);
 check('Akku 20 %, Bedarf 39 %: nur so viel laden wie fehlt (19 % von 40 kWh = 7,6 kWh, 1 Viertelstunde bei 10 kW... hoechstens 4)', $nwN2 !== null && $nwN2['n'] >= 1 && $nwN2['n'] <= 4, json_encode($nwN2));
 check('Referenz Ersatzpreis: Halten unabhaengig von der Einspeiseverguetung (Verguetung 18,36 ct, Preis 30 ct, Ersatz 50 ct -> halten)', ($hV = call($ems, 'nightWindowSlot', [$slU, 0.30, 60.0, $nwU, array_merge($ctxU, ['feedTariff' => 0.1836, 'replacePrice' => 0.50])])) !== null && $hV['plan']['op'] === EMS_OP_HOLD, json_encode($hV['plan'] ?? null));
+// Zweisprachigkeit Schritt 3: Begruendungen des Tagesplans englisch ohne Deutsch, Codefelder (op/gw) sprachneutral
+$deWort = '/[äöüÄÖÜß]|\b(und|oder|nicht|nur|wird|aus dem|Akku|Batterie|Netz|Nachtfenster|Haus|Bezug|Einspeis\w*|Automatik|laden|Ziel|Rang|Viertelstunde)\b/u';
+$memoR = new ReflectionProperty('EMS', 'emsTextMemo');
+$GLOBALS['EMS_LANG_EN'] = true; $memoR->setValue(null, []);
+$enR = [call($ems, 'nightWindowSlot', [$slU, 0.12, 60.0, $nwU, $ctxU]), call($ems, 'nightWindowSlot', [$slU, 0.12, 60.0, $nwU, array_merge($ctxU, ['refMode' => 0, 'feedTariff' => 0.20])])];
+$GLOBALS['EMS_LANG_EN'] = false; $memoR->setValue(null, []);
+$deR = call($ems, 'nightWindowSlot', [$slU, 0.12, 60.0, $nwU, $ctxU]);
+$enTexte = array_map(fn($x) => (string)($x['plan']['reason'] ?? ''), $enR);
+check('Englisch: Nachtfenster-Begruendungen ohne Deutsch, op/gw wie deutsch', $enR[0] !== null && $enR[1] !== null && count(preg_grep($deWort, $enTexte)) === 0 && $enR[0]['plan']['op'] === $deR['plan']['op'] && $enR[0]['plan']['gw'] === $deR['plan']['gw'] && strpos($enTexte[0], 'Night window until') === 0, json_encode($enTexte, JSON_UNESCAPED_UNICODE));
 prop('ANL_Verguetung_ct', 8.0); // niedrige Verguetung (z. B. Ue20/Direktvermarktung)
 check('Verguetung 8 ct, Referenz Verguetung: Netzladen sehr streng (Grenze 7,6 ct)', abs(call($ems, 'gridChargeLimitEur', [['feedTariff' => 0.08, 'refMode' => 0]]) - 0.076) < 0.0005);
 prop('NETZLADUNG_Referenz', 1);
@@ -2705,6 +2735,14 @@ $basis = ['nowSlot' => 28, 'latestSlot' => 90, 'peakFractionPct' => 80, 'pv' => 
     'avgHouseW' => 400.0, 'capKwh' => 40.0, 'soc' => 50.0, 'pvW' => 3000.0, 'houseW' => 400.0, 'marginW' => 300.0,
     'safetyPct' => 130, 'price' => null, 'feedTariff' => 0.0, 'wasActive' => false];
 $b1 = fn(array $o = []) => call($ems, 'b1Evaluate', [array_merge($basis, $o)]);
+// Zweisprachigkeit Schritt 3: Mittagsspitze-Begruendungen englisch ohne Deutsch, active/basis unveraendert
+$memoB = new ReflectionProperty('EMS', 'emsTextMemo');
+$deWortB = '/[äöüÄÖÜß]|\b(und|oder|nicht|nur|reicht|Batterie|Resterwartung|Platz|Sicherheit|Spitze|Tagesende|Prognose\w*|Haus|voll)\b/u';
+$GLOBALS['EMS_LANG_EN'] = true; $memoB->setValue(null, []);
+$b1En = [$b1(), $b1(['soc' => 99.5]), $b1(['pvW' => 100.0]), $b1(['capKwh' => 0.0]), $b1(['nowSlot' => 95]), $b1(['nowSlot' => 50])];
+$GLOBALS['EMS_LANG_EN'] = false; $memoB->setValue(null, []);
+$b1De = [$b1(), $b1(['soc' => 99.5]), $b1(['pvW' => 100.0]), $b1(['capKwh' => 0.0]), $b1(['nowSlot' => 95]), $b1(['nowSlot' => 50])];
+check('Englisch: Mittagsspitze-Begruendungen ohne Deutsch, active/basis wie deutsch', count(preg_grep($deWortB, array_column($b1En, 'reason'))) === 0 && array_column($b1En, 'active') === array_column($b1De, 'active') && array_column($b1En, 'basis') === array_column($b1De, 'basis'), json_encode(array_column($b1En, 'reason'), JSON_UNESCAPED_UNICODE));
 
 echo "\n   Spitzenfenster selbst (peakWindowSlots(), isoliert)\n";
 $shoulder = array_fill(0, 96, 0.0);
