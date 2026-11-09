@@ -1001,7 +1001,8 @@
             "⚠️ Feed-in monitor (%s): inverter self-regulation | originally: %s": "⚠️ Einspeise-Ueberwachung (%s): WR-Eigenregelung | urspruenglich: %s",
             "⚠️ Plausibility monitor (%s): inverter self-regulation | originally: %s": "⚠️ Plausibilitaetswaechter (%s): WR-Eigenregelung | urspruenglich: %s",
             "Tibber-controlled device": "Tibber-gesteuertes Gerät",
-            "NEW: Step 3 of the bilingual module: the reasons of the day plan and of the current decision, and the display texts other modules read from EMS, follow the Symcon language setting. Codes and units stay unchanged.": "NEU: Zweisprachig, Schritt 3: Die Begründungen im Tagesplan und in der aktuellen Entscheidung sowie die Anzeigetexte, die andere Module vom EMS lesen, folgen der Sprache von Symcon. Kennungen und Einheiten bleiben unverändert."
+            "NEW: Step 3 of the bilingual module: the reasons of the day plan and of the current decision, and the display texts other modules read from EMS, follow the Symcon language setting. Codes and units stay unchanged.": "NEU: Zweisprachig, Schritt 3: Die Begründungen im Tagesplan und in der aktuellen Entscheidung sowie die Anzeigetexte, die andere Module vom EMS lesen, folgen der Sprache von Symcon. Kennungen und Einheiten bleiben unverändert.",
+            "FIX: Since Symcon 9.1, the day plan schedule logged a warning every 15 minutes (\"schedule action ID must be greater than 0\"). Existing schedules keep their actions, new ones start at action 1.": "BEHOBEN: Seit Symcon 9.1 meldete der Tagesplan-Wochenplan alle 15 Minuten eine Warnung („Wochenplan-Aktions-ID muss größer als 0 sein“). Bestehende Wochenpläne behalten ihre Aktionen, neue beginnen bei Aktion 1."
         }
     }
 }

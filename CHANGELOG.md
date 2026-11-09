@@ -2,6 +2,9 @@
 
 Ältere Versionen: [CHANGELOG-Archiv.md](CHANGELOG-Archiv.md)
 
+## 0.99.2 (2026-11-09)
+- **Symcon 9.1: Wochenplan-Aktions-ID 0 abgelehnt (live 09.11.2026):** `ensureDayPlanEvent()` setzte bei jedem Lauf die Aktion 0 („Automatik“) neu; Symcon 9.1 quittiert das mit „Wochenplan-Aktions-ID muss größer als 0 sein“. Bestands-Wochenpläne (haben Aktion 0) behalten op = Aktions-ID, Aktion 0 wird nicht mehr neu gesetzt; neu angelegte Wochenpläne nutzen op + 1 (Automatik = 1 … Akku halten = 9), `writeDayPlanEvent()` schreibt die Punkte entsprechend. Fünf neue Prüfungen, Mutation nachweislich rot.
+
 ## 0.99.1 (2026-11-09)
 - **Zweisprachig, Schritt 3:** Begründungen in Entscheidung und Tagesplan (Nachtfenster, Mittagsspitze, Smart Charging, Wächter, Haltephasen), Grund für fehlenden Tagesplan und Anzeigetexte in Verträgen (GetPlantInfo-Pflichten/Hinweise, GetBatteryCost/GetPurchasePriceHistory-Hinweis, GetGridImportOutlook-Gründe, Schaltbeschriftungen, Simulationen) folgen der Systemsprache; Deutsch wortgleich (deutsch-vergleich). Codefelder sprachneutral; `einheit` 'ct/kWh brutto' und `GetCurrentDecision.mode` bleiben bewusst unübersetzt; Wochenplan-Name und Aktionsnamen unverändert. Log bleibt deutsch.
 

@@ -1039,12 +1039,12 @@ check('Referenz Ersatzpreis ohne Preisvergleichswert: kein Halten', call($ems, '
 $labels = function ($panel) { return $panel === null ? array() : array_values(array_filter(array_map(function ($i) { return $i['type'] === 'Label' ? $i['caption'] : null; }, $panel['items']))); };
 attr('SeenNews', '0.97.3');
 $nb = call($ems, 'newsBanner');
-check('News: gesehen 0.97.3 -> nur 0.99.1 bis 0.97.4, neueste oben', $nb !== null && $nb['caption'] === '🆕 Neu bis Version 0.99.1' && count(array_filter($labels($nb), function ($c) { return strpos($c, 'Version ') === 0; })) === 5 && strpos($labels($nb)[0], 'Version 0.99.1') === 0, json_encode($labels($nb), JSON_UNESCAPED_UNICODE));
-attr('SeenNews', '0.99.0');
+check('News: gesehen 0.97.3 -> nur 0.99.2 bis 0.97.4, neueste oben', $nb !== null && $nb['caption'] === '🆕 Neu bis Version 0.99.2' && count(array_filter($labels($nb), function ($c) { return strpos($c, 'Version ') === 0; })) === 6 && strpos($labels($nb)[0], 'Version 0.99.2') === 0, json_encode($labels($nb), JSON_UNESCAPED_UNICODE));
+attr('SeenNews', '0.99.1');
 $nb = call($ems, 'newsBanner');
-check('News: gesehen 0.99.0 -> nur die Zeile von 0.99.1, ohne Versionsueberschrift', $nb !== null && count($labels($nb)) === 1 && strpos($labels($nb)[0], 'Version ') !== 0, json_encode($labels($nb), JSON_UNESCAPED_UNICODE));
-attr('SeenNews', '0.99.1-beta.1');
-check('News: gesehen 0.99.1-beta.1 (Beta-Zusatz) -> nichts Neues', call($ems, 'newsBanner') === null);
+check('News: gesehen 0.99.1 -> nur die Zeile von 0.99.2, ohne Versionsueberschrift', $nb !== null && count($labels($nb)) === 1 && strpos($labels($nb)[0], 'Version ') !== 0, json_encode($labels($nb), JSON_UNESCAPED_UNICODE));
+attr('SeenNews', '0.99.2-beta.1');
+check('News: gesehen 0.99.2-beta.1 (Beta-Zusatz) -> nichts Neues', call($ems, 'newsBanner') === null);
 attr('SeenNews', '');
 $nb = call($ems, 'newsBanner');
 check('News: Neuinstallation (nichts gesehen) -> alles, inkl. Altblock', $nb !== null && count($labels($nb)) > 50);
@@ -3997,6 +3997,35 @@ check('Ohne PV-Prognose: ok=false (nicht raten)', $r['ok'] === false && strpos($
 prop('BAT_Active', false);
 $r = call($ems, 'GetGridImportOutlook', [$now, $now + 3600, 0.0, false]);
 check('Batteriespeicher im EMS aus: ok=false', $r['ok'] === false && strpos($r['reason'], 'Batterie') !== false, json_encode($r));
+
+// 0.99.2: Symcon 9.1 lehnt Wochenplan-Aktions-ID 0 ab -- Bestand behaelt op = ID, neue Plaene op + 1
+if (!function_exists('IPS_GetEvent')) {
+    function IPS_GetEvent($id) { return $GLOBALS['EVT'][$id] ?? array(); }
+    function IPS_SetEventScheduleAction($id, $aid, $name, $color, $script) {
+        if ($aid <= 0) { $GLOBALS['EVTWARN'][] = $aid; return false; }
+        $GLOBALS['EVT'][$id]['ScheduleActions'][$aid] = array('ID' => $aid, 'Name' => $name); return true;
+    }
+    if (!function_exists('IPS_SetEventScheduleGroup')) { function IPS_SetEventScheduleGroup($id, $g, $d) { return true; } }
+    function IPS_SetEventScheduleGroupPoint($id, $g, $p, $h, $m, $s, $aid) { $GLOBALS['EVT'][$id]['Points'][$p] = $aid; return true; }
+}
+$GLOBALS['OBJ'][90001] = true; $GLOBALS['OBJ'][90002] = true;
+$GLOBALS['EVT'][90001] = array('ScheduleActions' => array(0 => array('ID' => 0, 'Name' => 'Automatik'), 1 => array('ID' => 1, 'Name' => 'x')));
+$GLOBALS['EVT'][90002] = array('ScheduleActions' => array());
+$GLOBALS['EVTWARN'] = array();
+check('Wochenplan Bestand (Aktion 0 vorhanden) erkannt, neuer Plan nicht', call($ems, 'dayPlanLegacyActions', [90001]) === true && call($ems, 'dayPlanLegacyActions', [90002]) === false);
+foreach (array(90001, 90002) as $evId) {
+    $legacy = call($ems, 'dayPlanLegacyActions', [$evId]);
+    foreach (call($ems, 'getPlanActions') as $a) { $aid = $legacy ? $a['op'] : $a['op'] + 1; if ($aid > 0) { IPS_SetEventScheduleAction($evId, $aid, $a['name'], $a['color'], ''); } }
+}
+check('Keine Aktions-ID 0 mehr gesetzt (Symcon 9.1)', empty($GLOBALS['EVTWARN']), json_encode($GLOBALS['EVTWARN']));
+check('Neuer Plan: Automatik = Aktion 1, Akku halten = Aktion 9', ($GLOBALS['EVT'][90002]['ScheduleActions'][1]['Name'] ?? '') === 'Automatik' && isset($GLOBALS['EVT'][90002]['ScheduleActions'][9]), json_encode(array_keys($GLOBALS['EVT'][90002]['ScheduleActions'])));
+attr('DayPlanEventId', 90002);
+$planAuto = array_fill(0, 96, array('op' => EMS_OP_AUTO));
+call($ems, 'writeDayPlanEvent', [$planAuto]);
+check('Neuer Plan: Punkte zeigen auf Aktion 1 statt 0', ($GLOBALS['EVT'][90002]['Points'][0] ?? null) === 1, json_encode($GLOBALS['EVT'][90002]['Points'][0] ?? null));
+attr('DayPlanEventId', 90001);
+call($ems, 'writeDayPlanEvent', [$planAuto]);
+check('Bestands-Plan: Punkte bleiben auf Aktion 0', ($GLOBALS['EVT'][90001]['Points'][0] ?? null) === 0, json_encode($GLOBALS['EVT'][90001]['Points'][0] ?? null));
 
 // ===========================================================================
 if (getenv('EMS_DUMP')) { file_put_contents(getenv('EMS_DUMP'), implode("\n", $GLOBALS['DUMP'] ?? []) . "\n"); }

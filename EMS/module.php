@@ -43,6 +43,7 @@ define('EMS_LOG_VERBOSE',     2);
 define('EMS_COLOR_AUTO', 0x2E8B3D); // Gruen: Wert wurde automatisch uebernommen (🔗-Zeilen im Formular)
 // Quelltexte englisch, deutsche Fassung in locale.json; newsBanner() uebersetzt je Zeile.
 define('EMS_NEWS_VERSIONS', array(
+    '0.99.2' => array('FIX: Since Symcon 9.1, the day plan schedule logged a warning every 15 minutes ("schedule action ID must be greater than 0"). Existing schedules keep their actions, new ones start at action 1.'),
     '0.99.1' => array('NEW: Step 3 of the bilingual module: the reasons of the day plan and of the current decision, and the display texts other modules read from EMS, follow the Symcon language setting. Codes and units stay unchanged.'),
     '0.99.0' => array('NEW: EEBUS devices are found automatically: heat pumps via WPEEBUSHub and wallboxes via ChargerEEBUSHub (measured, not yet switched). NEW: Heat pump extra run on PV surplus (panel Heat pump, off by default): EMS switches on the extra run only when the surplus would otherwise go to the grid; the battery has priority, grid operator and §14a always win.'),
     '0.98.1' => array('NEW: Step 2 of the bilingual module: status lines, button messages, push notifications and weekday names follow the Symcon language setting. The reasons in the day plan follow in the next version.'),
@@ -6989,11 +6990,28 @@ class EMS extends IPSModule
         // eigener interner Schedule-Trigger einen zweiten, von optimize()/
         // applyDecision() unabhaengigen Steuerpfad -- genau das Problem, das
         // der Tagesplan eigentlich beseitigen soll (siehe SUITE.md-Historie).
+        // Symcon 9.1 lehnt Aktions-ID 0 ab ("Wochenplan-Aktions-ID muss groesser als 0 sein", live 09.11.2026).
+        // Bestands-Wochenplaene mit Aktion 0 (vor 9.1 angelegt) behalten ihre Zuordnung op = Aktions-ID und
+        // werden fuer Aktion 0 nicht mehr neu gesetzt; neue Wochenplaene nutzen op + 1 (dayPlanActionId()).
+        $legacy = $this->dayPlanLegacyActions($eventId);
         foreach ($this->getPlanActions() as $a) {
-            IPS_SetEventScheduleAction($eventId, $a['op'], $a['name'], $a['color'], '');
+            $actionId = $legacy ? $a['op'] : $a['op'] + 1;
+            if ($actionId <= 0) { continue; }
+            IPS_SetEventScheduleAction($eventId, $actionId, $a['name'], $a['color'], '');
         }
 
         return $eventId;
+    }
+
+    /** true = Wochenplan stammt aus der Zeit vor Symcon 9.1 und hat bereits eine Aktion mit ID 0 (op = Aktions-ID). */
+    private function dayPlanLegacyActions(int $eventId): bool
+    {
+        if ($eventId <= 0 || !function_exists('IPS_GetEvent') || !@IPS_ObjectExists($eventId)) { return false; }
+        $event = @IPS_GetEvent($eventId);
+        foreach ((array)($event['ScheduleActions'] ?? array()) as $action) {
+            if ((int)($action['ID'] ?? -1) === 0) { return true; }
+        }
+        return false;
     }
 
     private function getPlanActions()
@@ -7017,6 +7035,7 @@ class EMS extends IPSModule
             return array('ok' => 0, 'failed' => 96);
         }
         $validOps = array(EMS_OP_AUTO, EMS_OP_PV_SELFUSE, EMS_OP_NET_CHARGE, EMS_OP_DISCHARGE, EMS_OP_EXPORT, EMS_OP_GRIDREWARDS, EMS_OP_HOLD);
+        $actionOffset = $this->dayPlanLegacyActions($eventId) ? 0 : 1;
         $ok = 0;
         $failed = array();
         for ($slot = 0; $slot < 96; $slot++) {
@@ -7029,7 +7048,7 @@ class EMS extends IPSModule
             // Fehlerunterdrueckung haette das lautlos verschluckt, egal aus
             // welchem Grund. Fehlschlaege werden jetzt gezaehlt und geloggt,
             // statt zu verschwinden -- Dietmars "kein Blindflug"-Grundsatz).
-            if (IPS_SetEventScheduleGroupPoint($eventId, 0, $slot, $h, $m, 0, $op)) {
+            if (IPS_SetEventScheduleGroupPoint($eventId, 0, $slot, $h, $m, 0, $op + $actionOffset)) {
                 $ok++;
             } else {
                 $failed[] = $slot;
