@@ -1064,12 +1064,12 @@ check('Referenz Ersatzpreis ohne Preisvergleichswert: kein Halten', call($ems, '
 $labels = function ($panel) { return $panel === null ? array() : array_values(array_filter(array_map(function ($i) { return $i['type'] === 'Label' ? $i['caption'] : null; }, $panel['items']))); };
 attr('SeenNews', '0.97.3');
 $nb = call($ems, 'newsBanner');
-check('News: gesehen 0.97.3 -> nur 0.99.2 bis 0.97.4, neueste oben', $nb !== null && $nb['caption'] === '🆕 Neu bis Version 0.99.2' && count(array_filter($labels($nb), function ($c) { return strpos($c, 'Version ') === 0; })) === 6 && strpos($labels($nb)[0], 'Version 0.99.2') === 0, json_encode($labels($nb), JSON_UNESCAPED_UNICODE));
-attr('SeenNews', '0.99.1');
+check('News: gesehen 0.97.3 -> nur 0.100.0 bis 0.97.4, neueste oben', $nb !== null && $nb['caption'] === '🆕 Neu bis Version 0.100.0' && count(array_filter($labels($nb), function ($c) { return strpos($c, 'Version ') === 0; })) === 7 && strpos($labels($nb)[0], 'Version 0.100.0') === 0, json_encode($labels($nb), JSON_UNESCAPED_UNICODE));
+attr('SeenNews', '0.99.2');
 $nb = call($ems, 'newsBanner');
-check('News: gesehen 0.99.1 -> nur die Zeile von 0.99.2, ohne Versionsueberschrift', $nb !== null && count($labels($nb)) === 1 && strpos($labels($nb)[0], 'Version ') !== 0, json_encode($labels($nb), JSON_UNESCAPED_UNICODE));
-attr('SeenNews', '0.99.2-beta.1');
-check('News: gesehen 0.99.2-beta.1 (Beta-Zusatz) -> nichts Neues', call($ems, 'newsBanner') === null);
+check('News: gesehen 0.99.2 -> nur die Zeile von 0.100.0, ohne Versionsueberschrift', $nb !== null && count($labels($nb)) === 1 && strpos($labels($nb)[0], 'Version ') !== 0, json_encode($labels($nb), JSON_UNESCAPED_UNICODE));
+attr('SeenNews', '0.100.0-beta.1');
+check('News: gesehen 0.100.0-beta.1 (Beta-Zusatz) -> nichts Neues', call($ems, 'newsBanner') === null);
 attr('SeenNews', '');
 $nb = call($ems, 'newsBanner');
 check('News: Neuinstallation (nichts gesehen) -> alles, inkl. Altblock', $nb !== null && count($labels($nb)) > 50);

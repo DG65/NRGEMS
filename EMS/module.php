@@ -43,6 +43,7 @@ define('EMS_LOG_VERBOSE',     2);
 define('EMS_COLOR_AUTO', 0x2E8B3D); // Gruen: Wert wurde automatisch uebernommen (🔗-Zeilen im Formular)
 // Quelltexte englisch, deutsche Fassung in locale.json; newsBanner() uebersetzt je Zeile.
 define('EMS_NEWS_VERSIONS', array(
+    '0.100.0' => array('NEW: Grid charging and holding the battery only when it pays off after losses: the expected value is multiplied by the round-trip efficiency and a new safety factor (default 90 %, panel Battery storage). The EMS balance now also charges the automatic mode for PV-to-battery losses; press "Recalculate the last 30 days" once. The PV forecast correction is used only after 7 learned days.'),
     '0.99.2' => array('FIX: Since Symcon 9.1, the day plan schedule logged a warning every 15 minutes ("schedule action ID must be greater than 0"). Existing schedules keep their actions, new ones start at action 1.'),
     '0.99.1' => array('NEW: Step 3 of the bilingual module: the reasons of the day plan and of the current decision, and the display texts other modules read from EMS, follow the Symcon language setting. Codes and units stay unchanged.'),
     '0.99.0' => array('NEW: EEBUS devices are found automatically: heat pumps via WPEEBUSHub and wallboxes via ChargerEEBUSHub (measured, not yet switched). NEW: Heat pump extra run on PV surplus (panel Heat pump, off by default): EMS switches on the extra run only when the surplus would otherwise go to the grid; the battery has priority, grid operator and §14a always win.'),

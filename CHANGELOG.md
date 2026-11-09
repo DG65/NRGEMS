@@ -2,6 +2,11 @@
 
 Ältere Versionen: [CHANGELOG-Archiv.md](CHANGELOG-Archiv.md)
 
+## 0.100.0 (2026-11-09)
+- **Wirkungsgrad-Korrekturen (Analyse 30 Tage, ist 178 € vs. Automatik 139 €):** Neue Property `NETZLADUNG_Sicherheit_Pct` (Standard 90 %, 50–100, 100 = aus). Netzladegrenze (Referenz 1) = Ersatzpreis × η² × Sicherheit − Zykluskosten − Mindestspanne (gridChargeLimitEur, bedarfInsuranceSlots, hasArbitrageInPrices); Halten im Nachtfenster nur unter Ersatzpreis × η × Sicherheit − Mindestspanne. Begründungen nennen ausgelassenes Netzladen samt Grenze.
+- **Selbstbilanz fair:** Automatik-Simulation zahlt η auch beim Laden aus PV (Rundwirkungsgrad η² wie die Planung). Nachrechnung 30 Tage: Automatik 137,60 → 144,73 €, Abstand −38,77 → −31,75 € (Rest echte Mehrkosten).
+- **PV-Prognose-Korrektur** wirkt erst ab 7 gelernten Tagen (vorher 1,0 statt ungelernt 0,7, die den PV-Platz vor Sonnentagen verkleinerte).
+
 ## 0.99.2 (2026-11-09)
 - **Symcon 9.1: Wochenplan-Aktions-ID 0 abgelehnt (live 09.11.2026):** `ensureDayPlanEvent()` setzte bei jedem Lauf die Aktion 0 („Automatik“) neu; Symcon 9.1 quittiert das mit „Wochenplan-Aktions-ID muss größer als 0 sein“. Bestands-Wochenpläne (haben Aktion 0) behalten op = Aktions-ID, Aktion 0 wird nicht mehr neu gesetzt; neu angelegte Wochenpläne nutzen op + 1 (Automatik = 1 … Akku halten = 9), `writeDayPlanEvent()` schreibt die Punkte entsprechend. Fünf neue Prüfungen, Mutation nachweislich rot.
 
