@@ -2,6 +2,10 @@
 
 Ältere Versionen: [CHANGELOG-Archiv.md](CHANGELOG-Archiv.md)
 
+## 0.99.0 (2026-11-09)
+- **EEBUS-Discovery:** WPEEBUSHub (`WPEEB_GetFunctions`, heatpump 1.17/1.18) und ChargerEEBUSHub (`CHEEB_GetFunctions`, charger 1.12) werden gefunden. EEBUS-Wallboxen zählen zusätzlich zu `WB_Quelle` (gespeicherte Werte unverändert); keine Doppelzählung über `duplicateOf` oder gleiche `deviceSerial` (dann Log-Hinweis). EEBUS-Wallboxen werden gemessen, noch nicht geschaltet.
+- **WP-Zusatzlauf (SUITE.md WP-Steuermuster 1.18, Dietmar 09.11.2026):** Neuer Schalter `WP_OptionalRun_Active` (ab Werk aus) mit Mindest-Überschuss, Abschalt-Bezug, Wartezeit und Mindestlaufzeit. Schaltet `optionalRunID` per RequestAction nur bei Wunschwechsel, nur bei `controllable` und `managedBy` none/ems, nur wenn der Überschuss sonst eingespeist würde (Akku-Vorrang). §14a schaltet sofort aus, Negativpreis und Grid Rewards verhindern ein Einschalten. Statuszeile im Bereich Wärmepumpe.
+
 ## 0.98.1 (2026-11-09)
 - **Zweisprachig, Schritt 2:** Statuszeilen (Verbund, Messpunkte, Preisquellen, Preisschwellen, Wallboxen), Konfigurationsprüfung, EMS-Bilanz, Status-/Aktions-/Situations-/Verbund-/Wallbox-Plan-Variablen, Rückmeldungen der Knöpfe, Push-Meldungen und Wochentage der Wochen-Frist sind englische Quelltexte mit deutscher Fassung in `locale.json` (842 Texte). Im Deutschen Wort für Wort unverändert (neues Werkzeug `.tools/deutsch-vergleich.php`). Drei Stellen, an denen Logik am angezeigten Text hing (Automatik-Zeilen, Preisschwellen-Info, Wallbox-Quellzeilen), arbeiten jetzt mit festen Kennungen. Gespeicherte Wochentage bleiben gültig. Noch deutsch: Tagesplan-Begründungen und Vertragsdaten für andere Module (Schritt 3).
 

@@ -43,6 +43,7 @@ define('EMS_LOG_VERBOSE',     2);
 define('EMS_COLOR_AUTO', 0x2E8B3D); // Gruen: Wert wurde automatisch uebernommen (🔗-Zeilen im Formular)
 // Quelltexte englisch, deutsche Fassung in locale.json; newsBanner() uebersetzt je Zeile.
 define('EMS_NEWS_VERSIONS', array(
+    '0.99.0' => array('NEW: EEBUS devices are found automatically: heat pumps via WPEEBUSHub and wallboxes via ChargerEEBUSHub (measured, not yet switched). NEW: Heat pump extra run on PV surplus (panel Heat pump, off by default): EMS switches on the extra run only when the surplus would otherwise go to the grid; the battery has priority, grid operator and §14a always win.'),
     '0.98.1' => array('NEW: Step 2 of the bilingual module: status lines, button messages, push notifications and weekday names follow the Symcon language setting. The reasons in the day plan follow in the next version.'),
     '0.98.0' => array('NEW: The module is bilingual (German/English). Step 1: the configuration form, the panel names and the variable names follow the Symcon language setting. Status texts and the reasons in the day plan follow in the next versions.'),
     '0.97.4' => array(

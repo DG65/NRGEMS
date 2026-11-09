@@ -866,7 +866,8 @@
             "Required surplus if the heat pump reports no power (W)": "Nötiger Überschuss, wenn die Wärmepumpe keine Leistung meldet (W)",
             "Switch off at sustained grid import from (W)": "Ausschalten bei anhaltendem Netzbezug ab (W)",
             "Condition must last for (min.)": "Bedingung muss anhalten (Min.)",
-            "Minimum run time after switching on (min.)": "Mindestlaufzeit nach dem Einschalten (Min.)"
+            "Minimum run time after switching on (min.)": "Mindestlaufzeit nach dem Einschalten (Min.)",
+            "NEW: EEBUS devices are found automatically: heat pumps via WPEEBUSHub and wallboxes via ChargerEEBUSHub (measured, not yet switched). NEW: Heat pump extra run on PV surplus (panel Heat pump, off by default): EMS switches on the extra run only when the surplus would otherwise go to the grid; the battery has priority, grid operator and §14a always win.": "NEU: EEBUS-Geräte werden automatisch gefunden: Wärmepumpen über WPEEBUSHub und Wallboxen über ChargerEEBUSHub (gemessen, noch nicht geschaltet). NEU: Zusatzlauf der Wärmepumpe bei PV-Überschuss (Bereich Wärmepumpe, ab Werk aus): Das EMS schaltet den Zusatzlauf nur ein, wenn der Überschuss sonst ins Netz ginge; der Akku hat Vorrang, Netzbetreiber und §14a gehen immer vor."
         }
     }
 }
