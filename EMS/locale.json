@@ -842,7 +842,8 @@
             "Wallbox %d: charge now started for 1 hour.": "Wallbox %d: Jetzt laden für 1 Stunde gestartet.",
             "Wallbox %d: override ended, the charging mode applies again.": "Wallbox %d: Übersteuerung beendet, es gilt wieder die Ladeart.",
             "Wallbox %d: charging target deleted.": "Wallbox %d: Ladeziel gelöscht.",
-            "✅ ApplyChanges() executed.": "✅ ApplyChanges() ausgeführt."
+            "✅ ApplyChanges() executed.": "✅ ApplyChanges() ausgeführt.",
+            "NEW: Step 2 of the bilingual module: status lines, button messages, push notifications and weekday names follow the Symcon language setting. The reasons in the day plan follow in the next version.": "NEU: Zweisprachig, Schritt 2: Statuszeilen, Rückmeldungen der Knöpfe, Push-Meldungen und Wochentage folgen der Sprache von Symcon. Die Begründungen im Tagesplan folgen in der nächsten Version."
         }
     }
 }

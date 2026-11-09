@@ -2,6 +2,9 @@
 
 Ältere Versionen: [CHANGELOG-Archiv.md](CHANGELOG-Archiv.md)
 
+## 0.98.1 (2026-11-09)
+- **Zweisprachig, Schritt 2:** Statuszeilen (Verbund, Messpunkte, Preisquellen, Preisschwellen, Wallboxen), Konfigurationsprüfung, EMS-Bilanz, Status-/Aktions-/Situations-/Verbund-/Wallbox-Plan-Variablen, Rückmeldungen der Knöpfe, Push-Meldungen und Wochentage der Wochen-Frist sind englische Quelltexte mit deutscher Fassung in `locale.json` (842 Texte). Im Deutschen Wort für Wort unverändert (neues Werkzeug `.tools/deutsch-vergleich.php`). Drei Stellen, an denen Logik am angezeigten Text hing (Automatik-Zeilen, Preisschwellen-Info, Wallbox-Quellzeilen), arbeiten jetzt mit festen Kennungen. Gespeicherte Wochentage bleiben gültig. Noch deutsch: Tagesplan-Begründungen und Vertragsdaten für andere Module (Schritt 3).
+
 ## 0.98.0 (2026-11-08)
 - **Zweisprachig, Schritt 1 (SUITE.md Konventionen 9, Auftrag Dietmar 08.11.2026):** Formular (form.json und alle zur Laufzeit gebauten Bereiche), Bereichsnamen, „Neu“-Einträge und die 29 Variablennamen sind englische Quelltexte, die deutsche Fassung steht in `locale.json` (544 Texte) und ist Wort für Wort die bisherige. Übersetzungen über eine Merkliste je Prozess (Stolperstein 24). Bereiche werden nicht mehr über ihre Überschrift gefunden, sondern über feste Namen (Risiko-Sperre, Formular-Aufbau, Panel-Ergänzungen); gespeicherte Formular-Aufteilung bleibt. Einzige sichtbare Änderung im Deutschen: „Logging fehlt (1 Variable)“ statt „(1 Variablen)“. Noch deutsch: Statuszeilen, Tagesplan-Begründungen, Meldungen (Schritte 2 und 3). Neue statische Prüfung `.tools/locale-pruefen.php`.
 
