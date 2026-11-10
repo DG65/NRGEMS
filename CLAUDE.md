@@ -55,9 +55,14 @@ Das EMS ist die **einzige koordinierende Instanz** des Verbunds:
 
 ## Branch-Modell
 
-Arbeitsbranch ist `ems-integration` (verbundweit identischer Name) — solange
-die EMS-Integrationsphase läuft, geht ALLES dorthin, auch scheinbar sichere
-Fixes. Merge nach `beta`/`main` erst nach Bewährung an Dietmars Live-Anlage.
+Seit 27.10.2026 gibt es keinen `ems-integration`-Branch mehr. Gearbeitet wird auf `beta`; nach Dietmars
+„Ja, push“ wird `beta` nach `origin/beta` und `origin/main` gepusht (`git push origin beta && git push origin beta:main`).
+
+## Bedienwerte (Store-Regel, 0.101.0)
+
+Ladeart/Ladeziel/Frist/Wochen-Frist je Wallbox und `PLAN_Manual` werden zur Laufzeit nie per `IPS_SetProperty`
+geschrieben, sondern über `liveSet()` in Attribute `Live_<Property>`; gelesen wird mit `liveStr/liveInt/liveFloat`.
+Neue Bedienwerte genauso anlegen (Eintrag in `LIVE_PROPS`), nie `IPS_SetProperty`/`IPS_ApplyChanges` im Modul.
 
 ## Aktueller Stand: Tagesplan (19.08.2026, ersetzt SetECOWindow-Planer)
 

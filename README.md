@@ -1,239 +1,126 @@
-# EMS — Energy Management System für IP-Symcon
+# EMS — Energiemanagement für Symcon (NRG-Stack)
 
-![Symcon](https://img.shields.io/badge/Symcon-PHPModul-blue)
-![Modul Version](https://img.shields.io/badge/Modul_Version-0.20.0-blue)
+![Symcon](https://img.shields.io/badge/Symcon-PHP--Modul-blue)
+![Modul Version](https://img.shields.io/badge/Modul_Version-0.101.0-blue)
 ![Symcon Version](https://img.shields.io/badge/Symcon_Version-9.0%2B-blue)
 ![License](https://img.shields.io/badge/License-PolyForm_Noncommercial_1.0.0-lightgrey)
 [![Check Style](https://github.com/DG65/NRGEMS/actions/workflows/check-style.yml/badge.svg)](https://github.com/DG65/NRGEMS/actions/workflows/check-style.yml)
 [![PayPal](https://img.shields.io/badge/PayPal-Me-blue?logo=paypal)](https://paypal.me/DietmarGureth)
 
+English version: [README.en.md](README.en.md)
+
 ## Übersicht
 
-Das EMS-Modul koordiniert alle steuerbaren Energiekomponenten einer Hausanlage unter IP-Symcon. Es optimiert Eigenverbrauch, Batterieladung und Fahrzeugladung anhand dynamischer Strompreise (Tibber), PV-Erzeugungsprognosen und dem aktuellen Systemzustand.
+Das EMS plant und steuert Hausakku, Wallboxen und (optional) den Zusatzlauf der Wärmepumpe anhand von
+Viertelstunden-Strompreisen, PV- und Verbrauchsprognose. Ziel ist der günstigste Strombezug — unter
+Berücksichtigung der echten Akkuverluste. Es ist die koordinierende Instanz des NRG-Stack: Es findet die
+anderen NRG-Stack-Module selbst und liest deren Daten über feste Schnittstellen (Verträge). Jeder Baustein ist
+optional; was nicht vorhanden ist, wird übersprungen.
 
-Das Modul ist modular aufgebaut: Jeder Geräteblock (Wechselrichter, Batterie, Wallbox, Wärmepumpe usw.) ist optional und wird nur ausgewertet wenn er in der Konfiguration aktiviert und mit IPS-Variablen verknüpft ist. Dadurch ist das Modul für sehr unterschiedliche Anlagenkonfigurationen geeignet.
+**Ehrliche Einordnung:** Wie viel das EMS spart, hängt stark von der Preisspanne ab. Bei kleinen
+Tag-Nacht-Unterschieden (typisch Herbst) bleibt nach den Lade- und Entladeverlusten wenig übrig, dann lässt
+das EMS den Wechselrichter meist in seiner eigenen Automatik. Der Bereich **„📊 EMS-Bilanz“** rechnet täglich
+nach, ob das EMS gegenüber der reinen Wechselrichter-Automatik gespart oder verloren hat.
 
----
+## Funktionen
 
-## Funktionsumfang
+- **Tagesplan je Viertelstunde:** Aus Preisen, PV- und Lastprognose entsteht ein Plan (Automatik, Netzladen,
+  Akku halten). Er ist im Formular, als Symcon-Wochenplan „EMS Tagesplan (automatisch)“ und über
+  `EMS_GetDayPlan()` sichtbar; jede Viertelstunde hat eine Begründung.
+- **Netzladen nur, wenn es sich lohnt:** Geladen wird nur, wenn der Preis nach Verlusten
+  (Rundwirkungsgrad Netz → Akku → Haus, Standard 82 %), Sicherheitsfaktor (Standard 90 %), Zykluskosten und
+  Mindestspanne unter dem erwarteten späteren Preis liegt.
+- **Akku halten:** Ist Strom jetzt billiger als später, deckt das Netz das Haus und der Akku bleibt für die
+  teure Zeit.
+- **Wallboxen:** Ladearten preisgesteuert, manuell, nur PV, PV-Anteil, Hybrid und aus; Ladeziel mit Frist,
+  Wochen-Fristen, „Jetzt laden“. Tibber Smart Charging / Grid Rewards: Tibber steuert das Auto, der Hausakku
+  folgt weiter seinem Plan.
+- **Wärmepumpe (optional, ab Werk aus):** Zusatzlauf nur bei PV-Überschuss, der sonst eingespeist würde; der
+  Akku hat Vorrang.
+- **§14a EnWG:** Vorgaben des Netzbetreibers (über SteuerboxHub) haben immer Vorrang, auch vor allen
+  Preis-Entscheidungen.
+- **EMS-Bilanz, Rechnungsprüfung, Akku-Einstandspreis, Sondereffekte** (Tage mit Einspeisereduktion, Negativpreis,
+  §14a werden markiert, damit lernende Module sie nicht als Normaltag lernen).
 
-### Optimierungsstrategien
-- **Tibber-Arbitrage**: Batteriespeicher bei günstigen Preisen laden, bei teuren Preisen entladen
-- **PV-Eigenverbrauch**: PV-Überschuss priorisiert in Batterie und Fahrzeuge leiten
-- **Lastmanagement**: Einhaltung der konfigurierten NAP-Leistungsgrenze (SLS-Schutz)
-- **Fahrzeugladung**: Steuerung von Wallboxen nach Preis, SOC und Tageszeit
-- **§14a EnWG Modul 1+3**: Berücksichtigung reduzierter Netzentgelte in definierten Zeitfenstern
-- **Grid Rewards**: Manueller Schalter zum Übergeben der Wallboxsteuerung an Tibber
+Priorität: **Gesetz/Netzbetreiber > Vermarkter (Grid Rewards) > EMS-Optimierung > Komfort.**
 
-### Unterstützte Geräte
-| Gerät | Pflicht | Steuerung |
-|---|---|---|
-| Wechselrichter mit Batterie (über den InverterHub, 15 Treiber lesend) | Ja | Steuerbar: GoodWe (EMS-Register) und Solis (Zwangsladen, Akku halten über die Entladesperre, Automatik); bei anderen Herstellern liest EMS und beobachtet nur |
-| Batteriespeicher (BMS) | Nein | Indirekt über den Wechselrichter |
-| Zähler am Netzanschlusspunkt (z. B. SmartMeter des Wechselrichters) | Empfohlen | Nein — Messung |
-| Siemens PAC2200 | Nein | Nein — Redundanzmessung |
-| go-e Charger V3 (1–n, via NRG-Stack ChargerHub) | Nein | Ja — ChargerHub |
-| Heishamon / Panasonic Aquarea | Nein | Nein — Monitoring |
-| Tibber (NRG-Stack TibberGridRewards) oder eine andere Preisquelle (Börsenpreis-Modul, Symcon-Strompreis, eigene Preisvariable) | Empfohlen | Nein — Preisdaten |
-| PV-Prognose und Lastprognose (NRG-Stack Prognose) | Nein | Nein — Prognosedaten |
+## Unterstützte Hardware
 
----
+| Bereich | Umfang |
+|---|---|
+| Wechselrichter mit Akku (über NRG-Stack **InverterHub**) | **GoodWe ET/EH**: gesteuert, live erprobt. **Solis Hybrid**: minimale Steuerung (Zwangsladen, Akku halten über Entladesperre, Automatik). **Andere Hersteller** (u. a. SMA, Fronius, Sungrow, Huawei, RCT): das EMS liest und plant, steuert aber nicht — der Plan ist dann eine Anzeige. |
+| Wallboxen | NRG-Stack **ChargerHub** (u. a. go-e) und **OCPPHub**: gesteuert. **ChargerEEBUSHub**: gemessen, noch nicht geschaltet. |
+| Wärmepumpe | **HeishaMon** und **WPEEBUSHub** (Steuermuster `optionalRunID`); andere WP-Module nur Messung. |
+| Preise | NRG-Stack **TibberGridRewards**, **Börsenpreis**, Symcon-Strompreis oder eine eigene Preisvariable. |
+| Prognosen | NRG-Stack **Prognose** (PV- und Lastprognose); ohne Prognose rechnet das EMS mit festen Annahmen. |
+| §14a | NRG-Stack **SteuerboxHub**. |
 
 ## Voraussetzungen
 
-- IP-Symcon ab Version 9.0
-- Wechselrichter bereits über den NRG-Stack InverterHub (oder per Modbus-TCP) in IPS eingebunden
-- Für Wallboxsteuerung: [NRG-Stack ChargerHub](https://github.com/DG65/NRGChargerHub) installiert (Migration vom Community-Modul IPSCoyote/GO-eCharger über den [MigrationsHub](https://github.com/DG65/NRGMigrationsHub))
-- Für Preisoptimierung: NRG-Stack TibberGridRewards (Viertelstunden-Preise) oder eine andere Preisquelle (Börsenpreis-Modul, Symcon-Strompreis, eigene Preisvariable). Der aktuelle Preis wird automatisch aus der Preiskurve gelesen; ohne Preisquelle warnt die Konfigurationsprüfung
-- Für Erzeugungs- und Verbrauchsprognose: NRG-Stack Prognose (PV-Prognose und Lastprognose)
-- Sicherheit beim Start: Eine neue Instanz schreibt erst, wenn die Risikobestätigung gesetzt, „EMS aktiv“ eingeschaltet und danach im Bereich „Konfigurationsprüfung“ „Jetzt live schalten“ gewählt wurde (zuerst läuft EMS im Trockenlauf)
-
----
+- Symcon ab Version 9.0
+- Mindestens ein Wechselrichter über den NRG-Stack InverterHub (für die Steuerung: GoodWe oder Solis)
+- Empfohlen: eine Preisquelle mit Viertelstunden-Preisen und die NRG-Stack-Prognose
+- Für die EMS-Bilanz: Logging (Archiv) der Messwerte. Fehlt es, zeigt der Bereich „📈 Logging fehlt“ die
+  Variablen und schaltet es auf Klick ein.
 
 ## Installation
 
-1. Im IP-Symcon Module Control folgende URL hinzufügen:
-   ```
-   https://github.com/DG65/NRGEMS
-   ```
-2. Neue Instanz anlegen: `Strg+1` → Hersteller "Community" → "EMS"
-3. Konfiguration öffnen und Geräteblöcke aktivieren und verknüpfen
-4. Intervall und Optimierungsparameter einstellen
-5. EMS aktivieren
+1. Im Module Control folgende URL hinzufügen: `https://github.com/DG65/NRGEMS` (oder über den Symcon-Store)
+2. Instanz „EMS“ anlegen
+3. Formular von oben nach unten durchgehen. Partner-Module werden automatisch gefunden; die
+   **Konfigurationsprüfung** zeigt, was fehlt.
 
----
+## Sicherer Start
 
-## Konfiguration
+- Ab Werk ist das EMS **aus**. Eine neue Instanz schreibt erst, wenn die Risikobestätigung gesetzt,
+  „EMS aktiv“ eingeschaltet und danach in der Konfigurationsprüfung **„Jetzt live schalten“** gewählt wurde.
+  Bis dahin läuft das EMS im **Trockenlauf**: Es plant und begründet, schreibt aber nichts.
+- Der Tagesplan wird auch bei ausgeschaltetem EMS berechnet, damit er vor dem Einschalten geprüft werden kann.
 
-Die Konfiguration ist in folgende Sektionen gegliedert:
+### Was das EMS auch im ausgeschalteten Zustand schreibt
 
-### 1. Allgemein & Schutz
-- EMS aktiv (Hauptschalter)
-- Aktualisierungsintervall (Sekunden)
-- SLS-Limit in Ampere (Schutzgrenze NAP)
-- HAK-Limit in Ampere
-- Fallback-Modus bei Kommunikationsfehler
+Offengelegt, weil es Geräte betrifft:
 
-### 2. Netzmesspunkte
-- **Primär**: Zähler am Netzanschlusspunkt (z. B. der SmartMeter des Wechselrichters) — phasenaufgelöste Leistung L1/L2/L3
-- **Sekundär** (optional): Siemens PAC2200 — Redundanzmessung und Plausibilitätsprüfung
+1. **§14a-Vorgaben des Netzbetreibers** (nur mit SteuerboxHub): Einspeisereduktion am Wechselrichter und
+   Abschalten der Wallboxen während einer Lastbegrenzung, danach Wiederfreigabe. Gesetzliche Vorgaben dürfen
+   nicht davon abhängen, ob die Preisoptimierung an ist.
+2. **Übergabe an die Wechselrichter-Automatik** beim Ausschalten: einmalig Automatik-Modus und Freigabe der
+   EMS-Steuerung (GoodWe: `ctl_ems_enable=false`, Modus Automatik, Leistung 0; Solis: Zwangsmodus aus), damit
+   kein zuletzt gesendeter Befehl hängen bleibt.
+3. **Totmann-Rückfall:** Fällt die Verbindung zum Wechselrichter wiederholt aus, wechselt das EMS in den
+   eingestellten Rückfallmodus (Standard: Wechselrichter-Automatik).
 
-### 3. Wechselrichter & PV
-- Steuerregister des Wechselrichters (derzeit GoodWe-EMS-Register: Leistungsmodus, Leistungseinstellung)
-- PV-Gesamtleistung (P Total)
-- MPPT-Leistungen (optional, 1–3 MPPTs)
-- Wechselrichtertemperaturen (Schutzmonitoring)
+Das EMS schreibt nur in Geräte über deren Aktionen bzw. die Steuerkanäle der NRG-Stack-Module und nur dort,
+wo das Gerät dem EMS nicht von einem anderen Akteur entzogen ist (`managedBy`).
 
-### 4. Batteriespeicher (optional)
-- Aktivierung und Anzahl Batteriestrings (1–2)
-- SOC, Leistung, Modus je String
-- BMS-Temperaturen (Schutzmonitoring)
-- Zellspannungen Min/Max (Schutzmonitoring)
-- Konfigurierbare SOC-Grenzen:
-  - Minimaler SOC (Entladeschutz)
-  - Ziel-SOC Nacht (Tibber-Ladefenster)
-  - Ziel-SOC Tag (PV-Puffer)
+## Bedienung
 
-### 5. Wallboxen (optional)
-- Aktivierung und Anzahl Wallboxen (1–n)
-- Je Wallbox: IPS-Instanz-ID der ChargerHub-Wallbox
-- Priorisierung bei mehreren Wallboxen
-- Mindest-SOC Fahrzeug für Ladefreigabe (falls bekannt)
-- Manuelles Laden / Grid Rewards Schalter
+- **Formular (Konsole):** Einstellungen, Tagesplan, EMS-Bilanz, Konfigurationsprüfung.
+- **WebFront:** Variablen unter der Instanz (Status, Entscheidung, Wallbox-Bedienung). Ladeart, Ladeziel,
+  Frist und Wochen-Fristen lassen sich dort sofort ändern; diese Bedienwerte werden getrennt von den
+  Einstellungen gespeichert. Ein in den Einstellungen geänderter und übernommener Wert ersetzt sie.
+- **Andere Module** (z. B. Dashboard) nutzen die öffentlichen Funktionen, u. a. `EMS_GetDayPlan`,
+  `EMS_GetCurrentDecision`, `EMS_GetSelfBalance`, `EMS_GetManualPlan`/`EMS_SetManualPlan`,
+  `EMS_GetWeekTargets`/`EMS_SetWeekTargets`, `EMS_GetBatteryCost`, `EMS_GetSpecialEvents`,
+  `EMS_GetGridImportOutlook`.
 
-### 6. Wärmepumpe (optional, Monitoring)
-- Aktivierung (nur Monitoring, keine Steuerung)
-- Stromverbrauch Wärmepumpe (für Lastberechnung)
-- Außentemperatur (alternativ zum Wechselrichter oder der Prognose)
+## Wichtige Einstellungen
 
-### 7. Tibber & Tarif
-- Aktivierung Tibber-Preisoptimierung
-- IPS-Variable: aktueller Preis (act_price)
-- IPS-Variable: aktuelles Preisniveau (act_level)
-- IPS-Variable: Einspeisevergütung
-- IPS-Variable: 15-Min-Preise JSON (PT15M Heute)
-- IPS-Variable: 15-Min-Preise JSON (PT15M Morgen)
-- Preisschwelle Batterieladung aus Netz (ct/kWh)
-- Preisschwelle Batterieentladung (ct/kWh)
-- Preisschwelle Fahrzeugladung (ct/kWh)
-
-### 8. §14a EnWG / Netzentgelt-Zeitfenster
-- Aktivierung §14a Modul 1+3
-- Zeitfenster Start (Standard: 00:00)
-- Zeitfenster Ende (Standard: 06:00)
-- Netzentgelt-Reduktion in % (Standard: 90%)
-- Netzbetreiber (Freitext, für Dokumentation)
-
-### 9. PV Forecast (optional)
-- IPS-Variable: Vorhersage Heute (kWh)
-- IPS-Variable: Vorhersage Morgen (kWh)
-- IPS-Variable: PVForecast JSON (stündliche Auflösung)
-- Mindesterzeugung für PV-Eigenverbrauchsmodus (W)
-
-### 10. Optimierungsparameter
-- Gewichtung Eigenverbrauch vs. Arbitrage (0–100%)
-- Hysterese Schaltentscheidungen (%, W)
-- Mindestladezeit Wallbox (Minuten)
-- Cooldown zwischen Schaltvorgängen (Sekunden)
-- Logging-Level (Aus / Basis / Detailliert)
-
----
-
-## Betriebsmodi
-
-| Modus | Beschreibung | Wechselrichter-Register (derzeit GoodWe) |
+| Einstellung | Standard | Wirkung |
 |---|---|---|
-| **Automatik** | EMS entscheidet nach Preis + SOC + Forecast | Modus 1 (Automatik) |
-| **PV-Eigenverbrauch** | PV-Überschuss → Batterie → Autos | Modus 2 (Laden-Solar) |
-| **Netz-Laden** | Günstiger Tibber-Preis → Batterie aus Netz laden | Modus 4 (AC-Import) |
-| **Entladen** | Teurer Tibber-Preis → Batterie → Haus | Modus 3 (Entladen+Solar) |
-| **Bereitschaft** | SOC halten, weder laden noch entladen | Modus 8 (Bereitschaft) |
-| **Export** | Batterie → Netz (Preis > Einspeisevergütung) | Modus 5 (AC-Export) |
-| **Notbetrieb** | Netzausfall erkannt, Backup aktiv | Modus 7 (Inselbetrieb) |
-
----
-
-## Lastmanagement
-
-Das EMS überwacht kontinuierlich die Netzleistung am NAP über den Zähler am Netzanschlusspunkt und optional den Siemens PAC2200.
-
-Die konfigurierte **SLS-Grenze** (Standard: 34.500 W bei 50A SLS) wird nie überschritten. Der Wechselrichter übernimmt die physikalische Regelung (bei GoodWe über seinen eigenen SmartMeter) — das EMS setzt lediglich den Sollwert (bei GoodWe: EMS Leistungseinstellung, Register ID 20610).
-
-Ladepriorisierung bei mehreren gleichzeitigen Lasten:
-1. Hausgrundlast (immer garantiert)
-2. Wärmepumpe (läuft autonom)
-3. Batterieladung (bis zum konfigurierten Ziel-SOC)
-4. Wallbox 1 (nach Priorisierung)
-5. Wallbox 2 (nach Priorisierung)
-
----
-
-## Grid Rewards / Tibber Wallboxsteuerung
-
-Wenn Tibber über Grid Rewards die Wallbox direkt steuert, muss verhindert werden dass der Wechselrichter die Fahrzeugladung aus der Batterie speist (was den Grid-Rewards-Effekt zunichte machen würde).
-
-**Lösung**: Manueller Schalter "Grid Rewards Modus" in der EMS-Oberfläche.
-
-| Schalter | Wallboxsteuerung | Batterieverhalten |
-|---|---|---|
-| Aus (Standard) | EMS steuert Wallbox | Normal — Arbitrage |
-| Ein (Grid Rewards) | Tibber steuert Wallbox | Batterie hält SOC (Modus 8) |
-
----
-
-## IPS-Variablen (vom Modul angelegt)
-
-Das Modul legt folgende Statusvariablen automatisch an:
-
-| Variable | Typ | Beschreibung |
-|---|---|---|
-| EMS_Active | Boolean | EMS aktiv/inaktiv |
-| EMS_Mode | Integer | Aktueller Betriebsmodus |
-| EMS_GridPower | Float | Aktuelle Netzleistung (W) |
-| EMS_PVPower | Float | Aktuelle PV-Leistung (W) |
-| EMS_BatPower | Float | Aktuelle Batterieleistung (W) |
-| EMS_BatSOC | Float | Batterie-SOC gesamt (%) |
-| EMS_HousePower | Float | Hausverbrauch berechnet (W) |
-| EMS_WB1Power | Float | Wallbox 1 Ladeleistung (W) |
-| EMS_WB2Power | Float | Wallbox 2 Ladeleistung (W) |
-| EMS_TibberPrice | Float | Aktueller Tibber-Preis (ct/kWh) |
-| EMS_GridRewards | Boolean | Grid Rewards Modus aktiv |
-| EMS_LastAction | String | Letzte EMS-Aktion (Log) |
-| EMS_Status | String | Statusmeldung |
-
----
+| Rundwirkungsgrad PV → Akku → Haus | 91 % | Verlust, wenn der Akku aus PV geladen wird |
+| Rundwirkungsgrad Netz → Akku → Haus | 82 % | Verlust beim Netzladen; bestimmt, ab wann Netzladen lohnt |
+| Sicherheitsfaktor Netzladen | 90 % | Puffer gegen Prognosefehler (100 = aus) |
+| Nachtfenster / Abend-Mindest-SOC | anlagenabhängig | Rahmen für Netzladen und Reserve |
 
 ## Sicherheitshinweise
 
-- Das EMS schreibt Steuerbefehle direkt in den Wechselrichter (derzeit GoodWe, via Modbus-TCP über den InverterHub). Eine fehlerhafte Konfiguration kann zu unerwünschtem Verhalten führen.
-- Der SLS-Schutz ist eine Softwaregrenze — die physikalische Absicherung durch den SLS-Schalter bleibt unberührt und ist die primäre Schutzebene.
-- Heishamon/Panasonic Aquarea: Das EMS steuert die Wärmepumpe **nicht aktiv**. Häufige Schreibzugriffe auf Heishamon können den EEPROM der Wärmepumpe schädigen und werden vermieden.
-- Bei Kommunikationsausfall zu einem Gerät wechselt das EMS in den konfigurierten Fallback-Modus.
-
----
-
-## GUIDs
-
-| Komponente | GUID |
-|---|---|
-| Library | {90286A25-E6C9-4A66-BD4E-0CFB707C2C6C} |
-| Modul | {31C61A7B-28C4-4F97-9651-1A64B3469E3C} |
-| Instanz | {DC6F3120-07C3-4F2A-BE46-06BB33BC5FA3} |
-
----
+- Das EMS sendet Steuerbefehle an Wechselrichter und Wallboxen. Eine falsche Konfiguration kann zu
+  unerwünschtem Verhalten oder höheren Kosten führen. Zuerst im Trockenlauf beobachten.
+- Softwaregrenzen ersetzen keine elektrische Absicherung.
 
 ## Lizenz
 
-Lizenz: PolyForm Noncommercial 1.0.0 — private/nicht-kommerzielle Nutzung
-ist frei, gewerbliche Nutzung erfordert eine gesonderte Lizenz vom
-Rechteinhaber (DG65). Der Wechsel wirkt nur nach vorn: bereits unter MIT
-veröffentlichte Altversionen bleiben MIT. Der vollständige Lizenztext liegt
-im Repo ([LICENSE](LICENSE)). Spenden sind willkommen:
-[paypal.me/DietmarGureth](https://paypal.me/DietmarGureth).
-
-## Danksagung
-
-Dieses Modul basiert auf der Arbeit der IP-Symcon Community und nutzt folgende externe Module:
-- [ChargerHub](https://github.com/DG65/NRGChargerHub) (NRG-Stack) — frühere Versionen nutzten das [GO-eCharger Modul](https://github.com/IPSCoyote/GO-eCharger) von IPSCoyote
-- [NRG-Stack TibberGridRewards](https://github.com/DG65/TibberGridRewards)
-- [HeishaMon](https://github.com/heishamon/HeishaMon) Protokoll
+PolyForm Noncommercial 1.0.0 — private/nicht-kommerzielle Nutzung ist frei, gewerbliche Nutzung erfordert
+eine gesonderte Lizenz vom Rechteinhaber (DG65). Bereits unter MIT veröffentlichte Altversionen bleiben MIT.
+Lizenztext: [LICENSE](LICENSE). Spenden: [paypal.me/DietmarGureth](https://paypal.me/DietmarGureth).

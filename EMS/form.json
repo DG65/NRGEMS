@@ -1163,6 +1163,10 @@
                     "maximum": 8
                 },
                 {
+                    "type": "Label",
+                    "caption": "Charging mode, charging target, deadline and weekly deadlines can also be changed in the WebFront and in the panel \"🚗 Operate wallboxes\"; such changes apply immediately and are kept separately. A value changed here and applied replaces them."
+                },
+                {
                     "type": "Select",
                     "name": "WB1_ChargeMode",
                     "caption": "WB1 charging mode",
@@ -1367,6 +1371,10 @@
                         "property": "WB_Count",
                         "value": 2
                     }
+                },
+                {
+                    "type": "Label",
+                    "caption": "Charging mode, charging target, deadline and weekly deadlines can also be changed in the WebFront and in the panel \"🚗 Operate wallboxes\"; such changes apply immediately and are kept separately. A value changed here and applied replaces them."
                 },
                 {
                     "type": "Select",
@@ -2158,16 +2166,6 @@
             "type": "Button",
             "caption": "📅 Recalculate day plan",
             "onClick": "echo EMS_BuildDayPlan($id, true);"
-        },
-        {
-            "type": "Label",
-            "caption": "Harmless: EMS' ApplyChanges() sends no commands to the inverter/battery -- it only creates/repairs the day plan calendar (if necessary) and resets the update timer. Applies the SAVED settings -- form inputs that have not been applied yet are lost."
-        },
-        {
-            "type": "Button",
-            "name": "ForceApplyButton",
-            "caption": "🔄 Force apply (without form change)",
-            "onClick": "IPS_ApplyChanges($id); echo '✅ ApplyChanges() ausgeführt.';"
         }
     ],
     "status": [

@@ -244,7 +244,9 @@ function call($obj, $method, array $args = []) {
     emsDump('call ' . $method, $r);
     return $r;
 }
-function prop($n, $v) { $GLOBALS['PROP'][EMS_IID][$n] = $v; }
+function prop($n, $v) { $GLOBALS['PROP'][EMS_IID][$n] = $v; unset($GLOBALS['ATTR'][EMS_IID]['Live_' . $n], $GLOBALS['ATTR'][EMS_IID]['LiveSrc_' . $n]); }
+/** Bedienwert (0.101.0): Attribut Live_<Property>, sonst die Property (wie liveStr im Modul). */
+function live($n) { $a = $GLOBALS['ATTR'][EMS_IID]['Live_' . $n] ?? ''; return ($a === '' && ($GLOBALS['ATTR'][EMS_IID]['LiveSrc_' . $n] ?? '') === '') ? ($GLOBALS['PROP'][EMS_IID][$n] ?? '') : $a; }
 function attr($n, $v) { $GLOBALS['ATTR'][EMS_IID][$n] = $v; }
 
 /** Frische Instanz mit reinen Create()-Standardwerten -- die "nackte" Installation. */
@@ -1067,12 +1069,12 @@ check('Referenz Ersatzpreis ohne Preisvergleichswert: kein Halten', call($ems, '
 $labels = function ($panel) { return $panel === null ? array() : array_values(array_filter(array_map(function ($i) { return $i['type'] === 'Label' ? $i['caption'] : null; }, $panel['items']))); };
 attr('SeenNews', '0.97.3');
 $nb = call($ems, 'newsBanner');
-check('News: gesehen 0.97.3 -> nur 0.100.0 bis 0.97.4, neueste oben', $nb !== null && $nb['caption'] === '🆕 Neu bis Version 0.100.0' && count(array_filter($labels($nb), function ($c) { return strpos($c, 'Version ') === 0; })) === 7 && strpos($labels($nb)[0], 'Version 0.100.0') === 0, json_encode($labels($nb), JSON_UNESCAPED_UNICODE));
-attr('SeenNews', '0.99.2');
+check('News: gesehen 0.97.3 -> nur 0.101.0 bis 0.97.4, neueste oben', $nb !== null && $nb['caption'] === '🆕 Neu bis Version 0.101.0' && count(array_filter($labels($nb), function ($c) { return strpos($c, 'Version ') === 0; })) === 8 && strpos($labels($nb)[0], 'Version 0.101.0') === 0, json_encode($labels($nb), JSON_UNESCAPED_UNICODE));
+attr('SeenNews', '0.100.0');
 $nb = call($ems, 'newsBanner');
-check('News: gesehen 0.99.2 -> nur die Zeile von 0.100.0, ohne Versionsueberschrift', $nb !== null && count($labels($nb)) === 1 && strpos($labels($nb)[0], 'Version ') !== 0, json_encode($labels($nb), JSON_UNESCAPED_UNICODE));
-attr('SeenNews', '0.100.0-beta.1');
-check('News: gesehen 0.100.0-beta.1 (Beta-Zusatz) -> nichts Neues', call($ems, 'newsBanner') === null);
+check('News: gesehen 0.100.0 -> nur die Zeile von 0.101.0, ohne Versionsueberschrift', $nb !== null && count($labels($nb)) === 1 && strpos($labels($nb)[0], 'Version ') !== 0, json_encode($labels($nb), JSON_UNESCAPED_UNICODE));
+attr('SeenNews', '0.101.0-beta.1');
+check('News: gesehen 0.101.0-beta.1 (Beta-Zusatz) -> nichts Neues', call($ems, 'newsBanner') === null);
 attr('SeenNews', '');
 $nb = call($ems, 'newsBanner');
 check('News: Neuinstallation (nichts gesehen) -> alles, inkl. Altblock', $nb !== null && count($labels($nb)) > 50);
@@ -1273,13 +1275,13 @@ $r1 = call($ems, 'SetManualPlan', [json_encode(['revision' => $g0['revision'], '
     ['date' => '', 'from' => '22:00', 'to' => '', 'action' => EMS_OP_HOLD, 'power' => 0],
 ]])]);
 check('Set mit gueltiger Liste: ok, keine Fehler, zwei Eintraege', $r1['ok'] === true && $r1['errors'] === [] && count($r1['plan']['entries']) === 2, json_encode($r1['errors']));
-$stored = json_decode($GLOBALS['PROP'][EMS_IID]['PLAN_Manual'], true);
+$stored = json_decode(live('PLAN_Manual'), true);
 check('gespeichert wird normalisiert: Datum JJJJ-MM-TT, Zeit HH:MM, Aktion/Leistung als Zahl', $stored[0]['Date'] === $tmrIso && $stored[0]['From'] === '00:00' && $stored[0]['To'] === '06:00' && $stored[0]['Action'] === EMS_OP_NET_CHARGE && $stored[0]['Power'] === 20000 && $stored[1]['Date'] === '' && $stored[1]['To'] === '', json_encode($stored));
 $g1 = call($ems, 'GetManualPlan');
 check('Get danach: Status morgen bzw. jeden Tag, beide ok, Text vorhanden, neue Revision', $g1['entries'][0]['state'] === 'tomorrow' && $g1['entries'][1]['state'] === 'everyDay' && $g1['entries'][0]['ok'] && $g1['entries'][0]['text'] !== '' && $g1['revision'] !== $g0['revision'], json_encode($g1['entries']));
-$before = $GLOBALS['PROP'][EMS_IID]['PLAN_Manual'];
+$before = live('PLAN_Manual');
 $rOld = call($ems, 'SetManualPlan', [json_encode(['revision' => $g0['revision'], 'entries' => []])]);
-check('veraltete Revision: abgelehnt, nichts geaendert', $rOld['ok'] === false && $rOld['errors'][0]['field'] === 'revision' && $GLOBALS['PROP'][EMS_IID]['PLAN_Manual'] === $before, json_encode($rOld['errors']));
+check('veraltete Revision: abgelehnt, nichts geaendert', $rOld['ok'] === false && $rOld['errors'][0]['field'] === 'revision' && live('PLAN_Manual') === $before, json_encode($rOld['errors']));
 $rBad = call($ems, 'SetManualPlan', [json_encode(['entries' => [
     ['date' => '21.10.2023', 'from' => '00:00', 'to' => '06:00', 'action' => EMS_OP_NET_CHARGE, 'power' => 1000],
     ['date' => '', 'from' => '25:00', 'to' => '06:00', 'action' => EMS_OP_NET_CHARGE, 'power' => 0],
@@ -1290,16 +1292,16 @@ $rBad = call($ems, 'SetManualPlan', [json_encode(['entries' => [
 ]])]);
 $fields = array_column($rBad['errors'], 'field');
 // 0.89.1: Liste mit vergangenem + neuem gueltigem Eintrag wird gespeichert, der vergangene still entfernt (Befund Paul 25.10.2026)
-$gR = call($ems, 'GetManualPlan', []); $keepPlan = $GLOBALS['PROP'][EMS_IID]['PLAN_Manual'];
+$gR = call($ems, 'GetManualPlan', []); $keepPlan = live('PLAN_Manual');
 $rMix = call($ems, 'SetManualPlan', [json_encode(['revision' => $gR['revision'], 'entries' => [
     ['date' => '21.10.2023', 'from' => '11:45', 'to' => '16:04', 'action' => EMS_OP_NET_CHARGE, 'power' => 18000],
     ['date' => '', 'from' => '10:00', 'to' => '11:00', 'action' => EMS_OP_HOLD, 'power' => 0],
 ]])]);
-$savedMix = json_decode($GLOBALS['PROP'][EMS_IID]['PLAN_Manual'], true);
+$savedMix = json_decode(live('PLAN_Manual'), true);
 check('Set mit vergangenem + neuem Eintrag: gespeichert, vergangener entfernt und gemeldet', $rMix['ok'] === true && count($savedMix) === 1 && $savedMix[0]['From'] === '10:00' && count($rMix['removed']) === 1 && strpos($rMix['removed'][0]['message'], '21.10.2023') !== false, json_encode([$rMix['ok'], $rMix['errors'], $savedMix]));
-$GLOBALS['PROP'][EMS_IID]['PLAN_Manual'] = $keepPlan;
+attr('Live_PLAN_Manual', $keepPlan);
 check('Set mit Fehlern: ok false, ein Fehler je Problem mit Pfad (Zeit, Ende, Aktion, Leistung, Datum unlesbar); vergangenes Datum ist kein Fehler, sondern entfernt', $rBad['ok'] === false && !in_array('entries[0].date', $fields, true) && ($rBad['removed'][0]['field'] ?? '') === 'entries[0].date' && in_array('entries[1].from', $fields, true) && in_array('entries[2].to', $fields, true) && in_array('entries[3].action', $fields, true) && in_array('entries[4].power', $fields, true) && in_array('entries[5].date', $fields, true), json_encode($fields));
-check('bei Fehlern bleibt der gespeicherte Plan unveraendert', $GLOBALS['PROP'][EMS_IID]['PLAN_Manual'] === $before);
+check('bei Fehlern bleibt der gespeicherte Plan unveraendert', live('PLAN_Manual') === $before);
 $rOv = call($ems, 'SetManualPlan', [json_encode(['entries' => [
     ['date' => $tmrIso, 'from' => '01:00', 'to' => '03:00', 'action' => EMS_OP_NET_CHARGE, 'power' => 0],
     ['date' => '', 'from' => '02:00', 'to' => '04:00', 'action' => EMS_OP_HOLD, 'power' => 0],
@@ -1309,10 +1311,10 @@ check('Ueberschneidung (auch "jeden Tag" gegen ein Datum) wird gemeldet, direkt 
 $rMany = call($ems, 'SetManualPlan', [json_encode(['entries' => array_fill(0, 51, ['date' => '', 'from' => '10:00', 'to' => '11:00', 'action' => EMS_OP_AUTO, 'power' => 0])])]);
 check('mehr als 50 Eintraege: abgelehnt', $rMany['ok'] === false && $rMany['errors'][0]['field'] === 'entries', json_encode(array_slice($rMany['errors'], 0, 1)));
 $rJson = call($ems, 'SetManualPlan', ['kein json']);
-check('ungueltiges JSON: ok false mit verstaendlichem Fehler, nichts geaendert', $rJson['ok'] === false && $rJson['errors'][0]['field'] === 'entries' && $GLOBALS['PROP'][EMS_IID]['PLAN_Manual'] === $before);
+check('ungueltiges JSON: ok false mit verstaendlichem Fehler, nichts geaendert', $rJson['ok'] === false && $rJson['errors'][0]['field'] === 'entries' && live('PLAN_Manual') === $before);
 $gNow = call($ems, 'GetManualPlan');
 $rGood = call($ems, 'SetManualPlan', [json_encode(['revision' => $gNow['revision'], 'entries' => []])]);
-check('Set mit aktueller Revision und leerer Liste loescht alles', $rGood['ok'] === true && $rGood['plan']['entries'] === [] && $GLOBALS['PROP'][EMS_IID]['PLAN_Manual'] === '[]');
+check('Set mit aktueller Revision und leerer Liste loescht alles', $rGood['ok'] === true && $rGood['plan']['entries'] === [] && live('PLAN_Manual') === '[]');
 prop('PLAN_Manual', json_encode([['Date' => '21.10.2023', 'From' => '00:00', 'To' => '06:00', 'Action' => EMS_OP_NET_CHARGE, 'Power' => 20000]]));
 $gPast = call($ems, 'GetManualPlan');
 check('Get zeigt einen vergangenen Eintrag aus dem Formular als past/nicht ok mit Text', $gPast['entries'][0]['state'] === 'past' && $gPast['entries'][0]['ok'] === false && strpos($gPast['entries'][0]['text'], 'Vergangenheit') !== false, json_encode($gPast['entries'][0]));
@@ -2110,15 +2112,25 @@ call($ems, 'applyWallboxControl', [&$d, $sP]);
 check('abgelaufen: zurueck zur Preissteuerung (nichts erzwungen), Merker geloescht', $actsP() === [] && $ems->ReadAttributeInteger('WB1NowUntil') === 0, json_encode($GLOBALS['ACTIONS']));
 // WebFront-Bedienung, eine Quelle
 call($ems, 'RequestAction', ['EMS_WB1_ChargeMode', 4]);
-check('WebFront Ladeart 4: Einstellung WB1_ChargeMode = 4, Variable folgt', $GLOBALS['PROP'][EMS_IID]['WB1_ChargeMode'] === 4 && GetValue(IPS_GetObjectIDByIdent('EMS_WB1_ChargeMode', EMS_IID)) === 4);
+check('WebFront Ladeart 4: Einstellung WB1_ChargeMode = 4, Variable folgt', (int)live('WB1_ChargeMode') === 4 && GetValue(IPS_GetObjectIDByIdent('EMS_WB1_ChargeMode', EMS_IID)) === 4);
 call($ems, 'RequestAction', ['EMS_WB1_ChargeMode', 9]);
-check('ungueltige Ladeart 9: ignoriert', $GLOBALS['PROP'][EMS_IID]['WB1_ChargeMode'] === 4);
+check('ungueltige Ladeart 9: ignoriert', (int)live('WB1_ChargeMode') === 4);
 call($ems, 'RequestAction', ['EMS_WB1_TargetKwh', 12.34]);
-check('WebFront Ladeziel 12,34: Einstellung 12,3 kWh', abs($GLOBALS['PROP'][EMS_IID]['WB1_TargetKwh'] - 12.3) < 1e-9);
+check('WebFront Ladeziel 12,34: Einstellung 12,3 kWh', abs((float)live('WB1_TargetKwh') - 12.3) < 1e-9);
 call($ems, 'RequestAction', ['EMS_WB1_TargetTime', '06:30']);
-check('WebFront Frist 06:30 uebernommen', $GLOBALS['PROP'][EMS_IID]['WB1_TargetTime'] === '06:30');
+check('WebFront Frist 06:30 uebernommen', live('WB1_TargetTime') === '06:30');
 call($ems, 'RequestAction', ['EMS_WB1_TargetTime', 'morgen frueh']);
-check('ungueltige Frist: nicht uebernommen, Variable zeigt wieder die gueltige Frist', $GLOBALS['PROP'][EMS_IID]['WB1_TargetTime'] === '06:30' && GetValue(IPS_GetObjectIDByIdent('EMS_WB1_TargetTime', EMS_IID)) === '06:30');
+check('ungueltige Frist: nicht uebernommen, Variable zeigt wieder die gueltige Frist', live('WB1_TargetTime') === '06:30' && GetValue(IPS_GetObjectIDByIdent('EMS_WB1_TargetTime', EMS_IID)) === '06:30');
+if (method_exists('EMS', 'liveAdopt')) {
+    echo "\n   Store-Regel 0.101.0: Bedienwerte im Attribut, Property bleibt Grundeinstellung\n";
+    check('WebFront-Bedienung schreibt nie die Property', ($GLOBALS['PROP'][EMS_IID]['WB1_TargetTime'] ?? '07:00') !== '06:30' && live('WB1_TargetTime') === '06:30');
+    call($ems, 'liveAdopt', []);
+    check('Übernehmen ohne geänderte Property: Bedienwert bleibt', live('WB1_TargetTime') === '06:30');
+    $GLOBALS['PROP'][EMS_IID]['WB1_TargetTime'] = '05:45'; call($ems, 'liveAdopt', []);
+    check('Nutzer ändert die Property und übernimmt: neuer Wert gilt', live('WB1_TargetTime') === '05:45');
+    unset($GLOBALS['ATTR'][EMS_IID]['Live_WB2_ChargeMode'], $GLOBALS['ATTR'][EMS_IID]['LiveSrc_WB2_ChargeMode']); $GLOBALS['PROP'][EMS_IID]['WB2_ChargeMode'] = 3; call($ems, 'liveAdopt', []);
+    check('erster Lauf nach dem Update: bisheriger Property-Wert wird übernommen', (int)live('WB2_ChargeMode') === 3);
+}
 SetValue(IPS_GetObjectIDByIdent('EMS_WB1_Command', EMS_IID), 1);
 call($ems, 'RequestAction', ['EMS_WB1_Command', 1]);
 check('Befehl "Jetzt 1 Stunde laden": Uebersteuerung fuer 60 min, Befehl springt auf "Bereit" zurueck', abs($ems->ReadAttributeInteger('WB1NowUntil') - (time() + 3600)) <= 2 && GetValue(IPS_GetObjectIDByIdent('EMS_WB1_Command', EMS_IID)) === 0);
@@ -2994,7 +3006,7 @@ check('GetPlantInfo mit deutscher Eingabe: inbetriebnahmeText 24.10.2012, foerde
     $pi3['inbetriebnahmeText'] === '24.10.2012' && $pi3['foerderendeText'] === '31.12.2032' && $pi3['inbetriebnahme'] === '2012-10-24'
     && $pi3['eegFassung'] === 'EEG 2012 (PV-Novelle)', json_encode($pi3, JSON_UNESCAPED_UNICODE));
 
-echo "\n   mit der echten Verguetungstabelle (EMS/eeg-pv-verguetung.json)\n";
+echo "\n   mit der echten Verguetungstabelle (EMS/EegTabelle.php)\n";
 $echt = call($ems, 'loadEegTable');
 check('Tabelle vorhanden und lesbar (> 100 Zeitraeume)', count($echt['zeitraeume'] ?? []) > 100, 'Zeitraeume: ' . count($echt['zeitraeume'] ?? []));
 $lr = fn($ibn, $kwp, $voll = false) => call($ems, 'lookupEegTariffCt', [$echt, $ibn, $kwp, $voll]);

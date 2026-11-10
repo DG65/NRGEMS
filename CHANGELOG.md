@@ -2,6 +2,15 @@
 
 Ältere Versionen: [CHANGELOG-Archiv.md](CHANGELOG-Archiv.md)
 
+## 0.101.0 (2026-11-10)
+- **Store-Regel „Properties gehören dem Nutzer“:** Bedienwerte (Ladeart, Ladeziel, Frist, Wochen-Frist je Wallbox, manuelle Tagesplan-Einträge) werden zur Laufzeit nicht mehr per `IPS_SetProperty`/`IPS_ApplyChanges` geschrieben, sondern in Attributen `Live_<Property>`. Die Property bleibt die Grundeinstellung: Ändert der Nutzer sie im Formular und übernimmt, gilt ab dann der neue Wert (`liveAdopt()` vergleicht mit `LiveSrc_<Property>`). Erster Lauf nach dem Update übernimmt den bisherigen Property-Wert, nichts geht verloren. `EMS_SetManualPlan` baut den Tagesplan direkt neu. Vier neue Prüfungen, Mutation nachweislich rot.
+- **Entfernt:** Knopf „Übernehmen erzwingen“ (`IPS_ApplyChanges($id)` im Formular).
+- **`writeVar`:** fremde Variablen nur noch über ihre Aktion (auch benutzerdefinierte Aktion); ohne Aktion kein `SetValue` mehr, stattdessen Log-Hinweis.
+- **EEG-Vergütungstabelle** als PHP-Datei `EMS/EegTabelle.php` statt `eeg-pv-verguetung.json` (kein Dateilesen zur Laufzeit), Inhalt identisch.
+- **`vendor`** in module.json leer (reines Software-Modul, Store-Checkliste Punkt 2).
+- WebFront-Schieber Wallbox-Ladeziel bis 200 kWh (wie Property und Formular).
+- **README neu** (Stand 0.101.0, „Symcon“ statt „IP-Symcon“, ehrliche Einordnung, Hardware-Tabelle, Offenlegung der Schreibzugriffe bei ausgeschaltetem EMS) und **README.en.md** neu.
+
 ## 0.100.0 (2026-11-09)
 - **Rundwirkungsgrade statt Wirkungsgrad je Wandlung (Nachweis Dietmar an mehreren Speichersystemen, u. a. E3/DC):** Neue Properties `BAT_RT_PV_Pct` (PV → Akku → Haus, Standard 91 %) und `BAT_RT_Grid_Pct` (Netz → Akku → Haus, Standard 82 %), 0 = aus `BAT_Conv_Eff_Pct` ableiten (PV = η, Netz = η²), sonst 50–100 %. Zentral abgeleitet: η_ac = √RT_Netz (Laden aus dem Netz, Entladen ins Haus), η_pv = min(1, RT_PV / η_ac) (Laden aus PV). Alle bisherigen `convEff()`-Stellen nutzen jetzt η_ac, RT_Netz oder η_pv je Energiepfad: Netzladegrenzen, Halten, Entlade-Untergrenze, Vorentladen, Restwert, Verbrauchsausblick, Einstandspreis (`GetBatteryCost`: Netzanteil η_ac, PV-Anteil η_pv), Selbstbilanz-Automatik. Neu: Die Tagesplan-SOC-Simulation zieht beim Entladen Last / η_ac aus dem Akku und lädt PV mit η_pv. `BAT_Conv_Eff_Pct` ist veraltet (Beschriftung angepasst, nicht gelöscht). Bestandsinstanzen bekommen die neuen Standards 91/82 ebenfalls (bewusst, NEWS-Hinweis); wer die alte Rechnung will, setzt beide Felder auf 0. Formular zeigt die wirksamen Werte.
 - **Wirkungsgrad-Korrekturen (Analyse 30 Tage, ist 178 € vs. Automatik 139 €):** Neue Property `NETZLADUNG_Sicherheit_Pct` (Standard 90 %, 50–100, 100 = aus). Netzladegrenze (Referenz 1) = Ersatzpreis × RT_Netz × Sicherheit − Zykluskosten − Mindestspanne (gridChargeLimitEur, bedarfInsuranceSlots, hasArbitrageInPrices); Halten im Nachtfenster nur unter Ersatzpreis × η_ac × Sicherheit − Mindestspanne. Begründungen nennen ausgelassenes Netzladen samt Grenze.

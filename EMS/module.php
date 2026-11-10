@@ -43,6 +43,7 @@ define('EMS_LOG_VERBOSE',     2);
 define('EMS_COLOR_AUTO', 0x2E8B3D); // Gruen: Wert wurde automatisch uebernommen (🔗-Zeilen im Formular)
 // Quelltexte englisch, deutsche Fassung in locale.json; newsBanner() uebersetzt je Zeile.
 define('EMS_NEWS_VERSIONS', array(
+    '0.101.0' => array('CHANGED (Symcon Store rules): Charging mode, charging target, deadline and weekly deadlines of the wallboxes and the manual day plan entries changed in the WebFront, in the panel "🚗 Operate wallboxes" or by other modules are now kept separately and no longer overwrite your settings. A value you change and apply in the settings replaces them; all existing values are kept. Removed: the button "Force apply". Switching a foreign variable without an action is no longer possible (it only changed the display); the log names such variables. The wallbox charging target slider in the WebFront now goes up to 200 kWh.'),
     '0.100.0' => array('CHANGED: Realistic battery losses for every system. Two new settings in the panel Battery storage: round-trip efficiency PV → battery → house (default 91 %) and grid → battery → house (default 82 %), measured values of common home storage systems. They replace the old "efficiency per conversion" (95 % = 90 % round trip), which now only applies if both new fields are set to 0. As a result EMS charges from the grid and holds the battery less often. NEW: Grid charging and holding only when it pays off after losses and a new safety factor (default 90 %); the reason names the limit when grid charging is skipped. The EMS balance charges the automatic mode with the same losses; press "Recalculate the last 30 days" once. The PV forecast correction is used only after 7 learned days.'),
     '0.99.2' => array('FIX: Since Symcon 9.1, the day plan schedule logged a warning every 15 minutes ("schedule action ID must be greater than 0"). Existing schedules keep their actions, new ones start at action 1.'),
     '0.99.1' => array('NEW: Step 3 of the bilingual module: the reasons of the day plan and of the current decision, and the display texts other modules read from EMS, follow the Symcon language setting. Codes and units stay unchanged.'),
@@ -362,6 +363,8 @@ class EMS extends IPSModule
         $this->RegisterPropertyInteger('PLAN_Abend_MinSoc',        0);     // 0 = aus; optionale untere Grenze zur Abendstunde
         $this->RegisterPropertyInteger('PLAN_Abend_Hour',          17);
         $this->RegisterPropertyString('PLAN_Manual',               '[]');  // manuelle Plan-Eintraege (Liste)
+        $this->RegisterAttributeString('Live_PLAN_Manual', '');
+        $this->RegisterAttributeString('LiveSrc_PLAN_Manual', '');
         $this->RegisterPropertyBoolean('PLAN_PreDischarge_Active', false);
         $this->RegisterPropertyInteger('PLAN_NightGrid_ExtendHours', 2);
         $this->RegisterPropertyFloat(  'PLAN_NightGrid_ExtendTol_ct', 3.0);
@@ -494,6 +497,11 @@ class EMS extends IPSModule
             $this->RegisterPropertyString('WB' . $i . '_TargetTime', '07:00'); // Frist fuer das Ladeziel (Uhrzeit, naechstes Auftreten nach dem Anstecken)
             // Frist je Wochentag (0.92.0): 7 Zeilen {Day 1..7 ISO, Label, Time 'HH:MM' oder '', Kwh (0 = TargetKwh)}; alle Zeiten leer = TargetTime/TargetKwh gilt
             $this->RegisterPropertyString('WB' . $i . '_WeekTargets', json_encode($this->defaultWeekTargets()));
+            // Store-Regel (0.101.0): Bedienwerte aus WebFront/Bedienfeld/Verträgen leben in Attributen, die Property bleibt die Grundeinstellung des Nutzers
+            foreach (array('_ChargeMode', '_TargetKwh', '_TargetTime', '_WeekTargets') as $sfx) {
+                $this->RegisterAttributeString('Live_WB' . $i . $sfx, '');
+                $this->RegisterAttributeString('LiveSrc_WB' . $i . $sfx, '');
+            }
             $this->RegisterPropertyInteger('WB' . $i . '_NowCurrentA', 0);  // "Jetzt laden": Stromstaerke in A, 0 = Hoechststrom der Wallbox
             $this->RegisterPropertyInteger('VAR_WB' . $i . '_Status', 0);
             $this->RegisterPropertyInteger('VAR_WB' . $i . '_Power',  0);
@@ -773,6 +781,8 @@ class EMS extends IPSModule
     public function ApplyChanges()
     {
         parent::ApplyChanges();
+
+        $this->liveAdopt();
 
         try { $this->maintainWallboxControlVariables(); } catch (Throwable $e) { $this->emsLog(EMS_LOG_BASIC, 'Wallbox-Bedienvariablen: ' . $e->getMessage()); }
 
@@ -1317,13 +1327,6 @@ class EMS extends IPSModule
             }
         }
         unset($element);
-
-        // 3g. Rueckmeldetext des Knopfs "Übernehmen erzwingen" in der Sprache der Anzeige (onClick-Text uebersetzt die Konsole nicht)
-        foreach ($form['actions'] as $k => $a) {
-            if (($a['name'] ?? '') === 'ForceApplyButton') {
-                $form['actions'][$k]['onClick'] = 'IPS_ApplyChanges($id); echo "' . addslashes($this->t('✅ ApplyChanges() executed.')) . '";';
-            }
-        }
 
         // 4a. "🪟 Formular: Aufbau" (SUITE.md Punkt 3a): Reihenfolge, Auf-/Zuklappen, Ausblenden der Fachpanels, Panel selbst dahinter
         $form['elements'] = $this->formLayoutApply($form['elements'], self::FORM_LAYOUT_PANELS);
@@ -3289,7 +3292,7 @@ class EMS extends IPSModule
             . '|nw=' . ($this->ReadPropertyBoolean('PLAN_NightGrid_Active') ? $this->ReadPropertyInteger('PLAN_NightGrid_EndHour') : 0)
             . '|pd=' . ($this->ReadPropertyBoolean('PLAN_PreDischarge_Active') ? 1 : 0)
             . '|ab=' . ($this->ReadPropertyBoolean('PLAN_Bedarf_Aktiv') ? 1 : 0) . '/' . $this->ReadPropertyInteger('BAT_SOC_Safety_Margin_Pct') . '/' . $this->ReadPropertyInteger('PLAN_Abend_MinSoc') . '/' . $this->ReadPropertyInteger('PLAN_Abend_Hour')
-            . '|man=' . md5($this->ReadPropertyString('PLAN_Manual'))
+            . '|man=' . md5($this->liveStr('PLAN_Manual'))
             . '|ext=' . $this->ReadPropertyInteger('PLAN_NightGrid_ExtendHours') . '/' . $this->ReadPropertyFloat('PLAN_NightGrid_ExtendTol_ct'));
     }
 
@@ -3301,7 +3304,7 @@ class EMS extends IPSModule
     private function manualPlanEntries(): array
     {
         $out = array(0 => array(), 1 => array());
-        $raw = json_decode($this->ReadPropertyString('PLAN_Manual'), true);
+        $raw = json_decode($this->liveStr('PLAN_Manual'), true);
         if (!is_array($raw)) { return $out; }
         $dates = array(0 => date('Y-m-d'), 1 => date('Y-m-d', strtotime('tomorrow')));
         foreach ($raw as $r) {
@@ -3342,7 +3345,7 @@ class EMS extends IPSModule
      */
     public function GetManualPlan()
     {
-        $raw = $this->ReadPropertyString('PLAN_Manual');
+        $raw = $this->liveStr('PLAN_Manual');
         $list = json_decode($raw, true);
         if (!is_array($list)) { $list = array(); }
         $status = $this->manualPlanStatusLines();
@@ -3431,8 +3434,8 @@ class EMS extends IPSModule
         if (!empty($errors)) {
             return array('ok' => false, 'errors' => $errors, 'removed' => $removed, 'plan' => $cur, 'revision' => $cur['revision']);
         }
-        IPS_SetProperty($this->InstanceID, 'PLAN_Manual', json_encode($norm));
-        IPS_ApplyChanges($this->InstanceID);
+        $this->liveSet('PLAN_Manual', json_encode($norm));
+        try { $this->BuildDayPlan(true); } catch (Throwable $e) { $this->emsLog(EMS_LOG_BASIC, 'Tagesplan nach manuellem Eintrag: ' . $e->getMessage()); }
         $plan = $this->GetManualPlan();
         return array('ok' => true, 'errors' => array(), 'removed' => $removed, 'plan' => $plan, 'revision' => $plan['revision']);
     }
@@ -3459,7 +3462,7 @@ class EMS extends IPSModule
      */
     private function manualPlanStatusLines(): array
     {
-        $raw = json_decode($this->ReadPropertyString('PLAN_Manual'), true);
+        $raw = json_decode($this->liveStr('PLAN_Manual'), true);
         if (!is_array($raw) || empty($raw)) { return array(); }
         $today = date('Y-m-d'); $tomorrow = date('Y-m-d', strtotime('tomorrow'));
         $out = array();
@@ -5151,11 +5154,11 @@ class EMS extends IPSModule
     public function GetWeekTargets(int $n): array
     {
         if ($n < 1 || $n > 2) { return array('ok' => false, 'errors' => array(array('field' => 'n', 'message' => $this->t('Wallbox 1 or 2.')))); }
-        $raw  = $this->ReadPropertyString('WB' . $n . '_WeekTargets');
+        $raw  = $this->liveStr('WB' . $n . '_WeekTargets');
         $days = array();
         foreach ($this->weekTargets($n) as $r) { $days[] = array('day' => $r['Day'], 'label' => $r['Label'], 'time' => $r['Time'], 'kwh' => $r['Kwh']); }
         return array('contractVersion' => '1.0', 'n' => $n, 'revision' => (string)crc32($raw), 'active' => $this->weekTargetsActive($n), 'days' => $days,
-            'targetKwh' => (float)$this->ReadPropertyFloat('WB' . $n . '_TargetKwh'), 'targetTime' => (string)$this->ReadPropertyString('WB' . $n . '_TargetTime'));
+            'targetKwh' => (float)$this->liveFloat('WB' . $n . '_TargetKwh'), 'targetTime' => (string)$this->liveStr('WB' . $n . '_TargetTime'));
     }
 
     /**
@@ -5187,8 +5190,7 @@ class EMS extends IPSModule
             $rows[$day - 1]['Time'] = $t; $rows[$day - 1]['Kwh'] = round($k, 1);
         }
         if (!empty($errors)) { return array('ok' => false, 'errors' => $errors, 'targets' => $cur, 'revision' => $cur['revision']); }
-        IPS_SetProperty($this->InstanceID, 'WB' . $n . '_WeekTargets', json_encode($rows));
-        IPS_ApplyChanges($this->InstanceID);
+        $this->liveSet('WB' . $n . '_WeekTargets', json_encode($rows));
         $now = $this->GetWeekTargets($n);
         $this->emsLog(EMS_LOG_BASIC, sprintf('WB%d: Wochen-Frist geändert', $n));
         return array('ok' => true, 'errors' => array(), 'targets' => $now, 'revision' => $now['revision']);
@@ -5226,7 +5228,7 @@ class EMS extends IPSModule
                 'mode'              => (string)$m['mode'],
                 'emsControls'       => ($m['mode'] === 'ems' && !empty($m['writable'])),
                 'modeManual'        => !empty($m['manual']),
-                'chargeMode'        => $this->ReadPropertyInteger('WB' . $n . '_ChargeMode'),
+                'chargeMode'        => $this->liveInt('WB' . $n . '_ChargeMode'),
                 'variables'         => $vars,
             );
         }
@@ -8669,12 +8671,11 @@ class EMS extends IPSModule
         return 0.0;
     }
 
-    /** EEG-Verguetungstabelle (EMS/eeg-pv-verguetung.json), leeres Array wenn nicht vorhanden. */
+    /** EEG-Verguetungstabelle (EMS/EegTabelle.php, seit 0.101.0 PHP statt JSON), leeres Array wenn nicht vorhanden. */
     private function loadEegTable(): array
     {
-        $file = __DIR__ . '/eeg-pv-verguetung.json';
-        if (!is_file($file)) { return array(); }
-        $t = json_decode((string)file_get_contents($file), true);
+        static $t = null;
+        if ($t === null) { $f = __DIR__ . '/EegTabelle.php'; $t = is_file($f) ? require $f : array(); }
         return is_array($t) ? $t : array();
     }
 
@@ -10590,7 +10591,7 @@ class EMS extends IPSModule
             return sprintf($this->t('⚠️ Wallbox %d: "EMS controls" selected, but EMS may not switch this wallbox (controlled externally). Nothing happens.'), $n);
         }
         $tail = ($t !== null) ? sprintf($this->t(' Tibber reports Smart Charging as off for %s%s.'), $who, $old) : $this->t(' Smart Charging in the vehicle should be off, otherwise two parties control it.');
-        if ($override === null && ($this->ReadPropertyInteger('WB' . $n . '_ChargeMode') > 0 || $this->wallboxTargetConfigured($n))) {
+        if ($override === null && ($this->liveInt('WB' . $n . '_ChargeMode') > 0 || $this->wallboxTargetConfigured($n))) {
             $ct = trim($this->ReadAttributeString('WB' . $n . 'ChargeText'));
             if ($ct !== '') { $tail = sprintf($this->t(' Charging mode: %s.'), $ct) . $tail; }
         }
@@ -10684,7 +10685,7 @@ class EMS extends IPSModule
         }
         if (!in_array((string)($d['source'] ?? ''), array('netzbetreiber', 'nutzer'), true)) {
             for ($n = 1; $n <= $count; $n++) {
-                if ($modes[$n] !== 'ems' || ($this->ReadPropertyInteger('WB' . $n . '_ChargeMode') <= 0 && !$this->wallboxTargetConfigured($n) && $this->ReadAttributeInteger('WB' . $n . 'NowUntil') <= time())) { continue; }
+                if ($modes[$n] !== 'ems' || ($this->liveInt('WB' . $n . '_ChargeMode') <= 0 && !$this->wallboxTargetConfigured($n) && $this->ReadAttributeInteger('WB' . $n . 'NowUntil') <= time())) { continue; }
                 $plan = $this->wallboxChargePlanFor($n, $s);
                 if ($plan === null) { continue; }
                 $plans[$n] = $plan;
@@ -10769,7 +10770,7 @@ class EMS extends IPSModule
             $pos = 300 + $n * 10;
             $this->MaintainVariable('EMS_WB' . $n . '_Plan', sprintf($this->t('Wallbox %d: plan (what happens next)'), $n), VARIABLETYPE_STRING, array('PRESENTATION' => VARIABLE_PRESENTATION_VALUE_PRESENTATION), $pos, $keep);
             $this->MaintainVariable('EMS_WB' . $n . '_ChargeMode', sprintf($this->t('Wallbox %d: charging mode'), $n), VARIABLETYPE_INTEGER, array('PRESENTATION' => VARIABLE_PRESENTATION_ENUMERATION, 'OPTIONS' => $modes), $pos + 1, $keep);
-            $this->MaintainVariable('EMS_WB' . $n . '_TargetKwh', sprintf($this->t('Wallbox %d: charging target (kWh, 0 = off)'), $n), VARIABLETYPE_FLOAT, array('PRESENTATION' => VARIABLE_PRESENTATION_SLIDER, 'MIN' => 0.0, 'MAX' => 100.0, 'STEP_SIZE' => 0.5, 'SUFFIX' => ' kWh', 'DIGITS' => 1), $pos + 2, $keep);
+            $this->MaintainVariable('EMS_WB' . $n . '_TargetKwh', sprintf($this->t('Wallbox %d: charging target (kWh, 0 = off)'), $n), VARIABLETYPE_FLOAT, array('PRESENTATION' => VARIABLE_PRESENTATION_SLIDER, 'MIN' => 0.0, 'MAX' => 200.0, 'STEP_SIZE' => 0.5, 'SUFFIX' => ' kWh', 'DIGITS' => 1), $pos + 2, $keep);
             $this->MaintainVariable('EMS_WB' . $n . '_TargetTime', sprintf($this->t('Wallbox %d: deadline (HH:MM)'), $n), VARIABLETYPE_STRING, array('PRESENTATION' => VARIABLE_PRESENTATION_VALUE_INPUT), $pos + 3, $keep);
             $this->MaintainVariable('EMS_WB' . $n . '_Command', sprintf($this->t('Wallbox %d: command'), $n), VARIABLETYPE_INTEGER, array('PRESENTATION' => VARIABLE_PRESENTATION_ENUMERATION, 'OPTIONS' => $cmds), $pos + 4, $keep);
             if (!$keep) { continue; }
@@ -10782,9 +10783,9 @@ class EMS extends IPSModule
     private function syncWallboxControlVariables(int $n): void
     {
         $set = function (string $ident, $v) { $id = @IPS_GetObjectIDByIdent($ident, $this->InstanceID); if ($id !== false && $id > 0 && GetValue($id) !== $v) { SetValue($id, $v); } };
-        $set('EMS_WB' . $n . '_ChargeMode', (int)$this->ReadPropertyInteger('WB' . $n . '_ChargeMode'));
-        $set('EMS_WB' . $n . '_TargetKwh', (float)$this->ReadPropertyFloat('WB' . $n . '_TargetKwh'));
-        $set('EMS_WB' . $n . '_TargetTime', (string)$this->ReadPropertyString('WB' . $n . '_TargetTime'));
+        $set('EMS_WB' . $n . '_ChargeMode', (int)$this->liveInt('WB' . $n . '_ChargeMode'));
+        $set('EMS_WB' . $n . '_TargetKwh', (float)$this->liveFloat('WB' . $n . '_TargetKwh'));
+        $set('EMS_WB' . $n . '_TargetTime', (string)$this->liveStr('WB' . $n . '_TargetTime'));
         $set('EMS_WB' . $n . '_Command', 0);
     }
 
@@ -10814,13 +10815,13 @@ class EMS extends IPSModule
                 $items[] = array('type' => 'Label', 'caption' => sprintf($this->t('⚡ Charge now is running until %s.'), date('H:i', $nowUntil)), 'color' => EMS_COLOR_AUTO);
             }
             $items[] = array('type' => 'Select', 'name' => 'FormWB' . $n . 'ChargeMode', 'caption' => 'Charging mode (takes effect immediately)', 'options' => $modes,
-                'value' => $this->ReadPropertyInteger('WB' . $n . '_ChargeMode'),
+                'value' => $this->liveInt('WB' . $n . '_ChargeMode'),
                 'onChange' => 'IPS_RequestAction($id, "EMS_WB' . $n . '_ChargeMode", $FormWB' . $n . 'ChargeMode);');
             $items[] = array('type' => 'RowLayout', 'items' => array(
                 array('type' => 'NumberSpinner', 'name' => 'FormWB' . $n . 'TargetKwh', 'caption' => 'Charging target (kWh, 0 = off)', 'minimum' => 0, 'maximum' => 200, 'digits' => 1, 'suffix' => ' kWh',
-                    'value' => (float)$this->ReadPropertyFloat('WB' . $n . '_TargetKwh')),
+                    'value' => (float)$this->liveFloat('WB' . $n . '_TargetKwh')),
                 array('type' => 'ValidationTextBox', 'name' => 'FormWB' . $n . 'TargetTime', 'caption' => 'Deadline (HH:MM)', 'validate' => '^([01]?\\d|2[0-3]):[0-5]\\d$',
-                    'value' => (string)$this->ReadPropertyString('WB' . $n . '_TargetTime')),
+                    'value' => (string)$this->liveStr('WB' . $n . '_TargetTime')),
                 array('type' => 'Button', 'caption' => 'Apply target',
                     'onClick' => 'IPS_RequestAction($id, "EMS_WB' . $n . '_TargetTime", $FormWB' . $n . 'TargetTime); IPS_RequestAction($id, "EMS_WB' . $n . '_TargetKwh", $FormWB' . $n . 'TargetKwh); echo "' . addslashes(sprintf($this->t('Charging target for wallbox %d applied.'), $n)) . '";'),
             ));
@@ -10834,6 +10835,50 @@ class EMS extends IPSModule
         return array('type' => 'ExpansionPanel', 'name' => 'PanelWallboxControl', 'caption' => '🚗 Operate wallboxes', 'expanded' => true, 'items' => $items);
     }
 
+    /**
+     * Bedienwerte (Store-Regel, 0.101.0): Ladeart/Ladeziel/Frist/Wochen-Frist je Wallbox und die manuellen Plan-Eintraege werden
+     * zur Laufzeit (WebFront, Bedienfeld, EMS_SetWeekTargets/EMS_SetManualPlan) geaendert. Das Modul schreibt dafuer nie die
+     * Property, sondern ein Attribut "Live_<Property>". Die Property ist die Grundeinstellung des Nutzers: aendert er sie im
+     * Formular und uebernimmt, gilt ab dann der neue Wert (liveAdopt vergleicht mit dem zuletzt uebernommenen Property-Wert).
+     * Erster Lauf nach dem Update: LiveSrc ist leer -> der bisherige Property-Wert wird uebernommen, nichts geht verloren.
+     */
+    private const LIVE_PROPS = array('WB1_ChargeMode', 'WB1_TargetKwh', 'WB1_TargetTime', 'WB1_WeekTargets',
+        'WB2_ChargeMode', 'WB2_TargetKwh', 'WB2_TargetTime', 'WB2_WeekTargets', 'PLAN_Manual');
+
+    private function livePropRaw(string $prop): string
+    {
+        if (substr($prop, -11) === '_ChargeMode') { return (string)$this->ReadPropertyInteger($prop); }
+        if (substr($prop, -10) === '_TargetKwh') { return (string)round($this->ReadPropertyFloat($prop), 1); }
+        return $this->ReadPropertyString($prop);
+    }
+
+    private function liveAdopt(): void
+    {
+        foreach (self::LIVE_PROPS as $prop) {
+            $raw = $this->livePropRaw($prop);
+            if ($raw !== $this->ReadAttributeString('LiveSrc_' . $prop)) {
+                $this->WriteAttributeString('Live_' . $prop, $raw);
+                $this->WriteAttributeString('LiveSrc_' . $prop, $raw);
+            }
+        }
+    }
+
+    private function liveStr(string $prop): string
+    {
+        $v = $this->ReadAttributeString('Live_' . $prop);
+        return ($v === '' && $this->ReadAttributeString('LiveSrc_' . $prop) === '') ? $this->livePropRaw($prop) : $v;
+    }
+
+    private function liveInt(string $prop): int { return (int)$this->liveStr($prop); }
+
+    private function liveFloat(string $prop): float { return (float)$this->liveStr($prop); }
+
+    private function liveSet(string $prop, string $value): void
+    {
+        if ($this->ReadAttributeString('LiveSrc_' . $prop) === '') { $this->WriteAttributeString('LiveSrc_' . $prop, $this->livePropRaw($prop)); }
+        $this->WriteAttributeString('Live_' . $prop, $value);
+    }
+
     /** WebFront-Bedienung: eine Quelle -- Ladeart, Ziel und Frist aendern die Einstellung selbst, der Befehl wirkt sofort. */
     private function wallboxControlAction(int $n, string $what, $value): void
     {
@@ -10842,10 +10887,10 @@ class EMS extends IPSModule
             case 'ChargeMode':
                 $v = (int)$value;
                 if ($v < 0 || $v > 5) { return; }
-                IPS_SetProperty($this->InstanceID, $prop, $v);
+                $this->liveSet($prop, (string)$v);
                 break;
             case 'TargetKwh':
-                IPS_SetProperty($this->InstanceID, $prop, max(0.0, min(200.0, round((float)$value, 1))));
+                $this->liveSet($prop, (string)max(0.0, min(200.0, round((float)$value, 1))));
                 break;
             case 'TargetTime':
                 $t = trim((string)$value);
@@ -10854,7 +10899,7 @@ class EMS extends IPSModule
                     $this->syncWallboxControlVariables($n);
                     return;
                 }
-                IPS_SetProperty($this->InstanceID, $prop, $t);
+                $this->liveSet($prop, $t);
                 break;
             case 'Command':
                 $c = (int)$value;
@@ -10866,8 +10911,7 @@ class EMS extends IPSModule
                     $this->emsLog(EMS_LOG_BASIC, sprintf('WB%d: Übersteuerung beendet', $n));
                 } elseif ($c === 3) {
                     $this->WriteAttributeBoolean('WB' . $n . 'TargetCleared', true); // wirkt auch auf eine Wochen-Frist dieser Sitzung
-                    IPS_SetProperty($this->InstanceID, 'WB' . $n . '_TargetKwh', 0.0);
-                    IPS_ApplyChanges($this->InstanceID);
+                    $this->liveSet('WB' . $n . '_TargetKwh', '0');
                     $this->emsLog(EMS_LOG_BASIC, sprintf('WB%d: Ladeziel gelöscht', $n));
                 }
                 $this->syncWallboxControlVariables($n);
@@ -10875,7 +10919,6 @@ class EMS extends IPSModule
             default:
                 return;
         }
-        IPS_ApplyChanges($this->InstanceID);
         $this->syncWallboxControlVariables($n);
     }
 
@@ -11127,7 +11170,7 @@ class EMS extends IPSModule
     {
         $rows = $this->defaultWeekTargets();
         foreach ($rows as $i => $r) { $rows[$i]['Label'] = $this->weekdayLabel((int)$r['Day']); }
-        $raw = json_decode($this->ReadPropertyString('WB' . $n . '_WeekTargets'), true);
+        $raw = json_decode($this->liveStr('WB' . $n . '_WeekTargets'), true);
         if (is_array($raw)) {
             foreach (array_values($raw) as $i => $r) {
                 if (!is_array($r)) { continue; }
@@ -11149,7 +11192,7 @@ class EMS extends IPSModule
     /** Gilt fuer Wallbox $n ueberhaupt ein Ladeziel (Wochen-Frist oder einheitliches Ladeziel)? */
     private function wallboxTargetConfigured(int $n): bool
     {
-        return $this->ReadPropertyFloat('WB' . $n . '_TargetKwh') > 0 || $this->weekTargetsActive($n);
+        return $this->liveFloat('WB' . $n . '_TargetKwh') > 0 || $this->weekTargetsActive($n);
     }
 
     /**
@@ -11159,7 +11202,7 @@ class EMS extends IPSModule
      */
     private function wallboxEffectiveTarget(int $n, int $now): array
     {
-        $single = (float)$this->ReadPropertyFloat('WB' . $n . '_TargetKwh');
+        $single = (float)$this->liveFloat('WB' . $n . '_TargetKwh');
         if ($this->weekTargetsActive($n)) {
             $rows = $this->weekTargets($n);
             for ($off = 0; $off <= 7; $off++) {
@@ -11177,7 +11220,7 @@ class EMS extends IPSModule
             return array('deadline' => null, 'kwh' => 0.0, 'source' => 'week', 'note' => $this->t('Charging target off: no valid weekly deadline (HH:MM).'));
         }
         if ($single <= 0.0) { return array('deadline' => null, 'kwh' => 0.0, 'source' => 'single', 'note' => ''); }
-        $dl = $this->nextClockTs($this->ReadPropertyString('WB' . $n . '_TargetTime'), $now);
+        $dl = $this->nextClockTs($this->liveStr('WB' . $n . '_TargetTime'), $now);
         return array('deadline' => $dl, 'kwh' => $single, 'source' => 'single', 'note' => $dl === null ? $this->t('Charging target off: the deadline is not a valid time (HH:MM).') : '');
     }
 
@@ -11273,7 +11316,7 @@ class EMS extends IPSModule
         }
         // Wochen-Frist: Ziel beim Anstecken festgelegt; sonst wie bisher das aktuelle Ladeziel (0 = aus)
         $wk = $this->ReadAttributeFloat('WB' . $n . 'TargetKwhSession');
-        $target = ($wk > 0.0) ? $wk : (float)$this->ReadPropertyFloat('WB' . $n . '_TargetKwh');
+        $target = ($wk > 0.0) ? $wk : (float)$this->liveFloat('WB' . $n . '_TargetKwh');
         if ($target <= 0.0) { return null; }
         if ($this->ReadAttributeBoolean('WB' . $n . 'TargetDone')) {
             $this->WriteAttributeString('WB' . $n . 'TargetNote', sprintf($this->t('Charging target %s kWh reached.'), $this->fmtKwh($target)));
@@ -11343,7 +11386,7 @@ class EMS extends IPSModule
             $this->WriteAttributeString('WB' . $n . 'ChargeText', $target['text']);
             return $target;
         }
-        if ($this->ReadPropertyInteger('WB' . $n . '_ChargeMode') <= 0) {
+        if ($this->liveInt('WB' . $n . '_ChargeMode') <= 0) {
             $this->WriteAttributeString('WB' . $n . 'ChargeText', $this->ReadAttributeString('WB' . $n . 'TargetNote'));
             return null;
         }
@@ -11352,7 +11395,7 @@ class EMS extends IPSModule
         $idEn = (int)($entry['chargeEnableID'] ?? 0);
         $on = ($idEn > 0 && IPS_VariableExists($idEn)) ? (bool)GetValue($idEn) : $this->ReadAttributeBoolean('WB' . $n . 'LastSentEnable');
         $plan = $this->wallboxChargePlan(array(
-            'mode' => $this->ReadPropertyInteger('WB' . $n . '_ChargeMode'), 'surplusW' => $surplus,
+            'mode' => $this->liveInt('WB' . $n . '_ChargeMode'), 'surplusW' => $surplus,
             'shareP' => $this->ReadPropertyInteger('WB' . $n . '_PvSharePct'), 'manualA' => $this->ReadPropertyInteger('WB' . $n . '_ManualCurrentA'),
             'minA' => $minA, 'maxA' => $maxA, 'stepA' => (float)($entry['currentStepA'] ?? 1.0), 'phases' => $phases, 'volt' => 230.0, 'on' => $on,
             'sinceSwitchS' => time() - $this->ReadAttributeInteger('LastWB' . $n . 'Switch'),
@@ -11642,11 +11685,13 @@ class EMS extends IPSModule
             $this->emsLog(EMS_LOG_VERBOSE, 'writeVar: Variable ID ' . $varId . ' nicht gefunden');
             return;
         }
+        // Store-Regel (0.101.0): fremde Variablen nur ueber ihre Aktion schalten. Ohne Aktion wuerde SetValue nur die Anzeige
+        // aendern, ohne dass das Geraet etwas tut -- deshalb nicht schreiben, sondern im Log melden.
         $varInfo = IPS_GetVariable($varId);
-        if ($varInfo['VariableAction'] > 0) {
+        if ((int)($varInfo['VariableAction'] ?? 0) > 0 || (int)($varInfo['VariableCustomAction'] ?? 0) > 0) {
             RequestAction($varId, $value);
         } else {
-            SetValue($varId, $value);
+            $this->emsLog(EMS_LOG_BASIC, 'writeVar: Variable ' . $varId . ' hat keine Aktion, nicht geschrieben (bitte eine schaltbare Variable wählen)');
         }
     }
 
