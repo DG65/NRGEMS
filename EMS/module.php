@@ -160,6 +160,7 @@ define('GUID_ARCHIVECONTROL', '{43192F0B-135B-4CE7-A0A7-1475603F3060}');
 // SteuerboxHub (SBH_GetState-Vertrag: §14a-Netzbetreiber-Dimmung, oberste
 // Prioritaet -- siehe SUITE.md "§14a-Lastabwurf-Priorisierung")
 define('GUID_STEUERBOXHUB', '{B76BE0BA-DF99-4B81-81BD-636A610011EE}');
+define('GUID_STEUERBOXHUB_EEBUS', '{1DEF9F7C-FFF8-4DA3-97ED-A1F6F9F587C5}'); // SteuerboxHub-EEBUS-Hub, SBHE_GetState (ab SteuerboxHub 0.6.0)
 // NRG-Stack Boersenpreis (Klasse Boersenpreis, vormals NRGSpotPrice, Repo
 // DG65/NRGBoersenpreis seit 14.09.2026 -- GUID/Praefix SPOT_/Vertraege
 // unveraendert; SPOT_GetPriceCurve 1.0, 13.09.2026):
@@ -2192,12 +2193,32 @@ class EMS extends IPSModule
      */
     private function getSteuerboxState()
     {
-        if (!function_exists('SBH_GetState')) { return null; }
-        $list = @IPS_GetInstanceListByModuleID(GUID_STEUERBOXHUB);
-        if (empty($list)) { return null; }
-        $raw = @SBH_GetState($list[0]);
-        $state = is_string($raw) ? json_decode($raw, true) : $raw;
-        return is_array($state) ? $state : null;
+        // SteuerboxHub 0.6.0 (Store-Review 11.11.2026): Kontakte-Hub liefert
+        // SBH_GetState, der eigene EEBUS-Hub SBHE_GetState (gleiche Felder).
+        // ALLE Instanzen beider Arten lesen und konservativ zusammenfuehren
+        // (eine inaktive Alt-Instanz darf eine aktive nie verdecken):
+        // aktiv, wenn irgendeine aktiv; kleinste Grenze; fruehester Beginn.
+        $states = array();
+        foreach (array(array(GUID_STEUERBOXHUB, 'SBH_GetState'), array(GUID_STEUERBOXHUB_EEBUS, 'SBHE_GetState')) as $src) {
+            if (!function_exists($src[1])) { continue; }
+            foreach ((array)@IPS_GetInstanceListByModuleID($src[0]) as $id) {
+                try { $raw = @call_user_func($src[1], $id); } catch (Throwable $e) { continue; }
+                $st = is_string($raw) ? json_decode($raw, true) : $raw;
+                if (is_array($st)) { $states[] = $st; }
+            }
+        }
+        if (empty($states)) { return null; }
+        if (count($states) === 1) { return $states[0]; }
+        $out = $states[0];
+        foreach (array(array('loadDimmActive', 'loadPMin', 'loadSince'), array('feedInDimmActive', 'feedInLimitPercent', 'feedInSince')) as $k) {
+            $active = array_values(array_filter($states, function ($x) use ($k) { return !empty($x[$k[0]]); }));
+            if (empty($active)) { $out[$k[0]] = false; continue; }
+            $out[$k[0]] = true;
+            $out[$k[1]] = min(array_map(function ($x) use ($k) { return (float)($x[$k[1]] ?? 0); }, $active));
+            $since = array_filter(array_map(function ($x) use ($k) { return $x[$k[2]] ?? null; }, $active), function ($v) { return $v !== null && $v !== ''; });
+            $out[$k[2]] = empty($since) ? null : min($since);
+        }
+        return $out;
     }
 
     /**

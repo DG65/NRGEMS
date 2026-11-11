@@ -2,6 +2,9 @@
 
 Ältere Versionen: [CHANGELOG-Archiv.md](CHANGELOG-Archiv.md)
 
+## 0.101.1 (2026-11-11)
+- **SteuerboxHub 0.6.0 (EEBUS als eigener Hub, Store-Review):** §14a-Vorgaben werden jetzt aus ALLEN Instanzen beider Arten gelesen, Kontakte-Hub (`SBH_GetState`) und EEBUS-Hub (`SBHE_GetState`, GUID `{1DEF9F7C-FFF8-4DA3-97ED-A1F6F9F587C5}`), jeweils hinter `function_exists`. Zusammenführung konservativ: Begrenzung aktiv, wenn irgendeine Instanz sie meldet; kleinstes `loadPMin` und `feedInLimitPercent`, frühester Beginn. Eine inaktive Alt-Instanz kann eine aktive nicht mehr verdecken (vorher nur `$list[0]`). Ohne diese Version verlören EEBUS-Nutzer nach dem SteuerboxHub-Update den §14a-Vorrang.
+
 ## 0.101.0 (2026-11-10)
 - **Store-Regel „Properties gehören dem Nutzer“:** Bedienwerte (Ladeart, Ladeziel, Frist, Wochen-Frist je Wallbox, manuelle Tagesplan-Einträge) werden zur Laufzeit nicht mehr per `IPS_SetProperty`/`IPS_ApplyChanges` geschrieben, sondern in Attributen `Live_<Property>`. Die Property bleibt die Grundeinstellung: Ändert der Nutzer sie im Formular und übernimmt, gilt ab dann der neue Wert (`liveAdopt()` vergleicht mit `LiveSrc_<Property>`). Erster Lauf nach dem Update übernimmt den bisherigen Property-Wert, nichts geht verloren. `EMS_SetManualPlan` baut den Tagesplan direkt neu. Vier neue Prüfungen, Mutation nachweislich rot.
 - **Entfernt:** Knopf „Übernehmen erzwingen“ (`IPS_ApplyChanges($id)` im Formular).
