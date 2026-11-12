@@ -1442,6 +1442,11 @@ $snap = [$ems->ReadAttributeBoolean('SolisHoldActive'), $ems->ReadAttributeInteg
 attr('SolisHoldActive', false); attr('SolisHoldChangedAt', 0); attr('SolisUserStorage', -1); $GLOBALS['ACTIONS'] = [];
 call($ems, 'setGoodweMode', [GW_MODE_STANDBY, 0, true]);
 check('Akku halten als Modus 8 (Bereitschaft, EMS 0.87.0): beim Solis ebenfalls Entladesperre', in_array('svc_discharge_inhibit=true', $acts(), true), json_encode($acts()));
+foreach ([[GW_MODE_CHARGE_PV, 0, 'Modus 2 (Laden aus PV, nicht entladen)'], [GW_MODE_BUY, 9800, 'Modus 9 (Auto aus dem Netz, Grid Rewards)']] as [$md, $pw, $lbl]) {
+    attr('SolisHoldActive', false); attr('SolisHoldChangedAt', 0); attr('SolisUserStorage', -1); $GLOBALS['ACTIONS'] = [];
+    call($ems, 'setGoodweMode', [$md, $pw, true]);
+    check($lbl . ' gibt es am Solis nicht: Entladesperre statt Automatik, Akku speist nicht ins Auto (0.101.2, Paul 12.11.2026)', in_array('svc_discharge_inhibit=true', $acts(), true) && !preg_grep('/^ctl_force_mode=2/', $acts()), json_encode($acts()));
+}
 attr('SolisHoldActive', $snap[0]); attr('SolisUserStorage', $snap[1]); attr('SolisHoldChangedAt', $snap[2]); attr('SolisHoldTryAt', $snap[3]);
 check('Halten erlaubt: Statuszeile ohne "Nur beobachtend"', call($ems, 'statusText', ['x']) === 'OK: x', call($ems, 'statusText', ['x']));
 $GLOBALS['ACTIONS'] = [];
@@ -1569,7 +1574,11 @@ $GLOBALS['VAL'][$vDev] = 0;
 $ems->SetValue('EMS_PVPower', 1000.0); $ems->SetValue('EMS_HousePower', 4000.0); $ems->SetValue('EMS_WB1Power', 0.0); $ems->SetValue('EMS_WB2Power', 0.0); $ems->SetValue('EMS_GridPower', -2850.0); $ems->SetValue('EMS_BatSOC', 60.0);
 $acts = function () { return array_map(fn($a) => $a[1] . '=' . json_encode($a[2]), $GLOBALS['ACTIONS']); };
 check('Sollleistung: Hauslast 4000 - PV 1000 - Reserve 150 = 2850 W', call($ems, 'solisDischargeW', [IHUB_IID, GW_MODE_DISCHARGE, 0]) === 2850);
-check('Wallbox zaehlt zum Bedarf (+3000 W)', (function () use ($ems) { $ems->SetValue('EMS_WB1Power', 3000.0); $r = call($ems, 'solisDischargeW', [IHUB_IID, GW_MODE_DISCHARGE, 0]); $ems->SetValue('EMS_WB1Power', 0.0); return $r === 5850; })());
+$wbDis = function (int $mode, bool $gr) use ($ems) { prop('WB1_Mode', $mode); $ems->SetValue('EMS_GridRewards', $gr); $ems->SetValue('EMS_WB1Power', 3000.0); $r = call($ems, 'solisDischargeW', [IHUB_IID, GW_MODE_DISCHARGE, 0]); $ems->SetValue('EMS_WB1Power', 0.0); $ems->SetValue('EMS_GridRewards', false); prop('WB1_Mode', 0); return $r; };
+check('EMS steuert die Wallbox: Wallbox zaehlt zum Bedarf (+3000 W)', $wbDis(2, false) === 5850);
+check('Smart Charging (Tibber steuert): Wallbox zaehlt NICHT, Akku speist nicht ins Auto (Paul 12.11.2026)', $wbDis(1, false) === 2850);
+check('Beobachten: Wallbox zaehlt NICHT', $wbDis(3, false) === 2850);
+check('Grid Rewards aktiv: Wallbox zaehlt NICHT, auch wenn EMS sie sonst steuert', $wbDis(2, true) === 2850);
 check('Obergrenze aus dem Plan (Modus 3, 2000 W) begrenzt', call($ems, 'solisDischargeW', [IHUB_IID, GW_MODE_DISCHARGE, 2000]) === 2000);
 check('Modus 12 wird wie Entladen behandelt', call($ems, 'solisDischargeW', [IHUB_IID, GW_MODE_BAT_DISCH, 0]) === 2850);
 check('andere Modi (Export 5, Automatik 1, Laden 11): keine Entladung', call($ems, 'solisDischargeW', [IHUB_IID, GW_MODE_AC_EXPORT, 3000]) === 0 && call($ems, 'solisDischargeW', [IHUB_IID, GW_MODE_AUTO, 0]) === 0 && call($ems, 'solisDischargeW', [IHUB_IID, GW_MODE_BAT_CHARGE, 3000]) === 0);

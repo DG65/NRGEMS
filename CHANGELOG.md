@@ -2,6 +2,9 @@
 
 Ältere Versionen: [CHANGELOG-Archiv.md](CHANGELOG-Archiv.md)
 
+## 0.101.2 (2026-11-13)
+- **Solis: Hausakku speist nicht mehr ins Auto (Pauls Anlage 11./12.11.2026, gemessen):** Während Grid Rewards entlud der Akku 3–4 kW in die mit 10 kW ladende Wallbox (12.11. 02:14–03:13 Ladestand 21 → 11 %, Netz ≈ 0), die Grid-Rewards-Prämie gibt es aber nur für Netzstrom. Zwei Ursachen: (1) Die Entladeleistung nach Bedarf (`solisDischargeW`) rechnete die Wallbox-Leistung immer mit ein; jetzt nur noch, wenn EMS die Wallbox selbst steuert und kein Grid Rewards läuft (nicht bei Smart Charging, Beobachten, Grid Rewards). (2) Die Stellglieder „Laden aus PV, nicht entladen“ (Modus 2) und „Auto aus dem Netz“ (Modus 9) von Smart Charging/Grid Rewards gibt es am Solis nicht; bisher lief dann die Automatik, die das Auto aus dem Akku bediente. Jetzt hält der Solis den Akku (Entladesperre, Speicherbetrieb 17). Grenze wie bisher: die Sperre wirkt am Solis nur unter seinem Reserve-SOC und nicht bei PV-Überschuss; das steht dann in der Statuszeile.
+
 ## 0.101.1 (2026-11-11)
 - **SteuerboxHub 0.6.0 (EEBUS als eigener Hub, Store-Review):** §14a-Vorgaben werden jetzt aus ALLEN Instanzen beider Arten gelesen, Kontakte-Hub (`SBH_GetState`) und EEBUS-Hub (`SBHE_GetState`, GUID `{1DEF9F7C-FFF8-4DA3-97ED-A1F6F9F587C5}`), jeweils hinter `function_exists`. Zusammenführung konservativ: Begrenzung aktiv, wenn irgendeine Instanz sie meldet; kleinstes `loadPMin` und `feedInLimitPercent`, frühester Beginn. Eine inaktive Alt-Instanz kann eine aktive nicht mehr verdecken (vorher nur `$list[0]`). Ohne diese Version verlören EEBUS-Nutzer nach dem SteuerboxHub-Update den §14a-Vorrang.
 

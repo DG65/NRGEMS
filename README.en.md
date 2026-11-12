@@ -1,7 +1,7 @@
 # EMS — Energy management for Symcon (NRG-Stack)
 
 ![Symcon](https://img.shields.io/badge/Symcon-PHP--Module-blue)
-![Module Version](https://img.shields.io/badge/Module_Version-0.101.1-blue)
+![Module Version](https://img.shields.io/badge/Module_Version-0.101.2-blue)
 ![Symcon Version](https://img.shields.io/badge/Symcon_Version-9.0%2B-blue)
 ![License](https://img.shields.io/badge/License-PolyForm_Noncommercial_1.0.0-lightgrey)
 [![Check Style](https://github.com/DG65/NRGEMS/actions/workflows/check-style.yml/badge.svg)](https://github.com/DG65/NRGEMS/actions/workflows/check-style.yml)

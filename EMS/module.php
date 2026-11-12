@@ -10233,7 +10233,16 @@ class EMS extends IPSModule
     {
         if ($mode !== GW_MODE_DISCHARGE && $mode !== GW_MODE_BAT_DISCH) { return 0; }
         try {
-            $demand = (float)$this->GetValue('EMS_HousePower') + (float)$this->GetValue('EMS_WB1Power') + (float)$this->GetValue('EMS_WB2Power');
+            // Wallbox nur, wenn EMS sie selbst steuert (Modus 'ems') und kein Grid Rewards laeuft (0.101.2, Pauls Anlage 12.11.2026:
+            // bei Grid Rewards/Smart Charging entlud der Akku 3-4 kW ins von Tibber gesteuerte Auto -- die Praemie gibt es nur fuer Netzstrom).
+            $demand = (float)$this->GetValue('EMS_HousePower');
+            $gr = false;
+            try { $gr = (bool)$this->GetValue('EMS_GridRewards'); } catch (Throwable $e) { }
+            if (!$gr) {
+                foreach (array(1, 2) as $n) {
+                    if (($this->wallboxMode($n)['mode'] ?? '') === 'ems') { $demand += (float)$this->GetValue('EMS_WB' . $n . 'Power'); }
+                }
+            }
             $pv = (float)$this->GetValue('EMS_PVPower');
             $grid = (float)$this->GetValue('EMS_GridPower'); // + Einspeisung
         } catch (Throwable $e) { return 0; }
@@ -10267,7 +10276,11 @@ class EMS extends IPSModule
         // Akku halten (Plan/manuell: Modus 5 mit 0 W): Entladesperre ueber den Speicherbetrieb, nur wenn der InverterHub sie anbietet
         // und kein PV-Ueberschuss da ist (ob PV bei gesperrtem Entladen weiter laedt, ist am Solis noch nicht gemessen)
         $holdCapable = ($this->findChildVariableIdByIdent($iid, 'svc_discharge_inhibit') > 0 && $this->findChildVariableIdByIdent($iid, 'cfg_storage_mode') > 0);
-        $isHold = (($mode === GW_MODE_AC_EXPORT || $mode === GW_MODE_STANDBY) && $powerW <= 0);
+        // Modus 2 (Laden aus PV, Akku entlaedt nicht) und Modus 9 (Auto aus dem Netz, Smart Charging/Grid Rewards) gibt es am Solis
+        // nicht; beide sollen vor allem verhindern, dass der Akku entlaedt -- am Solis also Halten (0.101.2, Pauls Anlage 12.11.2026:
+        // als Automatik gefahren speiste der Akku bei Grid Rewards 3-4 kW ins Auto).
+        $isHold = ((($mode === GW_MODE_AC_EXPORT || $mode === GW_MODE_STANDBY) && $powerW <= 0)
+            || $mode === GW_MODE_CHARGE_PV || $mode === GW_MODE_BUY);
         $wantHold = (!$wantCharge && $holdCapable && $isHold && $this->solisHoldAllowed($iid));
         $this->solisGridChargeEnsure($iid, $wantCharge, $now);
         $this->solisHoldHousekeeping($iid);
