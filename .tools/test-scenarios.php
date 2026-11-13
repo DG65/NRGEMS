@@ -3953,6 +3953,10 @@ $pN2 = array_fill(0, 96, 0.45); foreach (range(8, 20) as $i) { $pN2[$i] = 0.20; 
 $oN = call($ems, 'optimizeBattery', [$pN2, $pvZ0, $ld3, 0, 15.0, $ctxA]);
 check('Optimierer: billige Nacht 20 ct, Tag 45 ct -> laedt nachts', $cnt($oN, 'charge') > 0 && empty(array_filter($oN, fn($x, $i) => $x['act'] === 'charge' && $pN2[$i] > 0.2, ARRAY_FILTER_USE_BOTH)), json_encode(array_count_values(array_column($oN, 'act'))));
 check('Optimierer: Reserve (10 %) wird nie unterschritten', min(array_column($oN, 'soc')) >= 10.0 - 0.01 && min(array_column($oP, 'soc')) >= 10.0 - 0.01);
+$fz = []; foreach (range(44, 51) as $i) { $fz[$i] = 'charge'; }
+$oZ = call($ems, 'optimizeBattery', [array_slice($pO, 0, 96), $pvZ0, $ld3, 40, 30.0, $ctxA, $fz]);
+check('Optimierer mit manuellem Netzladen 11-13 Uhr: Vorgabe wird uebernommen, SOC danach hoeher als ohne (Paul 13.11.: Plan sprang von 72 auf 41 %)',
+    $oZ[44]['act'] === 'charge' && $oZ[51]['act'] === 'charge' && $oZ[52]['soc'] > 40.0, json_encode([$oZ[51] ?? null, $oZ[52] ?? null]));
 check('Optimierer: ohne Preise leer', call($ems, 'optimizeBattery', [[], $pvZ0, $ld3, 0, 50.0, $ctxA]) === []);
 // 5) Schalter aus
 prop('PLAN_Bedarf_Aktiv', false);
