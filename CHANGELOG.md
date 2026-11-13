@@ -2,6 +2,9 @@
 
 Ältere Versionen: [CHANGELOG-Archiv.md](CHANGELOG-Archiv.md)
 
+## 0.101.3 (2026-11-13)
+- **Einstandspreis bei fast leerem Akku (Privat 12./13.11.2026: bis 154 ct/kWh bei SOC 1 %):** Die Buchhaltung glich den gezählten Bestand an den gemessenen SOC an, ließ den Wert aber stehen; bei wenigen hundert Wh im Akku explodierte der Durchschnittspreis. Jetzt schrumpft der Wert im selben Verhältnis (Wandlungsverluste sind schon beim Laden eingerechnet), und an der Mindestreserve (`BAT_SOC_Min` + Notstromreserve) wird der Restwert verworfen. Nur Anzeige/Vertrag `batterycost` (Dashboard), keine Steuerentscheidung betroffen. Drei neue Prüfungen, Mutation nachweislich rot (287 ct).
+
 ## 0.101.2 (2026-11-13)
 - **Solis: Hausakku speist nicht mehr ins Auto (Pauls Anlage 11./12.11.2026, gemessen):** Während Grid Rewards entlud der Akku 3–4 kW in die mit 10 kW ladende Wallbox (12.11. 02:14–03:13 Ladestand 21 → 11 %, Netz ≈ 0), die Grid-Rewards-Prämie gibt es aber nur für Netzstrom. Zwei Ursachen: (1) Die Entladeleistung nach Bedarf (`solisDischargeW`) rechnete die Wallbox-Leistung immer mit ein; jetzt nur noch, wenn EMS die Wallbox selbst steuert und kein Grid Rewards läuft (nicht bei Smart Charging, Beobachten, Grid Rewards). (2) Die Stellglieder „Laden aus PV, nicht entladen“ (Modus 2) und „Auto aus dem Netz“ (Modus 9) von Smart Charging/Grid Rewards gibt es am Solis nicht; bisher lief dann die Automatik, die das Auto aus dem Akku bediente. Jetzt hält der Solis den Akku (Entladesperre, Speicherbetrieb 17). Grenze wie bisher: die Sperre wirkt am Solis nur unter seinem Reserve-SOC und nicht bei PV-Überschuss; das steht dann in der Statuszeile.
 

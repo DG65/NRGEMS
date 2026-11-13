@@ -9195,12 +9195,23 @@ class EMS extends IPSModule
             $stock *= $f;
         }
         if ($meas !== null && $dt > 0) {
-            $stock += ($meas - $stock) * min(1.0, $dt / 1500.0);
-            $stock  = min($stock, $capKwh);
+            $new = min($stock + ($meas - $stock) * min(1.0, $dt / 1500.0), $capKwh);
+            // 0.101.3 (Privat 12./13.11.2026: 154 ct bei SOC 1 %): Schrumpft der Bestand zum gemessenen SOC hin, schrumpft der
+            // Wert im selben Verhaeltnis. Vorher blieb der Wert stehen -- bei fast leerem Akku teilte sich ein Restwert durch
+            // wenige hundert Wh. Die Wandlungsverluste stecken schon im Laden (x eta), ein Durchschnittspreis aendert sich
+            // durch Entnahme nicht. Waechst der Bestand (gemessen mehr als gezaehlt), kommt die Energie ohne Wert dazu (wie PV).
+            if ($new < $stock && $stock > 0.0) {
+                $f = max(0.0, $new) / $stock;
+                $st['pool'] *= $f; $st['opp'] *= $f; $st['grid'] *= $f;
+            }
+            $stock = $new;
         }
         // Leer: Restwert verwerfen -- nie waehrend des Ladens, sonst verschluckt
         // ein langsames Laden aus leerer Batterie jeden kleinen 30-s-Schritt.
-        if ($stock < 0.05 && $batW >= -50.0) {
+        // 0.101.3: auch an der Mindestreserve (BAT_SOC_Min + Notstromreserve), die ein Akku nie unterschreitet.
+        $floorPct = (float)$this->ReadPropertyInteger('BAT_SOC_Min') + (float)$this->ReadPropertyInteger('BAT_SOC_Reserve_Backup');
+        $atFloor  = ($meas !== null && $capKwh > 0.0 && $soc <= $floorPct + 0.5);
+        if (($stock < 0.05 || $atFloor) && $batW >= -50.0) {
             $stock = 0.0; $st['pool'] = 0.0; $st['opp'] = 0.0; $st['grid'] = 0.0;
         }
         $st['stock'] = $stock;

@@ -3263,9 +3263,23 @@ $st = call($ems, 'batteryCostStep', [[], 0.0, 0.0, 0.0, 50.0, $t21, 20.0, 8.0, 4
 check('Start mit halbvoller 40-kWh-Batterie: Anfangsbestand als PV (0 ct), nicht eingeschwungen',
     $sum21($st, 40.0)['einstandCt'] === 0.0 && $sum21($st, 40.0)['gespeichertKwh'] === 20.0 && $sum21($st, 40.0)['eingeschwungen'] === false);
 $st = $run21($st, 60, 0.0, 0.0, 0.0, 20.0, 8.0, 40.0, 40.0);
-check('Bestand gleitet zum gemessenen SOC (40 % = 16 kWh), Wert bleibt', abs($sum21($st, 40.0)['gespeichertKwh'] - 16.0) < 1.5, json_encode($sum21($st, 40.0)));
+check('Bestand gleitet zum gemessenen SOC (40 % = 16 kWh)', abs($sum21($st, 40.0)['gespeichertKwh'] - 16.0) < 1.5, json_encode($sum21($st, 40.0)));
 $st = $run21($st, 200, 10000.0, 0.0, 0.0, 20.0);
 check('Batterie leer: Bestand und Wert auf 0, kein Preis', $sum21($st)['gespeichertKwh'] === 0.0 && $sum21($st)['einstandCt'] === null, json_encode($sum21($st)));
+// 0.101.3, Privat 12./13.11.2026: 154 ct bei SOC 1 % -- Bestand glitt zum SOC, der Wert blieb stehen
+prop('BAT_SOC_Min', 0); prop('BAT_SOC_Reserve_Backup', 0);
+$st = ['ts' => $t21, 'stock' => 10.0, 'pool' => 2.5, 'opp' => 3.0, 'grid' => 10.0, 'charged' => 50.0, 'since' => $t21];
+$st = $run21($st, 120, 0.0, 0.0, 0.0, 25.0, 8.0, 40.0, 2.0); // Zaehler sah kein Entladen, gemessen nur noch 2 % = 0,8 kWh
+check('Bestand gleitet zum niedrigeren SOC (0,8 kWh): Wert schrumpft mit, Preis bleibt 25 ct statt ~300 ct (0.101.3)',
+    abs($sum21($st, 40.0)['gespeichertKwh'] - 0.8) < 0.1 && abs($sum21($st, 40.0)['einstandCt'] - 25.0) < 0.05, json_encode($sum21($st, 40.0)));
+prop('BAT_SOC_Min', 5); prop('BAT_SOC_Reserve_Backup', 0);
+$st = ['ts' => $t21, 'stock' => 2.4, 'pool' => 0.6, 'opp' => 0.7, 'grid' => 2.4, 'charged' => 50.0, 'since' => $t21];
+$st = $run21($st, 1, 0.0, 0.0, 0.0, 25.0, 8.0, 40.0, 5.0);
+check('An der Mindestreserve (SOC 5 % = BAT_SOC_Min): Restwert verworfen, kein Preis (0.101.3)', $sum21($st, 40.0)['einstandCt'] === null, json_encode($sum21($st, 40.0)));
+$st = ['ts' => $t21, 'stock' => 2.4, 'pool' => 0.6, 'opp' => 0.7, 'grid' => 2.4, 'charged' => 50.0, 'since' => $t21];
+$st = $run21($st, 1, -3000.0, -3000.0, 0.0, 25.0, 8.0, 40.0, 5.0);
+check('An der Mindestreserve, aber Akku laedt: nichts verworfen', $sum21($st, 40.0)['einstandCt'] !== null, json_encode($sum21($st, 40.0)));
+prop('BAT_SOC_Min', 0);
 
 $ems = freshEms();
 attr('BatCostState', json_encode(['ts' => time(), 'stock' => 10.0, 'pool' => 2.0, 'opp' => 2.5, 'grid' => 5.0, 'charged' => 50.0, 'since' => strtotime('2026-09-01 12:00')]));
