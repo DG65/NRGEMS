@@ -476,6 +476,7 @@ class EMS extends IPSModule
         $this->RegisterPropertyInteger('WB_Quelle',            0);   // 0 automatisch, 1 ChargerHub, 2 OCPPHub, 3 beide (verschiedene Geraete)
         $this->RegisterPropertyInteger('WB1_Mode',            0);   // Wallbox-Modus: 0 automatisch, 1 Smart Charging (Tibber hat die Hoheit), 2 EMS steuert, 3 nur beobachten
         $this->RegisterPropertyInteger('WB2_Mode',            0);
+        $this->RegisterPropertyBoolean('PLAN_Optimizer', true); // 0.102.0: Akku-Optimierer statt Schwellen (Nachtfenster/Absicherung/Rang)
         $this->RegisterPropertyBoolean('WB_Smart_HouseFromBattery', true); // Smart Charging/Grid Reward excess: Netzbezug auf die Auto-Leistung regeln (Modus 9), Haus aus PV und Batterie; aus = Modus 2 (Haus aus dem Netz)
         $this->RegisterPropertyBoolean('WB_Smart_GridBuy',    true); // Smart-Charging-Auto aus dem Netz laden, Batterie bleibt geschont (Modus 2, Xmax=0)
         $this->RegisterPropertyString('WB1_TibberVehicle',    ''); // Tibber-deviceId des Fahrzeugs an dieser Wallbox (vom Nutzer bestaetigt, nie per Namensabgleich geraten)
@@ -3313,6 +3314,7 @@ class EMS extends IPSModule
             . '|nw=' . ($this->ReadPropertyBoolean('PLAN_NightGrid_Active') ? $this->ReadPropertyInteger('PLAN_NightGrid_EndHour') : 0)
             . '|pd=' . ($this->ReadPropertyBoolean('PLAN_PreDischarge_Active') ? 1 : 0)
             . '|ab=' . ($this->ReadPropertyBoolean('PLAN_Bedarf_Aktiv') ? 1 : 0) . '/' . $this->ReadPropertyInteger('BAT_SOC_Safety_Margin_Pct') . '/' . $this->ReadPropertyInteger('PLAN_Abend_MinSoc') . '/' . $this->ReadPropertyInteger('PLAN_Abend_Hour')
+            . '|opt=' . ($this->ReadPropertyBoolean('PLAN_Optimizer') ? 1 : 0)
             . '|man=' . md5($this->liveStr('PLAN_Manual'))
             . '|ext=' . $this->ReadPropertyInteger('PLAN_NightGrid_ExtendHours') . '/' . $this->ReadPropertyFloat('PLAN_NightGrid_ExtendTol_ct'));
     }
@@ -4315,6 +4317,98 @@ class EMS extends IPSModule
         $w = min($kw * 1000.0, (float)$ctx['maxW']);
         if ($missingKwh >= 0.0) { $w = min($w, $missingKwh / 0.25 * 1000.0); }
         return (int)max(0, round($w));
+    }
+
+    /**
+     * Akku-Optimierer (0.102.0, Dietmar 13.11.2026: "Eine feste Preisgrenze darf nicht darueber entscheiden, ob gekauft wird").
+     * Dynamische Programmierung ueber den ganzen Preis-Horizont (bis 192 Viertelstunden): je Slot Automatik, Halten
+     * oder Netzladen, so dass Netzbezug x Preis - Einspeisung x Verguetung minimal wird. Jede Entscheidung wird gegen
+     * den Preis gerechnet, zu dem die Energie sonst tatsaechlich beschafft wuerde, nicht gegen eine Schwelle. Physik wie
+     * simulateAutomatikSlot(): PV-Laden x eta_pv, Entladen Last / eta_ac, Netzladen x eta_ac, Reserve nie unterschritten.
+     * Rein (Pruefstand). Rueckgabe je kuenftigem Slot: ['act' => 'auto'|'hold'|'charge', 'soc' => SOC danach].
+     * Leer, wenn keine Preise. Restenergie am Horizontende zaehlt mit dem Wiederbeschaffungswert (guenstigster Preis
+     * der letzten 24 h / eta_ac), damit der Plan den Akku nicht kuenstlich leerfaehrt.
+     */
+    private function optimizeBattery(array $prices, array $pv, array $load, int $fromSlot, float $soc, array $ctx): array
+    {
+        $n = 0;
+        for ($i = $fromSlot; $i < count($prices); $i++) { if (!isset($prices[$i]) || $prices[$i] === null) { break; } $n = $i + 1; }
+        if ($n <= $fromSlot || (float)$ctx['capKwh'] <= 0.0) { return array(); }
+        $cap = (float)$ctx['capKwh']; $floor = (float)$ctx['socMin'] + (float)$ctx['socReserve'];
+        $etaAc = $this->effAc(); $etaPv = $this->effPv(); $feed = (float)($ctx['feedTariff'] ?? 0.0);
+        $cyc = (float)($ctx['cycleCost'] ?? 0.0); $disKw = (float)$ctx['dischargeKw'];
+        $step = 0.5; $ns = (int)round(100.0 / $step);
+        $last = array();
+        for ($i = max($fromSlot, $n - 96); $i < $n; $i++) { $last[] = (float)$prices[$i]; }
+        $endVal = min($last); // je kWh, die der Akku am Horizontende noch abgeben kann: erspart spaeter Netzbezug, angesetzt zum guenstigsten Preis
+        $sim = function (int $i, float $s, string $act) use ($prices, $pv, $load, $ctx, $cap, $floor, $etaAc, $etaPv, $feed, $cyc, $disKw): array {
+            $p = (float)$prices[$i];
+            $sur = (float)($pv[$i] ?? 0.0) - (float)($load[$i] ?? $ctx['avgHouseW']);
+            $imp = 0.0; $exp = 0.0; $chgKw = $this->ctxChargeKw($ctx, $s);
+            $room = max(0.0, (100.0 - $s) / 100.0 * $cap);
+            if ($sur > 0.0) {
+                $g = min($sur / 1000.0 * 0.25 * $etaPv, $chgKw * 0.25, $room);
+                $s += $g / $cap * 100.0; $room -= $g;
+                $exp = max(0.0, $sur / 1000.0 * 0.25 - $g / $etaPv);
+            } else {
+                $d = -$sur / 1000.0 * 0.25;
+                if ($act === 'auto' && $s > $floor) {
+                    $out = min($d, $disKw * 0.25, ($s - $floor) / 100.0 * $cap * $etaAc);
+                    $s -= $out / $etaAc / $cap * 100.0; $d -= $out;
+                }
+                $imp += $d;
+            }
+            if ($act === 'charge' && $room > 0.0) {
+                $in = min(min($chgKw * 1000.0, (float)$ctx['maxW']) / 1000.0 * 0.25, $room / $etaAc);
+                $s += $in * $etaAc / $cap * 100.0; $imp += $in;
+                return array(min(100.0, $s), $imp * $p - $exp * $feed + $in * $cyc);
+            }
+            return array(min(100.0, max(0.0, $s)), $imp * $p - $exp * $feed);
+        };
+        $interp = function (array $V, float $s) use ($step, $ns): float {
+            $x = max(0.0, min(100.0, $s)) / $step; $k = (int)floor($x); if ($k >= $ns) { return $V[$ns]; }
+            $f = $x - $k; return $V[$k] * (1.0 - $f) + $V[$k + 1] * $f;
+        };
+        $V = array(); for ($k = 0; $k <= $ns; $k++) { $V[$k] = -max(0.0, $k * $step - $floor) / 100.0 * $cap * $etaAc * $endVal; }
+        $Vs = array($n => $V);
+        $acts = array('auto', 'hold', 'charge');
+        for ($i = $n - 1; $i >= $fromSlot; $i--) {
+            $W = array();
+            for ($k = 0; $k <= $ns; $k++) {
+                $best = INF;
+                foreach ($acts as $a) { list($s2, $c) = $sim($i, $k * $step, $a); $v = $c + $interp($Vs[$i + 1], $s2); if ($v < $best) { $best = $v; } }
+                $W[$k] = $best;
+            }
+            $Vs[$i] = $W;
+        }
+        $out = array();
+        for ($i = $fromSlot; $i < $n; $i++) {
+            $bestA = 'auto'; $best = INF; $bestS = $soc;
+            foreach ($acts as $a) {
+                list($s2, $c) = $sim($i, $soc, $a); $v = $c + $interp($Vs[$i + 1], $s2);
+                if ($v < $best - 1e-6) { $best = $v; $bestA = $a; $bestS = $s2; }
+            }
+            $out[$i] = array('act' => $bestA, 'soc' => round($bestS, 1));
+            $soc = $bestS;
+        }
+        return $out;
+    }
+
+    /** Planeintrag aus dem Optimierer; 'dp' = 1 sorgt dafuer, dass optimize() den Slot auch ohne Arbitrage-Tag befragt. */
+    private function optimizerPlanSlot(int $slot, $price, float $soc, array $o, array $ctx, float $pvW): array
+    {
+        if ($o['act'] === 'charge') {
+            $missing = max(0.0, ((float)$o['soc'] - $soc) / 100.0 * (float)$ctx['capKwh']);
+            return array('plan' => array('op' => EMS_OP_NET_CHARGE, 'gw' => GW_MODE_BAT_CHARGE, 'power' => $this->gridChargeXsetW($ctx, $missing, $soc), 'dp' => 1,
+                'reason' => sprintf($this->t('Optimizer: grid charging at %.2f ct is cheaper than buying the energy later (SOC target %.0f %%)'), (float)$price * 100, (float)$o['soc']),
+                'price' => $price, 'soc' => (float)$o['soc']), 'soc' => (float)$o['soc']);
+        }
+        if ($o['act'] === 'hold') {
+            return array('plan' => array('op' => EMS_OP_HOLD, 'gw' => GW_MODE_STANDBY, 'power' => 0, 'dp' => 1,
+                'reason' => sprintf($this->t('Optimizer: house from the grid at %.2f ct, battery energy is kept for more expensive hours'), (float)$price * 100),
+                'price' => $price, 'soc' => (float)$o['soc']), 'soc' => (float)$o['soc']);
+        }
+        return $this->simulateAutomatikSlot($slot % 96, $pvW, $price, $soc, $ctx);
     }
 
     private function simulateAutomatikSlot($slot, $pvW, $price, $soc, array $ctx): array
@@ -5878,6 +5972,12 @@ class EMS extends IPSModule
             $load192[96 + $i]  = (float)($houseLoadSlotsTomorrow[$i] ?? $avgHouseWTomorrow);
         }
         $abAll = $this->bedarfInsuranceSlots($price192, $pvLow192, $load192, $nowSlot, $soc, $ctx);
+        // 0.102.0: Akku-Optimierer ersetzt Nachtfenster, Bedarfsabsicherung und Rang-Simulation (feste Schwellen). PV vorsichtig:
+        // p10; liefert die Prognose keine Streuung (p10 = p50, z. B. noch nicht kalibriert), 80 % von p50.
+        $dpPv = $pvLow192; $pv50All = $this->getPvfSlotsWatt('p50'); $spread = false;
+        for ($i = 0; $i < 192; $i++) { if ((float)($pv50All[$i] ?? 0.0) - (float)($pvLow192[$i] ?? 0.0) > 50.0) { $spread = true; break; } }
+        if (!$spread) { for ($i = 0; $i < 192; $i++) { $dpPv[$i] = 0.8 * (float)($pv50All[$i] ?? 0.0); } }
+        $dp = $this->ReadPropertyBoolean('PLAN_Optimizer') ? $this->optimizeBattery($price192, $dpPv, $load192, $nowSlot, $soc, $ctx) : array();
 
         // 0.93.0: Nachtziel nach Bedarf bis zur naechsten Nacht (heute: Fensterende bis Mitternacht, morgen: bis Tagesende)
         $ctxNwToday = $ctx; $nightNeedToday = null; $nightNeedTomorrow = null;
@@ -5933,6 +6033,11 @@ class EMS extends IPSModule
             if (!empty($ctx['restwert'])) { $ctx['rwCharge'] = array_merge(array_keys((array)($nwToday['charge'] ?? array())), $rwTmrCharge); }
             if (isset($manual[0][$slot])) {
                 $r = $this->manualPlanSlot($slot, $price, $pvW, $soc, $manual[0][$slot], $ctx);
+                $plan[$slot] = $r['plan']; $soc = $r['soc'];
+                continue;
+            }
+            if (isset($dp[$slot]) && $price !== null) {
+                $r = $this->optimizerPlanSlot($slot, $price, $soc, $dp[$slot], $ctx, $pvW);
                 $plan[$slot] = $r['plan']; $soc = $r['soc'];
                 continue;
             }
@@ -6009,6 +6114,11 @@ class EMS extends IPSModule
             }
             if (isset($manual[1][$slot])) {
                 $r = $this->manualPlanSlot($slot, $price, $pvW, $soc, $manual[1][$slot], $ctxTomorrow);
+                $tomorrowPlan[$slot] = $r['plan']; $soc = $r['soc'];
+                continue;
+            }
+            if (isset($dp[96 + $slot]) && $price !== null) {
+                $r = $this->optimizerPlanSlot(96 + $slot, $price, $soc, $dp[96 + $slot], $ctxTomorrow, $pvW);
                 $tomorrowPlan[$slot] = $r['plan']; $soc = $r['soc'];
                 continue;
             }
@@ -8176,7 +8286,7 @@ class EMS extends IPSModule
         // Manuelle Eintraege und Abend-Absicherung ('man'/'ab') gelten ebenfalls immer.
         $nwPlan = $this->loadDayPlan();
         $nwSlot = (int)(((int)date('H') * 60 + (int)date('i')) / 15);
-        $nwFlag = ($this->nightWindowEndHour() > 0 && !empty($nwPlan[$nwSlot]['nw'])) || !empty($nwPlan[$nwSlot]['man']) || !empty($nwPlan[$nwSlot]['ab']);
+        $nwFlag = ($this->nightWindowEndHour() > 0 && !empty($nwPlan[$nwSlot]['nw'])) || !empty($nwPlan[$nwSlot]['man']) || !empty($nwPlan[$nwSlot]['ab']) || !empty($nwPlan[$nwSlot]['dp']);
         {
             if ($nwFlag) {
                 $planned = $this->applyPlanSlot($s);

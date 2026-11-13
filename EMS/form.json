@@ -1920,6 +1920,11 @@
                 },
                 {
                     "type": "CheckBox",
+                    "name": "PLAN_Optimizer",
+                    "caption": "Battery optimizer: plans charging, holding and discharging together over the whole price horizon (today and tomorrow) and compares every quarter-hour with the price at which the energy would otherwise have to be bought later. No fixed price threshold decides about buying. Replaces night window, demand safeguard and rank simulation; manual entries, pre-discharge and §14a keep priority. Off = previous threshold logic."
+                },
+                {
+                    "type": "CheckBox",
                     "name": "PLAN_Bedarf_Aktiv",
                     "caption": "Demand safeguard: simulates the SOC with the conservative PV forecast (p10) and the load forecast (includes the heat pump via heating degrees and outdoor temperature) until PV takes over the next day. If the energy would not suffice (reserve plus safety margin from the battery panel), the plan buys exactly the missing amount in the cheapest quarter-hours before the shortfall, provided that pays off against the expensive price after conversion losses, cycle costs and minimum margin. At runtime nothing is bought if the real SOC is already above the planned value."
                 },

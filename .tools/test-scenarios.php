@@ -3935,6 +3935,25 @@ $abH = call($ems, 'bedarfInsuranceSlots', [$pN, $pvZ, $ldN, 92, 50.0, $ctxA]);
 check('Bedarf: Akku 50 %, Nacht und Tag billiger als die gespeicherte Energie (gehalten), Abend 4 kWh: kein Einkauf noetig', $abH === [], json_encode($abH));
 // 4) Ohne Preisvorteil (Abendpreis = Einkauf) nichts
 check('Bedarf: ohne Preisvorteil kein Einkauf', call($ems, 'bedarfInsuranceSlots', [array_fill(0, 192, 0.30), $pv, $ld, 60, 40.0, $ctxA]) === []);
+// 4c) 0.102.0 Akku-Optimierer (Dietmar 13.11.2026: keine feste Preisgrenze entscheidet ueber den Einkauf)
+$cnt = function (array $o, string $a) { return count(array_filter($o, fn($x) => $x['act'] === $a)); };
+$pvZ0 = array_fill(0, 192, 0.0); $ld3 = array_fill(0, 192, 3000.0);
+$pO = array_fill(0, 192, 0.42); foreach (range(44, 51) as $i) { $pO[$i] = 0.355; } foreach (range(68, 95) as $i) { $pO[$i] = 0.49; }
+$oP = call($ems, 'optimizeBattery', [array_slice($pO, 0, 96), $pvZ0, $ld3, 40, 30.0, $ctxA]);
+$chg = array_keys(array_filter($oP, fn($x) => $x['act'] === 'charge'));
+check('Optimierer (Paul 14.11.): Bestpreis 35,5 ct ueber jeder alten Schwelle, Abend 49 ct -> laedt in den 35,5-ct-Slots, nie zu 42 ct',
+    !empty($chg) && empty(array_filter($chg, fn($i) => $pO[$i] > 0.36)), json_encode($chg));
+check('Optimierer: haelt (Haus aus dem Netz) zu 42 ct vor dem Abend statt den Akku zu leeren', $cnt($oP, 'hold') > 0, json_encode(array_count_values(array_column($oP, 'act'))));
+$pD = array_fill(0, 96, 0.45); foreach (range(40, 47) as $i) { $pD[$i] = 0.41; } foreach (range(68, 95) as $i) { $pD[$i] = 0.93; }
+$oD = call($ems, 'optimizeBattery', [$pD, $pvZ0, $ld3, 30, 20.0, $ctxA]);
+check('Optimierer (Dietmars Beispiel): Tagesbestpreis 41 ct, abends 93 ct -> kauft zu 41 ct', !empty(array_filter($oD, fn($x, $i) => $x['act'] === 'charge' && $pD[$i] == 0.41, ARRAY_FILTER_USE_BOTH)), json_encode(array_count_values(array_column($oD, 'act'))));
+$oF = call($ems, 'optimizeBattery', [array_fill(0, 96, 0.30), $pvZ0, $ld3, 0, 60.0, $ctxA]);
+check('Optimierer: flacher Preis -> nur Automatik (Laden/Halten bringt nichts)', $cnt($oF, 'auto') === count($oF), json_encode(array_count_values(array_column($oF, 'act'))));
+$pN2 = array_fill(0, 96, 0.45); foreach (range(8, 20) as $i) { $pN2[$i] = 0.20; }
+$oN = call($ems, 'optimizeBattery', [$pN2, $pvZ0, $ld3, 0, 15.0, $ctxA]);
+check('Optimierer: billige Nacht 20 ct, Tag 45 ct -> laedt nachts', $cnt($oN, 'charge') > 0 && empty(array_filter($oN, fn($x, $i) => $x['act'] === 'charge' && $pN2[$i] > 0.2, ARRAY_FILTER_USE_BOTH)), json_encode(array_count_values(array_column($oN, 'act'))));
+check('Optimierer: Reserve (10 %) wird nie unterschritten', min(array_column($oN, 'soc')) >= 10.0 - 0.01 && min(array_column($oP, 'soc')) >= 10.0 - 0.01);
+check('Optimierer: ohne Preise leer', call($ems, 'optimizeBattery', [[], $pvZ0, $ld3, 0, 50.0, $ctxA]) === []);
 // 5) Schalter aus
 prop('PLAN_Bedarf_Aktiv', false);
 check('Bedarf: Schalter aus -> nichts', call($ems, 'bedarfInsuranceSlots', [$p192, $pv, $ld, 60, 40.0, $ctxA]) === []);

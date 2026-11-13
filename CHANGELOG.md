@@ -2,6 +2,11 @@
 
 Ältere Versionen: [CHANGELOG-Archiv.md](CHANGELOG-Archiv.md)
 
+## 0.102.0 (2026-11-13)
+- **Akku-Optimierer statt fester Schwellen (Dietmar 13.11.2026: „Eine feste Preisgrenze darf nicht darüber entscheiden, ob gekauft wird“):** Neuer Planer `optimizeBattery()` rechnet Laden, Halten und Automatik gemeinsam über den ganzen Preis-Horizont (heute + morgen, dynamische Programmierung über den SOC). Jede Viertelstunde wird gegen den Preis gerechnet, zu dem die Energie sonst tatsächlich beschafft würde. Bisher filterte die Bedarfsabsicherung alle Slots über der Lohnschwelle (Ersatzpreis × RT × Sicherheit − Spanne) heraus: lag der Tagesbestpreis darüber (Paul 14.11.: 35,5 ct gegen ~31 ct), wurde nie gekauft und der Engpass abends zum Höchstpreis gedeckt. PV vorsichtig mit p10, ohne Prognose-Streuung (p10 = p50) mit 80 % von p50; Last aus der Lastprognose; Restenergie am Horizontende mit dem günstigsten Preis bewertet. Manuelle Einträge, Vorentladen und §14a haben weiter Vorrang. Optimierer-Slots tragen `dp` und werden auch an Tagen ohne Arbitrage befragt. Neuer Schalter `PLAN_Optimizer` (Standard an; aus = bisherige Logik).
+- **Nachrechnung 14.10.–12.11. (Privat, 40 kWh):** bisherige Logik 185,00 €, Optimierer mit einfacher Prognose (Vortag als Prognose, PV × 0,8) 174,23 €, Optimum mit Vorauswissen 168,99 € (RT 82 %); bei RT 75 % 199,95 / 186,23 / 180,94 €. Der Optimierer holt rund 2/3 des möglichen Spielraums.
+- Sieben neue Prüfungen (Pauls Preise, Dietmars Beispiel 41/93 ct, flacher Preis, billige Nacht, Reserve).
+
 ## 0.101.3 (2026-11-13)
 - **Einstandspreis bei fast leerem Akku (Privat 12./13.11.2026: bis 154 ct/kWh bei SOC 1 %):** Die Buchhaltung glich den gezählten Bestand an den gemessenen SOC an, ließ den Wert aber stehen; bei wenigen hundert Wh im Akku explodierte der Durchschnittspreis. Jetzt schrumpft der Wert im selben Verhältnis (Wandlungsverluste sind schon beim Laden eingerechnet), und an der Mindestreserve (`BAT_SOC_Min` + Notstromreserve) wird der Restwert verworfen. Nur Anzeige/Vertrag `batterycost` (Dashboard), keine Steuerentscheidung betroffen. Drei neue Prüfungen, Mutation nachweislich rot (287 ct).
 
