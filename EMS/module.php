@@ -4320,6 +4320,35 @@ class EMS extends IPSModule
     }
 
     /**
+     * Preisschaetzung fuer Viertelstunden ohne veroeffentlichten Preis (0.103.0): Mittel derselben Uhrzeit an den letzten
+     * vier gleichartigen Tagen (Werktag bzw. Wochenende) aus dem Bezugspreis-Archiv. Nachgerechnet 14.10.-12.11.2026:
+     * mittlere Abweichung 7,9 ct, aber 80 % Treffer bei den billigsten/teuersten vier Stunden -- fuer die Bewertung der
+     * Restenergie reicht das, gehandelt wird darauf nie. Rueckgabe EUR/kWh je Startzeit, fehlend = nicht im Ergebnis.
+     */
+    private function estimatePrices(array $slotStarts): array
+    {
+        if (empty($slotStarts)) { return array(); }
+        $we = function (int $t): bool { return (int)date('N', $t) >= 6; };
+        $from = strtotime('-22 days', strtotime(date('Y-m-d', min($slotStarts))));
+        $hist = array();
+        try {
+            $h = $this->GetPurchasePriceHistory($from, strtotime('tomorrow'));
+            foreach ((array)($h['slots'] ?? array()) as $sl) { if ($sl['priceCt'] !== null) { $hist[(int)$sl['start']] = (float)$sl['priceCt'] / 100.0; } }
+        } catch (Throwable $e) { return array(); }
+        $out = array();
+        foreach ($slotStarts as $t) {
+            $d0 = strtotime(date('Y-m-d', $t)); $off = $t - $d0; $v = array();
+            for ($k = 1; $k <= 21 && count($v) < 4; $k++) {
+                $d = strtotime('-' . $k . ' days', $d0);
+                if ($we($d) !== $we($d0)) { continue; }
+                if (isset($hist[$d + $off])) { $v[] = $hist[$d + $off]; }
+            }
+            if (!empty($v)) { $out[$t] = array_sum($v) / count($v); }
+        }
+        return $out;
+    }
+
+    /**
      * Akku-Optimierer (0.102.0, Dietmar 13.11.2026: "Eine feste Preisgrenze darf nicht darueber entscheiden, ob gekauft wird").
      * Dynamische Programmierung ueber den ganzen Preis-Horizont (bis 192 Viertelstunden): je Slot Automatik, Halten
      * oder Netzladen, so dass Netzbezug x Preis - Einspeisung x Verguetung minimal wird. Jede Entscheidung wird gegen
@@ -4329,7 +4358,7 @@ class EMS extends IPSModule
      * Leer, wenn keine Preise. Restenergie am Horizontende zaehlt mit dem Wiederbeschaffungswert (guenstigster Preis
      * der letzten 24 h / eta_ac), damit der Plan den Akku nicht kuenstlich leerfaehrt.
      */
-    private function optimizeBattery(array $prices, array $pv, array $load, int $fromSlot, float $soc, array $ctx, array $forced = array()): array
+    private function optimizeBattery(array $prices, array $pv, array $load, int $fromSlot, float $soc, array $ctx, array $forced = array(), int $estFrom = PHP_INT_MAX): array
     {
         $n = 0;
         for ($i = $fromSlot; $i < count($prices); $i++) { if (!isset($prices[$i]) || $prices[$i] === null) { break; } $n = $i + 1; }
@@ -4374,7 +4403,7 @@ class EMS extends IPSModule
         $acts = array('auto', 'hold', 'charge');
         for ($i = $n - 1; $i >= $fromSlot; $i--) {
             $W = array();
-            $ai = isset($forced[$i]) ? array($forced[$i]) : $acts; // feste Vorgaben (manuelle Eintraege) rechnet der Optimierer mit
+            $ai = isset($forced[$i]) ? array($forced[$i]) : (($i >= $estFrom) ? array('auto', 'hold') : $acts); // feste Vorgaben; auf geschaetzte Preise nie aktiv laden (0.103.0)
             for ($k = 0; $k <= $ns; $k++) {
                 $best = INF;
                 foreach ($ai as $a) { list($s2, $c) = $sim($i, $k * $step, $a); $v = $c + $interp($Vs[$i + 1], $s2); if ($v < $best) { $best = $v; } }
@@ -4385,7 +4414,7 @@ class EMS extends IPSModule
         $out = array();
         for ($i = $fromSlot; $i < $n; $i++) {
             $bestA = 'auto'; $best = INF; $bestS = $soc;
-            foreach ((isset($forced[$i]) ? array($forced[$i]) : $acts) as $a) {
+            foreach ((isset($forced[$i]) ? array($forced[$i]) : (($i >= $estFrom) ? array('auto', 'hold') : $acts)) as $a) {
                 list($s2, $c) = $sim($i, $soc, $a); $v = $c + $interp($Vs[$i + 1], $s2);
                 if ($v < $best - 1e-6) { $best = $v; $bestA = $a; $bestS = $s2; }
             }
@@ -5993,7 +6022,24 @@ class EMS extends IPSModule
                 $dpForced[$dd * 96 + (int)$ms] = ($me['op'] === EMS_OP_NET_CHARGE) ? 'charge' : (($me['op'] === EMS_OP_HOLD) ? 'hold' : 'auto');
             }
         }
-        $dp = $this->ReadPropertyBoolean('PLAN_Optimizer') ? $this->optimizeBattery($price192, $dpPv, $load192, $nowSlot, $soc, $ctx, $dpForced) : array();
+        // 0.103.0: Horizont um 24 h geschaetzte Preise verlaengern (hinter dem letzten bekannten Preis), damit die Restenergie
+        // nicht nur mit dem guenstigsten bekannten Preis bewertet wird. Auf geschaetzte Preise wird nie aktiv geladen.
+        $dpP = $price192; $dpPvX = $dpPv; $dpL = $load192; $estFrom = PHP_INT_MAX;
+        if ($this->ReadPropertyBoolean('PLAN_Optimizer')) {
+            $known = 0; for ($i = 0; $i < 192; $i++) { if ($price192[$i] !== null) { $known = $i + 1; } else { break; } }
+            $d0 = strtotime('today'); $need = array();
+            for ($i = $known; $i < $known + 96; $i++) { $need[$i] = $d0 + $i * 900; }
+            $est = $this->estimatePrices(array_values($need));
+            $lfcX = $this->getLfcInstance(); $loadD2 = ($lfcX > 0) ? $this->getLoadForecastSlots($lfcX, 2) : array();
+            foreach ($need as $i => $ts) {
+                if (!isset($est[$ts])) { break; }
+                if ($estFrom === PHP_INT_MAX) { $estFrom = $i; }
+                $dpP[$i] = $est[$ts];
+                if (!isset($dpPvX[$i])) { $dpPvX[$i] = 0.0; } // ohne PV-Prognose fuer Tag 3 vorsichtig: keine PV
+                if (!isset($dpL[$i])) { $dpL[$i] = (float)($loadD2[$i - 192] ?? $avgHouseWTomorrow); }
+            }
+        }
+        $dp = $this->ReadPropertyBoolean('PLAN_Optimizer') ? $this->optimizeBattery($dpP, $dpPvX, $dpL, $nowSlot, $soc, $ctx, $dpForced, $estFrom) : array();
 
         // 0.93.0: Nachtziel nach Bedarf bis zur naechsten Nacht (heute: Fensterende bis Mitternacht, morgen: bis Tagesende)
         $ctxNwToday = $ctx; $nightNeedToday = null; $nightNeedTomorrow = null;

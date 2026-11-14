@@ -2,6 +2,11 @@
 
 Ältere Versionen: [CHANGELOG-Archiv.md](CHANGELOG-Archiv.md)
 
+## 0.103.0 (2026-11-14)
+- **Optimierer plant 24 h über die bekannten Preise hinaus (Dietmar 13.11.2026: „Wie vermutest du die Preise am Sonntagmorgen?“):** Hinter dem letzten veröffentlichten Preis verlängert `estimatePrices()` den Horizont um 96 Viertelstunden: Mittel derselben Uhrzeit an den letzten vier gleichartigen Tagen (Werktag/Wochenende) aus dem Bezugspreis-Archiv. Last für Tag 3 aus der Lastprognose, PV dort vorsichtig 0. Auf geschätzte Preise wird nie aktiv geladen (nur Automatik/Halten), sie bewerten nur, wie viel Energie für später aufgehoben wird; kommen die echten Preise, rechnet der Plan neu.
+- **Nachrechnung 14.10.–12.11. (Privat, RT 82 %):** Schätzung mittlere Abweichung 7,9 ct, Bias −2 ct, 80 % Treffer bei den billigsten/teuersten 4 h. Optimierer nur bekannte Preise 174,27 € (Ende 10 %), mit Schätzung 171,58 € (Ende 18 %) – rund 3,70 € günstiger; Optimum 168,99 €.
+- Zwei neue Prüfungen (nie Laden auf Schätzung, Mutation rot; teurer geschätzter Abend lässt heute Energie aufheben).
+
 ## 0.102.1 (2026-11-13)
 - **Optimierer kennt manuelle Einträge (Paul 13.11.2026):** Nach dem manuellen Netzladen 11–13 Uhr auf 72 % sprang der Plan auf den Optimierer-SOC von 41 % zurück, weil der Optimierer ohne die Einträge gerechnet hatte. Manuelle Einträge gehen jetzt als feste Vorgaben in den Optimierer, und die Optimierer-Slots schreiben den SOC aus dem laufenden Plan fort (PV-Laden beim Halten, echte Ladeleistung beim Netzladen). Neue Prüfung.
 

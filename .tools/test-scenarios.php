@@ -3957,6 +3957,16 @@ $fz = []; foreach (range(44, 51) as $i) { $fz[$i] = 'charge'; }
 $oZ = call($ems, 'optimizeBattery', [array_slice($pO, 0, 96), $pvZ0, $ld3, 40, 30.0, $ctxA, $fz]);
 check('Optimierer mit manuellem Netzladen 11-13 Uhr: Vorgabe wird uebernommen, SOC danach hoeher als ohne (Paul 13.11.: Plan sprang von 72 auf 41 %)',
     $oZ[44]['act'] === 'charge' && $oZ[51]['act'] === 'charge' && $oZ[52]['soc'] > 40.0, json_encode([$oZ[51] ?? null, $oZ[52] ?? null]));
+// 0.103.0: geschaetzte Preise hinter dem bekannten Horizont
+$pE = array_fill(0, 96, 0.30); for ($i = 96; $i < 192; $i++) { $pE[$i] = ($i % 96 >= 68 && $i % 96 < 88) ? 0.60 : 0.10; }
+$oE = call($ems, 'optimizeBattery', [$pE, array_fill(0, 192, 0.0), array_fill(0, 192, 1500.0), 0, 60.0, $ctxA, [], 96]);
+check('Geschaetzte Preise: auf geschaetzte 10-ct-Slots wird nie aktiv geladen (nur Automatik/Halten)',
+    empty(array_filter($oE, fn($x, $i) => $i >= 96 && $x['act'] === 'charge', ARRAY_FILTER_USE_BOTH)), json_encode(array_count_values(array_column(array_slice($oE, 96, null, true), 'act'))));
+$pK = array_fill(0, 96, 0.30); $pK2 = $pK; for ($i = 96; $i < 192; $i++) { $pK2[$i] = ($i % 96 >= 68 && $i % 96 < 88) ? 0.60 : 0.30; }
+$oK = call($ems, 'optimizeBattery', [$pK, array_fill(0, 192, 0.0), array_fill(0, 192, 1500.0), 0, 60.0, $ctxA]);
+$oK2 = call($ems, 'optimizeBattery', [$pK2, array_fill(0, 192, 0.0), array_fill(0, 192, 1500.0), 0, 60.0, $ctxA, [], 96]);
+check('Geschaetzter teurer Abend morgen (60 ct): heute wird Akkuenergie aufgehoben (Halten), ohne Schaetzung nicht',
+    $cnt($oK2, 'hold') > 0 && $cnt($oK, 'hold') === 0 && $oK2[95]['soc'] > $oK[95]['soc'], json_encode([$cnt($oK, 'hold'), $cnt($oK2, 'hold'), $oK[95]['soc'], $oK2[95]['soc']]));
 check('Optimierer: ohne Preise leer', call($ems, 'optimizeBattery', [[], $pvZ0, $ld3, 0, 50.0, $ctxA]) === []);
 // 5) Schalter aus
 prop('PLAN_Bedarf_Aktiv', false);
