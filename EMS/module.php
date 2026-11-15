@@ -7687,6 +7687,9 @@ class EMS extends IPSModule
         $total = 0.0;
         foreach ((array)($partners['vehicles'] ?? array()) as $veh) {
             if (($veh['headingHome'] ?? false) !== true) { continue; }
+            // Schon zuhause: kein Heimkehr-Bedarf, auch wenn im Auto noch ein altes Navigationsziel
+            // "Zuhause" steht (Tessie-Befund 15.11.2026: atHome true, distanceToHomeKm 0, headingHome true).
+            if (($veh['atHome'] ?? false) === true) { continue; }
             // vehicle 1.0: ohne frische Daten nicht entscheiden. Ein heimfahrendes Auto sendet laufend;
             // lastSeenAt null oder aelter als 1 h = Altdaten. Alte Tessie-Staende (legacy) liefern kein lastSeenAt.
             if (!$this->vehicleFresh($veh, 3600)) { continue; }

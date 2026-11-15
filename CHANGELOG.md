@@ -2,6 +2,9 @@
 
 Ältere Versionen: [CHANGELOG-Archiv.md](CHANGELOG-Archiv.md)
 
+## 0.104.2 (2026-11-15)
+- **Fahrzeugreserve: Auto schon zuhause (Tessie-Befund Privat 15.11.2026):** Kohlekasten stand zuhause (`atHome` true, 0 km), meldete aber `headingHome` true mit einer erwarteten Ankunft bei 55 %, vermutlich ein altes Navigationsziel „Zuhause“ im Auto. Das EMS hätte dafür Akku-Energie für die Heimkehr zurückgehalten. `atHome` wird jetzt vor `headingHome` ausgewertet. Drei neue Prüfungen, darunter Heimweg ohne `lastSeenAt` = 0. Die Mutationsprobe schlägt wie erwartet an.
+
 ## 0.104.1 (2026-11-15)
 - **Fahrzeug-Altdaten zählen nicht mehr (Live-Befund Privat 15.11.2026):** Zwei eingefrorene Tessie-Instanzen ohne Daten seit September, eine davon mit „lädt“, wurden mitgezählt. Neue Prüfung `vehicleFresh()` nach `lastSeenAt`. Der Grid-Rewards-Hinweis („Auto lädt parallel über Grid Rewards“) und die Fahrzeugreserve nutzen nur Daten, die höchstens 1 h alt sind. Die Situationsanzeige blendet Fahrzeuge ohne Daten seit 7 Tagen aus, ein schlafendes Auto bleibt sichtbar. Ältere Tessie-Stände ohne `lastSeenAt` verhalten sich wie bisher. Drei neue Prüfungen.
 

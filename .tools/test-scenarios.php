@@ -4207,6 +4207,16 @@ $GLOBALS['VEHDATA'][71005] = ['contractType' => 'vehicle', 'contractVersion' => 
 $v2 = call($ems, 'discoverVehicles');
 $cnt = count(array_filter($v2['active'], fn($e) => $e['instanceID'] === 71005));
 check('Tessie mit GetVehicleData wird nicht doppelt ueber GetVehicleState gelesen', $cnt === 1, json_encode($v2['active']));
+prop('VEH_Home_Radius_Km', 50);
+$vHome = ['instanceID' => 1, 'atHome' => true, 'headingHome' => true, 'distanceToHomeKm' => 0, 'expectedHomeArrivalSocPercent' => 55, 'chargeLimit' => 80, 'batteryCapacityKwh' => 55.5, 'lastSeenAt' => time() - 60];
+$vWay  = array_merge($vHome, ['atHome' => false, 'distanceToHomeKm' => 20]);
+attr('PartnerCache', json_encode(['vehicles' => [$vHome]]));
+check('Fahrzeugreserve: Auto schon zuhause mit altem Navi-Ziel Zuhause = 0 kWh', abs(call($ems, 'computeVehicleReserveKwh')) < 1e-9);
+attr('PartnerCache', json_encode(['vehicles' => [$vWay]]));
+check('Fahrzeugreserve: Auto 20 km auf dem Heimweg = (80-55) % x 55,5 = 13,9 kWh', abs(call($ems, 'computeVehicleReserveKwh') - 0.25 * 55.5) < 1e-6);
+attr('PartnerCache', json_encode(['vehicles' => [array_merge($vWay, ['lastSeenAt' => null])]]));
+check('Fahrzeugreserve: Heimweg ohne lastSeenAt = 0 kWh', abs(call($ems, 'computeVehicleReserveKwh')) < 1e-9);
+attr('PartnerCache', '');
 check('vehicleFresh: lastSeenAt null = Altrest', call($ems, 'vehicleFresh', [['lastSeenAt' => null], 3600]) === false);
 check('vehicleFresh: 10 min alt = frisch, 2 h alt bei 1 h Grenze = alt', call($ems, 'vehicleFresh', [['lastSeenAt' => time() - 600], 3600]) === true && call($ems, 'vehicleFresh', [['lastSeenAt' => time() - 7200], 3600]) === false);
 check('vehicleFresh: alter Tessie-Stand (legacy) gilt als frisch', call($ems, 'vehicleFresh', [['legacy' => true], 3600]) === true);
