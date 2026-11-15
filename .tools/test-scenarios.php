@@ -81,6 +81,10 @@ function IPS_GetInstanceListByModuleID($guid) {
 function IPS_GetInstance($iid) {
     return ['ModuleInfo' => ['ModuleID' => $GLOBALS['INSTMOD'][$iid] ?? ''], 'InstanceStatus' => $GLOBALS['INSTSTATUS'][$iid] ?? 102];
 }
+function IPS_GetModuleList()       { return array_keys($GLOBALS['MODULES'] ?? []); }
+function IPS_GetModule($guid)      { return $GLOBALS['MODULES'][$guid] ?? []; }
+function BMWX_GetVehicleData($iid) { return $GLOBALS['VEHDATA'][$iid] ?? null; }
+function TESSIE_GetVehicleState($iid) { return $GLOBALS['TESSIE_STATE'][$iid] ?? null; }
 function IPS_GetLibrary($id)      { return ['Version' => 'test', 'Build' => 0]; }
 function IPS_LogMessage($sender, $msg) { $GLOBALS['LOG'][] = $sender . ': ' . $msg; }
 function IPS_ApplyChanges($iid)   {}
@@ -4167,6 +4171,44 @@ check('Eingabe unter 50 % wird auf 50 % begrenzt', abs(call($ems, 'rtGrid') - 0.
 prop('BAT_RT_Grid_Pct', 82.0); prop('BAT_RT_PV_Pct', 70.0);
 check('PV-Rundwirkungsgrad unter Netz: eta_pv = 0,70 / 0,9055 = 0,773', abs(call($ems, 'effPv') - 0.70 / sqrt(0.82)) < 1e-9);
 $GLOBALS['EMS_RAW_DEFAULTS'] = false;
+}
+
+echo "\n8am) Fahrzeug-Discovery nach Vertrag vehicle 1.0 (0.104.0, SUITE.md 15.11.2026)\n";
+if (method_exists('EMS', 'discoverVehicles')) {
+$ems = freshEms();
+$GLOBALS['MODULES'] = [
+    '{B-DEV}'  => ['Prefix' => 'BMWX', 'ModuleType' => 3],
+    '{B-CONF}' => ['Prefix' => 'BMWX', 'ModuleType' => 4],
+    '{X-DEV}'  => ['Prefix' => 'NOVEH', 'ModuleType' => 3],
+];
+$GLOBALS['INSTMOD'][71001] = '{B-DEV}'; $GLOBALS['INSTMOD'][71002] = '{B-DEV}'; $GLOBALS['INSTMOD'][71003] = '{B-DEV}';
+$GLOBALS['INSTMOD'][71004] = '{B-CONF}'; $GLOBALS['INSTMOD'][71005] = GUID_TESSIEVEHICLE;
+$GLOBALS['INSTSTATUS'][71002] = 104;
+$GLOBALS['VEHDATA'] = [
+    71001 => json_encode(['contractType' => 'vehicle', 'contractVersion' => '1.3', 'provider' => 'BMWX', 'name' => 'i4', 'soc' => 55.5, 'connected' => true, 'charging' => false, 'chargeLimit' => 80, 'atHome' => true, 'batteryCapacityKwh' => 80.7, 'lastSeenAt' => 1794700000]),
+    71003 => ['contractType' => 'vehicle', 'contractVersion' => '2.0', 'soc' => 10],
+    71004 => ['contractType' => 'vehicle', 'contractVersion' => '1.0', 'soc' => 1],
+];
+$GLOBALS['TESSIE_STATE'] = [71005 => json_encode(['contractVersion' => '1.6', 'name' => 'Model Y', 'soc' => 70, 'charging' => true, 'chargeLimit' => 90, 'scheduledChargingActive' => true])];
+$v = call($ems, 'discoverVehicles');
+$byId = []; foreach ($v['active'] as $e) { $byId[$e['instanceID']] = $e; }
+check('BMW-Geraet (Typ 3, Status 102, Major 1, Minor 3) wird angenommen', isset($byId[71001]) && $byId[71001]['soc'] == 55.5 && $byId[71001]['provider'] === 'BMWX', json_encode($v));
+check('Konfigurator (Typ 4) mit gleichem Praefix wird nie abgefragt', !isset($byId[71004]) && !in_array(71004, array_column($v['inactive'], 'instanceID'), true));
+$GLOBALS['INSTMOD'][71006] = '{B-DEV}'; $GLOBALS['INSTSTATUS'][71006] = 203;
+$GLOBALS['VEHDATA'][71006] = ['contractType' => 'vehicle', 'contractVersion' => '1.0', 'soc' => 40, 'vehicleStatus' => 'asleep', 'lastSeenAt' => 1794700000];
+$v = call($ems, 'discoverVehicles');
+$byId = []; foreach ($v['active'] as $e) { $byId[$e['instanceID']] = $e; }
+check('Status 203 (schlafendes Auto, Warnung) wird abgefragt und angenommen', isset($byId[71006]), json_encode($v['inactive']));
+check('Status 104 wird als inaktiv gefuehrt, nicht abgefragt', !isset($byId[71002]) && in_array(71002, array_column($v['inactive'], 'instanceID'), true));
+check('Major 2 wird abgelehnt und als inaktiv gefuehrt', !isset($byId[71003]) && in_array(71003, array_column($v['inactive'], 'instanceID'), true));
+check('Alter Tessie ohne GetVehicleData kommt ueber GetVehicleState, lastSeenAt = null', isset($byId[71005]) && array_key_exists('lastSeenAt', $byId[71005]) && $byId[71005]['lastSeenAt'] === null && $byId[71005]['provider'] === 'TESSIE');
+$GLOBALS['MODULES'][GUID_TESSIEVEHICLE] = ['Prefix' => 'BMWX', 'ModuleType' => 3]; // Tessie-GUID liefert nun selbst GetVehicleData
+$GLOBALS['VEHDATA'][71005] = ['contractType' => 'vehicle', 'contractVersion' => '1.0', 'provider' => 'TESSIE', 'soc' => 71, 'lastSeenAt' => 1794700100];
+$v2 = call($ems, 'discoverVehicles');
+$cnt = count(array_filter($v2['active'], fn($e) => $e['instanceID'] === 71005));
+check('Tessie mit GetVehicleData wird nicht doppelt ueber GetVehicleState gelesen', $cnt === 1, json_encode($v2['active']));
+unset($GLOBALS['MODULES'], $GLOBALS['VEHDATA'], $GLOBALS['TESSIE_STATE']);
+foreach ([71001, 71002, 71003, 71004, 71005, 71006] as $i) { unset($GLOBALS['INSTMOD'][$i], $GLOBALS['INSTSTATUS'][$i]); }
 }
 
 // ===========================================================================

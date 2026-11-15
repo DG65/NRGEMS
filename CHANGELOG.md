@@ -2,6 +2,10 @@
 
 Ältere Versionen: [CHANGELOG-Archiv.md](CHANGELOG-Archiv.md)
 
+## 0.104.0 (2026-11-15)
+- **Herstellerneutrale Fahrzeuge (Vertrag `vehicle` 1.0, SUITE.md 15.11.2026):** Das EMS findet Fahrzeugmodule jetzt selbst. Jedes Gerätemodul, das `<PREFIX>_GetVehicleData` anbietet, wird erkannt, ohne Änderung am EMS: Tessie ab 2.40.0, später BMW CarData und eine Variablen-Quelle für Daten aus Home Assistant. Abgefragt wird jede Instanz außer deaktivierten (104): Ein Status ab 200 ist oft nur eine Warnung, Tessie meldet zum Beispiel 203, wenn das Auto schläft. Ob die Daten frisch sind, entscheidet `lastSeenAt`. Die Fahrzeugreserve für ein heimfahrendes Auto nutzt nur Daten, die höchstens eine Stunde alt sind (Live-Befund Privat 15.11.: echte Autos meldeten 203, zwei Altreste 102). Angenommen wird jede Version 1.x. Ältere Tessie-Stände ohne `GetVehicleData` liest das EMS weiter über `TESSIE_GetVehicleState`. Grid-Rewards-Hinweis, Situationsanzeige und Fahrzeugreserve nutzen die neue Liste `vehicles`.
+- Sieben neue Prüfungen (Annahme, Konfigurator ignoriert, Status 203 angenommen, Status 104 inaktiv, Major 2 abgelehnt, alter Tessie-Stand, keine Doppelzählung). Die Mutationsprobe am Gerätetyp-Filter schlägt wie erwartet an.
+
 ## 0.103.0 (2026-11-14)
 - **Optimierer plant 24 h über die bekannten Preise hinaus (Dietmar 13.11.2026: „Wie vermutest du die Preise am Sonntagmorgen?“):** Hinter dem letzten veröffentlichten Preis verlängert `estimatePrices()` den Horizont um 96 Viertelstunden: Mittel derselben Uhrzeit an den letzten vier gleichartigen Tagen (Werktag/Wochenende) aus dem Bezugspreis-Archiv. Last für Tag 3 aus der Lastprognose, PV dort vorsichtig 0. Auf geschätzte Preise wird nie aktiv geladen (nur Automatik/Halten), sie bewerten nur, wie viel Energie für später aufgehoben wird; kommen die echten Preise, rechnet der Plan neu.
 - **Nachrechnung 14.10.–12.11. (Privat, RT 82 %):** Schätzung mittlere Abweichung 7,9 ct, Bias −2 ct, 80 % Treffer bei den billigsten/teuersten 4 h. Optimierer nur bekannte Preise 174,27 € (Ende 10 %), mit Schätzung 171,58 € (Ende 18 %) – rund 3,70 € günstiger; Optimum 168,99 €.

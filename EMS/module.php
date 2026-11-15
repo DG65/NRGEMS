@@ -1678,7 +1678,13 @@ class EMS extends IPSModule
         $partners['wpeebushub']      = $this->discoverContract(GUID_WPEEBUSHUB,  'WPEEB_GetFunctions');
         $partners['chargereebushub'] = $this->discoverContract(GUID_CHARGEREEBUSHUB, 'CHEEB_GetFunctions');
         foreach ($partners['chargereebushub'] as $i => $e) { $partners['chargereebushub'][$i]['source'] = 'chargereebushub'; }
+        // Fahrzeuge: herstellerneutraler Vertrag `vehicle` 1.0 (<PREFIX>_GetVehicleData, SUITE.md, 15.11.2026).
+        // 'vehicles' ist die Quelle fuer alle Konsumenten; 'tessie' bleibt nur fuer die Verbund-Gesundheit
+        // (Instanzen je GUID) und alte Tessie-Staende ohne GetVehicleData.
         $partners['tessie']      = $this->discoverContract(GUID_TESSIEVEHICLE, 'TESSIE_GetVehicleState');
+        $vehicles = $this->discoverVehicles();
+        $partners['vehicles']         = $vehicles['active'];
+        $partners['vehiclesInactive'] = $vehicles['inactive'];
 
         // Tibber liefert keine *_GetFunctions-Liste, sondern eigene Getter
         // pro Instanz (Preiskurve/Tarif/aktive Fremdsteuerung).
@@ -1848,6 +1854,68 @@ class EMS extends IPSModule
             }
         }
         return $results;
+    }
+
+    /**
+     * Fahrzeug-Discovery nach Vertrag `vehicle` 1.0 (SUITE.md, 15.11.2026): jedes Geraetemodul (ModuleType 3),
+     * dessen Praefix eine Funktion <PREFIX>_GetVehicleData anbietet, ist Anbieter. Neue Hersteller brauchen
+     * keine Aenderung am EMS. Nur Instanzen mit Status 102 werden abgefragt, die uebrigen als "inaktiv"
+     * gefuehrt. Angenommen wird nur contractType 'vehicle' mit Major 1 (jede Minor).
+     * Uebergang: Tessie-Instanzen ohne GetVehicleData (Tessie < 2.40.0) liefern weiter ueber
+     * TESSIE_GetVehicleState; deren Felder sind eine Obermenge der Pflichtfelder bis auf lastSeenAt (null).
+     */
+    private function discoverVehicles(): array
+    {
+        $active = array();
+        $inactive = array();
+        $seen = array();
+        foreach (IPS_GetModuleList() as $guid) {
+            $mod = IPS_GetModule($guid);
+            if ((int)($mod['ModuleType'] ?? 0) !== 3) { continue; }
+            $prefix = (string)($mod['Prefix'] ?? '');
+            if ($prefix === '' || !function_exists($prefix . '_GetVehicleData')) { continue; }
+            foreach (IPS_GetInstanceListByModuleID($guid) as $id) {
+                $status = (int)(IPS_GetInstance($id)['InstanceStatus'] ?? 0);
+                // Abgefragt wird jede Instanz ausser 104 (vom Nutzer deaktiviert) und 1xx-Systemzustaenden.
+                // Modul-eigene Status >= 200 sind oft nur Warnungen: Tessie meldet 203, wenn ein schlafendes
+                // Auto keine Telemetrie schickt (Daten gueltig). Ob Daten frisch genug sind, sagt lastSeenAt,
+                // nicht der Instanzstatus (Live-Befund Privat 15.11.2026: echte Autos 203, Altreste 102).
+                if ($status !== 102 && $status < 200) {
+                    $inactive[] = array('instanceID' => $id, 'provider' => $prefix, 'status' => $status, 'name' => IPS_GetName($id));
+                    continue;
+                }
+                try {
+                    $data = call_user_func($prefix . '_GetVehicleData', $id);
+                } catch (\Throwable $e) {
+                    $inactive[] = array('instanceID' => $id, 'provider' => $prefix, 'status' => $status, 'name' => IPS_GetName($id), 'error' => $e->getMessage());
+                    continue;
+                }
+                if (is_string($data)) { $data = json_decode($data, true); }
+                if (!is_array($data) || ($data['contractType'] ?? '') !== 'vehicle'
+                    || (int)explode('.', (string)($data['contractVersion'] ?? '0'))[0] !== 1) {
+                    $inactive[] = array('instanceID' => $id, 'provider' => $prefix, 'status' => $status, 'name' => IPS_GetName($id), 'error' => 'contract');
+                    continue;
+                }
+                $data['instanceID'] = $id;
+                $data['provider'] = $data['provider'] ?? $prefix;
+                if (!isset($data['name'])) { $data['name'] = IPS_GetName($id); }
+                $active[] = $data;
+                $seen[$id] = true;
+            }
+        }
+        if (function_exists('TESSIE_GetVehicleState')) {
+            foreach ($this->discoverContract(GUID_TESSIEVEHICLE, 'TESSIE_GetVehicleState') as $veh) {
+                $id = (int)($veh['instanceID'] ?? 0);
+                if (isset($seen[$id])) { continue; }
+                $veh['provider'] = 'TESSIE';
+                $veh['contractType'] = 'vehicle';
+                $veh['legacy'] = true;
+                if (!array_key_exists('lastSeenAt', $veh)) { $veh['lastSeenAt'] = null; }
+                if (!isset($veh['name'])) { $veh['name'] = IPS_GetName($id); }
+                $active[] = $veh;
+            }
+        }
+        return array('active' => $active, 'inactive' => $inactive);
     }
 
     /**
@@ -5428,7 +5496,7 @@ class EMS extends IPSModule
         // Fahrzeug-Ladevorgang unnoetig dranhaengt.
         if (in_array($opMode, array(EMS_OP_DISCHARGE, EMS_OP_EXPORT), true)) {
             $partners = $this->GetPartners();
-            foreach ((array)($partners['tessie'] ?? array()) as $veh) {
+            foreach ((array)($partners['vehicles'] ?? array()) as $veh) {
                 if (($veh['charging'] ?? false) && ($veh['scheduledChargingActive'] ?? false)) {
                     $feedTariff = (float)$this->getFeedTariffEur()['eur'];
                     $reason .= sprintf(
@@ -5545,7 +5613,7 @@ class EMS extends IPSModule
         // Tessie: Situation B, sobald Tibber Grid Rewards fuer dieses Fahrzeug
         // die Ladehoheit hat (kein direkter Schreibkanal des EMS aufs Fahrzeug
         // selbst — Fahrzeugladung laeuft ohnehin ueber den Charger, nicht Tessie).
-        foreach ((array)($partners['tessie'] ?? array()) as $veh) {
+        foreach ((array)($partners['vehicles'] ?? array()) as $veh) {
             $isGridReward = (bool)($veh['scheduledChargingActive'] ?? false);
             $situation[] = array(
                 'domain'     => 'vehicle',
@@ -7602,8 +7670,14 @@ class EMS extends IPSModule
         $radiusKm = (float)$this->ReadPropertyInteger('VEH_Home_Radius_Km');
         $partners = $this->GetPartners();
         $total = 0.0;
-        foreach ((array)($partners['tessie'] ?? array()) as $veh) {
+        foreach ((array)($partners['vehicles'] ?? array()) as $veh) {
             if (($veh['headingHome'] ?? false) !== true) { continue; }
+            // vehicle 1.0: ohne frische Daten nicht entscheiden. Ein heimfahrendes Auto sendet laufend;
+            // lastSeenAt null oder aelter als 1 h = Altdaten. Alte Tessie-Staende (legacy) liefern kein lastSeenAt.
+            if (empty($veh['legacy'])) {
+                $seen = $veh['lastSeenAt'] ?? null;
+                if ($seen === null || (time() - (int)$seen) > 3600) { continue; }
+            }
             $dist = $veh['distanceToHomeKm'] ?? null;
             $arrivalSoc = $veh['expectedHomeArrivalSocPercent'] ?? null;
             $limit = $veh['chargeLimit'] ?? null;
