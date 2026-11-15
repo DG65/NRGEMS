@@ -2,6 +2,9 @@
 
 Ältere Versionen: [CHANGELOG-Archiv.md](CHANGELOG-Archiv.md)
 
+## 0.104.1 (2026-11-15)
+- **Fahrzeug-Altdaten zählen nicht mehr (Live-Befund Privat 15.11.2026):** Zwei eingefrorene Tessie-Instanzen ohne Daten seit September, eine davon mit „lädt“, wurden mitgezählt. Neue Prüfung `vehicleFresh()` nach `lastSeenAt`. Der Grid-Rewards-Hinweis („Auto lädt parallel über Grid Rewards“) und die Fahrzeugreserve nutzen nur Daten, die höchstens 1 h alt sind. Die Situationsanzeige blendet Fahrzeuge ohne Daten seit 7 Tagen aus, ein schlafendes Auto bleibt sichtbar. Ältere Tessie-Stände ohne `lastSeenAt` verhalten sich wie bisher. Drei neue Prüfungen.
+
 ## 0.104.0 (2026-11-15)
 - **Herstellerneutrale Fahrzeuge (Vertrag `vehicle` 1.0, SUITE.md 15.11.2026):** Das EMS findet Fahrzeugmodule jetzt selbst. Jedes Gerätemodul, das `<PREFIX>_GetVehicleData` anbietet, wird erkannt, ohne Änderung am EMS: Tessie ab 2.40.0, später BMW CarData und eine Variablen-Quelle für Daten aus Home Assistant. Abgefragt wird jede Instanz außer deaktivierten (104): Ein Status ab 200 ist oft nur eine Warnung, Tessie meldet zum Beispiel 203, wenn das Auto schläft. Ob die Daten frisch sind, entscheidet `lastSeenAt`. Die Fahrzeugreserve für ein heimfahrendes Auto nutzt nur Daten, die höchstens eine Stunde alt sind (Live-Befund Privat 15.11.: echte Autos meldeten 203, zwei Altreste 102). Angenommen wird jede Version 1.x. Ältere Tessie-Stände ohne `GetVehicleData` liest das EMS weiter über `TESSIE_GetVehicleState`. Grid-Rewards-Hinweis, Situationsanzeige und Fahrzeugreserve nutzen die neue Liste `vehicles`.
 - Sieben neue Prüfungen (Annahme, Konfigurator ignoriert, Status 203 angenommen, Status 104 inaktiv, Major 2 abgelehnt, alter Tessie-Stand, keine Doppelzählung). Die Mutationsprobe am Gerätetyp-Filter schlägt wie erwartet an.

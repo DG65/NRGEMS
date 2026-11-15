@@ -1857,6 +1857,18 @@ class EMS extends IPSModule
     }
 
     /**
+     * vehicle 1.0: Konsumenten entscheiden nicht mit Altdaten. lastSeenAt null oder aelter als $maxAgeSec
+     * = nicht frisch. Alte Tessie-Staende (legacy, ohne GetVehicleData) liefern kein lastSeenAt und
+     * gelten wie bisher als frisch.
+     */
+    private function vehicleFresh(array $veh, int $maxAgeSec): bool
+    {
+        if (!empty($veh['legacy'])) { return true; }
+        $seen = $veh['lastSeenAt'] ?? null;
+        return $seen !== null && (time() - (int)$seen) <= $maxAgeSec;
+    }
+
+    /**
      * Fahrzeug-Discovery nach Vertrag `vehicle` 1.0 (SUITE.md, 15.11.2026): jedes Geraetemodul (ModuleType 3),
      * dessen Praefix eine Funktion <PREFIX>_GetVehicleData anbietet, ist Anbieter. Neue Hersteller brauchen
      * keine Aenderung am EMS. Nur Instanzen mit Status 102 werden abgefragt, die uebrigen als "inaktiv"
@@ -5497,6 +5509,7 @@ class EMS extends IPSModule
         if (in_array($opMode, array(EMS_OP_DISCHARGE, EMS_OP_EXPORT), true)) {
             $partners = $this->GetPartners();
             foreach ((array)($partners['vehicles'] ?? array()) as $veh) {
+                if (!$this->vehicleFresh($veh, 3600)) { continue; } // Altdaten (z. B. eingefrorene Instanz) melden kein Laden
                 if (($veh['charging'] ?? false) && ($veh['scheduledChargingActive'] ?? false)) {
                     $feedTariff = (float)$this->getFeedTariffEur()['eur'];
                     $reason .= sprintf(
@@ -5614,6 +5627,8 @@ class EMS extends IPSModule
         // die Ladehoheit hat (kein direkter Schreibkanal des EMS aufs Fahrzeug
         // selbst — Fahrzeugladung laeuft ohnehin ueber den Charger, nicht Tessie).
         foreach ((array)($partners['vehicles'] ?? array()) as $veh) {
+            // Ein schlafendes Auto darf alte Daten haben; ohne Daten seit 7 Tagen ist es ein Altrest
+            if (!$this->vehicleFresh($veh, 7 * 86400)) { continue; }
             $isGridReward = (bool)($veh['scheduledChargingActive'] ?? false);
             $situation[] = array(
                 'domain'     => 'vehicle',
@@ -7674,10 +7689,7 @@ class EMS extends IPSModule
             if (($veh['headingHome'] ?? false) !== true) { continue; }
             // vehicle 1.0: ohne frische Daten nicht entscheiden. Ein heimfahrendes Auto sendet laufend;
             // lastSeenAt null oder aelter als 1 h = Altdaten. Alte Tessie-Staende (legacy) liefern kein lastSeenAt.
-            if (empty($veh['legacy'])) {
-                $seen = $veh['lastSeenAt'] ?? null;
-                if ($seen === null || (time() - (int)$seen) > 3600) { continue; }
-            }
+            if (!$this->vehicleFresh($veh, 3600)) { continue; }
             $dist = $veh['distanceToHomeKm'] ?? null;
             $arrivalSoc = $veh['expectedHomeArrivalSocPercent'] ?? null;
             $limit = $veh['chargeLimit'] ?? null;

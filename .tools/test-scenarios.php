@@ -4207,6 +4207,9 @@ $GLOBALS['VEHDATA'][71005] = ['contractType' => 'vehicle', 'contractVersion' => 
 $v2 = call($ems, 'discoverVehicles');
 $cnt = count(array_filter($v2['active'], fn($e) => $e['instanceID'] === 71005));
 check('Tessie mit GetVehicleData wird nicht doppelt ueber GetVehicleState gelesen', $cnt === 1, json_encode($v2['active']));
+check('vehicleFresh: lastSeenAt null = Altrest', call($ems, 'vehicleFresh', [['lastSeenAt' => null], 3600]) === false);
+check('vehicleFresh: 10 min alt = frisch, 2 h alt bei 1 h Grenze = alt', call($ems, 'vehicleFresh', [['lastSeenAt' => time() - 600], 3600]) === true && call($ems, 'vehicleFresh', [['lastSeenAt' => time() - 7200], 3600]) === false);
+check('vehicleFresh: alter Tessie-Stand (legacy) gilt als frisch', call($ems, 'vehicleFresh', [['legacy' => true], 3600]) === true);
 unset($GLOBALS['MODULES'], $GLOBALS['VEHDATA'], $GLOBALS['TESSIE_STATE']);
 foreach ([71001, 71002, 71003, 71004, 71005, 71006] as $i) { unset($GLOBALS['INSTMOD'][$i], $GLOBALS['INSTSTATUS'][$i]); }
 }
