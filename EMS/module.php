@@ -4614,6 +4614,47 @@ class EMS extends IPSModule
     }
 
     /**
+     * Akku-Physik einer Viertelstunde, eine Stelle fuer Optimierer, Planzeilen und Automatik-Simulation (Umbau 2a, 17.11.2026;
+     * vorher an drei Stellen eigen gerechnet). PV-Ueberschuss laedt mit eta_pv (gedeckelt durch Ladeleistung und freien Platz),
+     * der Rest geht ins Netz. Fehlbedarf: bei 'auto' entlaedt der Akku oberhalb der Reserve, gedeckelt auf die Entladeleistung
+     * am Akku (dischargeKw), ans Haus kommt davon eta_ac an; sonst Netz. 'charge' laedt zusaetzlich aus dem Netz mit
+     * eta_ac (Ladeleistung, maxW, freier Platz). 'hold' tut nichts ausser PV-Laden.
+     * @return array{0: float, 1: float, 2: float, 3: float, 4: float, 5: float} [SOC, Netzbezug, Einspeisung, PV-Ladung, Akku ans Haus,
+     *         Netzladung] -- Energien in kWh; Liste statt Schluessel, weil der Optimierer die Funktion sehr oft ruft
+     */
+    private function batteryStep(float $soc, float $pvW, float $loadW, string $act, array $ctx): array
+    {
+        $cap = max(0.001, (float)$ctx['capKwh']);
+        $floor = (float)$ctx['socMin'] + (float)$ctx['socReserve'];
+        // Wirkungsgrade einmal je Planung vorab in $ctx (etaAc/etaPv), sonst je Aufruf aus den Einstellungen: der Optimierer ruft
+        // diese Funktion ueber 100.000-mal je Plan, das Lesen der Einstellungen verdreifachte die Rechenzeit (gemessen 17.11.2026)
+        $etaAc = $ctx['etaAc'] ?? $this->effAc(); $etaPv = $ctx['etaPv'] ?? $this->effPv();
+        $chgKw = empty($ctx['chargeCurve']) ? (float)$ctx['chargeKw'] : $this->ctxChargeKw($ctx, $soc);
+        $sur = $pvW - $loadW;
+        $imp = 0.0; $exp = 0.0; $g = 0.0; $out = 0.0; $in = 0.0;
+        $room = max(0.0, (100.0 - $soc) / 100.0 * $cap);
+        if ($sur > 0.0) {
+            $g = min($sur / 1000.0 * 0.25 * $etaPv, $chgKw * 0.25, $room);
+            $soc += $g / $cap * 100.0; $room -= $g;
+            $exp = max(0.0, $sur / 1000.0 * 0.25 - $g / $etaPv);
+        } else {
+            $d = -$sur / 1000.0 * 0.25;
+            if ($act === 'auto' && $soc > $floor) {
+                // dischargeKw ist die Grenze AM AKKU (InverterHub bat_discharge_max_w, Strom x Spannung): ans Haus kommt davon eta_ac an.
+                // Bis 0.105.5 rechnete der Optimierer die Grenze am Haus (leicht zu optimistisch), die Automatik-Planzeile am Akku.
+                $out = min($d, (float)$ctx['dischargeKw'] * 0.25 * $etaAc, ($soc - $floor) / 100.0 * $cap * $etaAc);
+                $soc -= $out / $etaAc / $cap * 100.0; $d -= $out;
+            }
+            $imp += $d;
+        }
+        if ($act === 'charge' && $room > 0.0) {
+            $in = min(min($chgKw * 1000.0, (float)$ctx['maxW']) / 1000.0 * 0.25, $room / $etaAc);
+            $soc += $in * $etaAc / $cap * 100.0; $imp += $in;
+        }
+        return array(min(100.0, max(0.0, $soc)), $imp, $exp, $g, $out, $in);
+    }
+
+    /**
      * Akku-Optimierer (0.102.0, Dietmar 13.11.2026: "Eine feste Preisgrenze darf nicht darueber entscheiden, ob gekauft wird").
      * Dynamische Programmierung ueber den ganzen Preis-Horizont (bis 192 Viertelstunden): je Slot Automatik, Halten
      * oder Netzladen, so dass Netzbezug x Preis - Einspeisung x Verguetung minimal wird. Jede Entscheidung wird gegen
@@ -4635,29 +4676,10 @@ class EMS extends IPSModule
         $last = array();
         for ($i = max($fromSlot, $n - 96); $i < $n; $i++) { $last[] = (float)$prices[$i]; }
         $endVal = min($last); // je kWh, die der Akku am Horizontende noch abgeben kann: erspart spaeter Netzbezug, angesetzt zum guenstigsten Preis
-        $sim = function (int $i, float $s, string $act) use ($prices, $pv, $load, $ctx, $cap, $floor, $etaAc, $etaPv, $feed, $cyc, $disKw): array {
-            $p = (float)$prices[$i];
-            $sur = (float)($pv[$i] ?? 0.0) - (float)($load[$i] ?? $ctx['avgHouseW']);
-            $imp = 0.0; $exp = 0.0; $chgKw = $this->ctxChargeKw($ctx, $s);
-            $room = max(0.0, (100.0 - $s) / 100.0 * $cap);
-            if ($sur > 0.0) {
-                $g = min($sur / 1000.0 * 0.25 * $etaPv, $chgKw * 0.25, $room);
-                $s += $g / $cap * 100.0; $room -= $g;
-                $exp = max(0.0, $sur / 1000.0 * 0.25 - $g / $etaPv);
-            } else {
-                $d = -$sur / 1000.0 * 0.25;
-                if ($act === 'auto' && $s > $floor) {
-                    $out = min($d, $disKw * 0.25, ($s - $floor) / 100.0 * $cap * $etaAc);
-                    $s -= $out / $etaAc / $cap * 100.0; $d -= $out;
-                }
-                $imp += $d;
-            }
-            if ($act === 'charge' && $room > 0.0) {
-                $in = min(min($chgKw * 1000.0, (float)$ctx['maxW']) / 1000.0 * 0.25, $room / $etaAc);
-                $s += $in * $etaAc / $cap * 100.0; $imp += $in;
-                return array(min(100.0, $s), $imp * $p - $exp * $feed + $in * $cyc);
-            }
-            return array(min(100.0, max(0.0, $s)), $imp * $p - $exp * $feed);
+        $ctx['etaAc'] = $etaAc; $ctx['etaPv'] = $etaPv;
+        $sim = function (int $i, float $s, string $act) use ($prices, $pv, $load, $ctx, $feed, $cyc): array {
+            $b = $this->batteryStep($s, (float)($pv[$i] ?? 0.0), (float)($load[$i] ?? $ctx['avgHouseW']), $act, $ctx);
+            return array($b[0], $b[1] * (float)$prices[$i] - $b[2] * $feed + $b[5] * $cyc);
         };
         $interp = function (array $V, float $s) use ($step, $ns): float {
             $x = max(0.0, min(100.0, $s)) / $step; $k = (int)floor($x); if ($k >= $ns) { return $V[$ns]; }
@@ -4694,12 +4716,11 @@ class EMS extends IPSModule
     {
         // SOC aus dem laufenden Plan fortschreiben, nicht aus dem Optimierer (der kennt z. B. Vorentladen nicht) -- Befund Paul
         // 13.11.2026: nach manuellem Netzladen auf 72 % sprang der Plan auf den Optimierer-SOC 41 % zurueck.
+        // Umbau 2a: Physik aus batteryStep(), dieselbe wie im Optimierer.
         $cap = max(0.001, (float)$ctx['capKwh']);
-        $sur = $pvW - (float)($ctx['houseLoadSlots'][$slot % 96] ?? $ctx['avgHouseW']);
-        $pvGain = ($sur > 0.0) ? min($sur / 1000.0 * 0.25 * $this->effPv(), $this->ctxChargeKw($ctx, $soc) * 0.25, (100.0 - $soc) / 100.0 * $cap) : 0.0;
+        $loadW = (float)($ctx['houseLoadSlots'][$slot % 96] ?? $ctx['avgHouseW']);
         if ($o['act'] === 'charge') {
-            $in = min(min($this->ctxChargeKw($ctx, $soc) * 1000.0, (float)$ctx['maxW']) / 1000.0 * 0.25, max(0.0, (100.0 - $soc) / 100.0 * $cap - $pvGain) / $this->effAc());
-            $socNew = min(100.0, $soc + ($pvGain + $in * $this->effAc()) / $cap * 100.0);
+            $socNew = $this->batteryStep($soc, $pvW, $loadW, 'charge', $ctx)[0];
             $missing = max(0.0, ($socNew - $soc) / 100.0 * $cap);
             $o['soc'] = $socNew;
             return array('plan' => array('op' => EMS_OP_NET_CHARGE, 'gw' => GW_MODE_BAT_CHARGE, 'power' => $this->gridChargeXsetW($ctx, $missing, $soc), 'dp' => 1,
@@ -4707,7 +4728,7 @@ class EMS extends IPSModule
                 'price' => $price, 'soc' => (float)$o['soc']), 'soc' => (float)$o['soc']);
         }
         if ($o['act'] === 'hold') {
-            $o['soc'] = min(100.0, $soc + $pvGain / $cap * 100.0);
+            $o['soc'] = $this->batteryStep($soc, $pvW, $loadW, 'hold', $ctx)[0];
             return array('plan' => array('op' => EMS_OP_HOLD, 'gw' => GW_MODE_STANDBY, 'power' => 0, 'dp' => 1,
                 'reason' => sprintf($this->t('Optimizer: house from the grid at %.2f ct, battery energy is kept for more expensive hours'), (float)$price * 100),
                 'price' => $price, 'soc' => (float)$o['soc']), 'soc' => (float)$o['soc']);
@@ -4724,21 +4745,20 @@ class EMS extends IPSModule
         $loadW    = $ctx['houseLoadSlots'][$slot] ?? $ctx['avgHouseW'];
         $surplusW = $pvW - $loadW;
         $floor    = $ctx['socMin'] + $ctx['socReserve'];
+        // Umbau 2a: SOC aus batteryStep(), derselben Physik wie im Optimierer. Die Texte bleiben wie bisher.
+        $socNew = $this->batteryStep((float)$soc, (float)$pvW, (float)$loadW, 'auto', $ctx)[0];
 
         if ($surplusW > 0 && $soc < 99.5) {
-            $gainKwh = min($surplusW * $this->effPv(), $this->ctxChargeKw($ctx, $soc) * 1000.0) / 1000.0 * 0.25; // 0.100.0: Laden aus PV mit eta_pv
-            $soc = min(100.0, $soc + ($gainKwh / max(0.001, $ctx['capKwh']) * 100.0));
+            $soc = $socNew;
             $reason = ($soc >= 99.5)
                 ? sprintf($this->t('Automatic: PV surplus %.0fW, battery reaches full charge'), $surplusW)
                 : sprintf($this->t('Automatic: PV surplus %.0fW charges battery (SOC %.0f%%)'), $surplusW, $soc);
         } elseif ($surplusW > 0) {
+            $soc = $socNew;
             $reason = sprintf($this->t('Automatic: battery full, PV surplus %.0fW is fed in'), $surplusW);
         } else {
-            $deficitW = -$surplusW;
             if ($soc > $floor) {
-                // 0.100.0: Entladen ins Haus kostet eine AC-Wandlung (Akku gibt Last / eta_ac her)
-                $lossKwh = min($deficitW / $this->effAc(), $ctx['dischargeKw'] * 1000.0) / 1000.0 * 0.25;
-                $soc = max($floor, $soc - ($lossKwh / max(0.001, $ctx['capKwh']) * 100.0));
+                $soc = $socNew;
                 $reason = sprintf($this->t('Automatic: house load %.0fW from battery (SOC %.0f%%)'), $loadW, $soc);
             } else {
                 $reason = sprintf($this->t('Automatic: battery at reserve limit (SOC %.0f%%), house load from grid'), $soc);

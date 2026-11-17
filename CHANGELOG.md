@@ -2,6 +2,11 @@
 
 Ältere Versionen: [CHANGELOG-Archiv.md](CHANGELOG-Archiv.md)
 
+## 0.106.0 (2026-11-17)
+- **Umbau Schritt 2a: Akku-Physik an einer Stelle.** Laden aus PV, Laden aus dem Netz, Halten und Entladen wurden bisher an drei Stellen eigen gerechnet: im Optimierer, in den Planzeilen für Laden und Halten und in der Automatik-Planzeile. Jetzt rechnet `batteryStep()` das für alle. Absicherung über einen neuen Referenzlauf mit 36 Optimierer-Läufen und 1.440 Planzeilen (`.tools/golden-planung.json`).
+- **Korrektur an der Entladegrenze:** Die Entladeleistung aus dem InverterHub (`bat_discharge_max_w`) ist die Grenze am Akku. Der Optimierer rechnete sie bisher als Leistung am Haus, die Automatik-Planzeile richtig am Akku. Jetzt gilt überall die Grenze am Akku, beim Haus kommen davon die Wandlungsverluste abgezogen an. Im Referenzlauf ändern sich dadurch 29 von 9.168 Optimierer-Entscheidungen (0,3 %), nur wenn das Haus mehr braucht, als der Akku liefern darf. Alle 1.440 Planzeilen bleiben gleich.
+- Rechenzeit des Optimierers je Plan 39 → 51 ms (gemessen, unkritisch). Die Wirkungsgrade werden dafür einmal je Plan vorab gelesen statt bei jedem Schritt; ohne das wäre es dreimal so langsam gewesen.
+
 ## 0.105.5 (2026-11-17)
 - **Statuszeile „Auto aus dem Netz“ am Solis korrigiert (Live-Befund Paul 17.11.2026):** Bei Grid Rewards bzw. Smart Charging zeigte die Statuszeile „Netzbezug auf 9,9 kW geregelt …, Haus aus PV und Batterie“. Das beschreibt die Netzbezugsregelung (Modus 9) des GoodWe, die es am Solis nicht gibt. Dort hält das EMS den Akku (Speicherbetrieb 17), und das Haus läuft ebenfalls aus dem Netz. Die Zeile sagt das jetzt so. Die Steuerung selbst bleibt unverändert, bei GoodWe auch der Text.
 - **Neu im Formular:** Eine Zeile zeigt, welcher Korrekturschritt die letzte Entscheidung geändert hat (etwa Plausibilitätswächter, Netzladen ohne Wirkung, Einspeise-Überwachung) oder dass sie unverändert aus dem Plan kam.
