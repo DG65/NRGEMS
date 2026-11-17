@@ -54,5 +54,21 @@ echo "Preisschaetzung\n";
 $a = EMS_Planner::anchorEstimate([1 => 0.40], array_fill(0, 60, 0.30), array_fill(0, 60, 0.35));
 ok('Verschiebung um die mittlere Abweichung am bekannten Tag (-5 ct)', abs($a[1] - 0.35) < 1e-9, json_encode($a));
 
+// Historie: Mo 03.11. bis So 16.11.2026, Werktage 30 ct (Mi 12.11. 40 ct), Wochenende 20 ct, je Viertelstunde gleich
+$hist = [];
+for ($d = strtotime('2026-11-03'); $d < strtotime('2026-11-17'); $d += 86400) {
+    $wd = (int)date('N', $d); $v = $wd >= 6 ? 0.20 : (date('Y-m-d', $d) === '2026-11-12' ? 0.40 : 0.30);
+    for ($q = 0; $q < 96; $q++) { $hist[$d + $q * 900] = $v; }
+}
+$wed = strtotime('2026-11-18 08:00'); $sat = strtotime('2026-11-21 08:00');
+$e = EMS_Planner::estimateFromHistory($hist, [$wed, $sat]);
+ok('Werktag: Mittel der letzten 4 Werktage (Mo 17. fehlt, Fr 14., Do 13., Mi 12. 40 ct, Di 11.) = 32,5 ct', abs($e[$wed] - 0.325) < 1e-9, json_encode($e));
+ok('Samstag: nur Wochenendtage (15., 16., 8., 9.) = 20 ct', abs($e[$sat] - 0.20) < 1e-9, json_encode($e));
+ok('Ohne Historie: keine Schaetzung', EMS_Planner::estimateFromHistory([], [$wed]) === []);
+$known = []; for ($q = 0; $q < 96; $q++) { $known[strtotime('2026-11-17') + $q * 900] = 0.25; }
+$a2 = EMS_Planner::estimateAnchored($hist, [$wed], $known);
+$k0 = EMS_Planner::estimateFromHistory($hist, [strtotime('2026-11-17')]);
+ok('Mit Ausrichtung: Schaetzung um (echter Preis 17.11. minus Methode am 17.11.) verschoben', abs($a2[$wed] - ($e[$wed] + 0.25 - $k0[strtotime('2026-11-17')])) < 1e-9, json_encode([$a2, $k0]));
+
 echo "\n" . ($fails === 0 ? "PLANUNGSKERN BESTANDEN" : "$fails PRUEFUNG(EN) VERLETZT") . "\n";
 exit($fails === 0 ? 0 : 1);

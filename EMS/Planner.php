@@ -151,4 +151,36 @@ final class EMS_Planner
         foreach ($est as $t => $v) { $est[$t] = (float)$v + $shift; }
         return $est;
     }
+
+    /**
+     * Preisschaetzung aus der Historie (0.103.0): Mittel derselben Uhrzeit an den letzten vier gleichartigen Tagen (Werktag bzw.
+     * Wochenende, hoechstens 21 Tage zurueck). Nachgerechnet 14.10.-12.11.2026: mittlere Abweichung 7,9 ct, aber 80 % Treffer bei
+     * den billigsten/teuersten vier Stunden -- fuer die Bewertung der Restenergie reicht das, gehandelt wird darauf nie.
+     * @param array<int,float> $hist Startzeit => Preis (EUR/kWh); Rueckgabe Startzeit => Schaetzung, fehlend = nicht im Ergebnis
+     */
+    public static function estimateFromHistory(array $hist, array $slotStarts): array
+    {
+        $we = function (int $t): bool { return (int)date('N', $t) >= 6; };
+        $out = array();
+        foreach ($slotStarts as $t) {
+            $d0 = strtotime(date('Y-m-d', $t)); $off = $t - $d0; $v = array();
+            for ($k = 1; $k <= 21 && count($v) < 4; $k++) {
+                $d = strtotime('-' . $k . ' days', $d0);
+                if ($we($d) !== $we($d0)) { continue; }
+                if (isset($hist[$d + $off])) { $v[] = $hist[$d + $off]; }
+            }
+            if (!empty($v)) { $out[$t] = array_sum($v) / count($v); }
+        }
+        return $out;
+    }
+
+    /**
+     * Preisschaetzung mit Niveau (0.105.3): Tagesverlauf aus estimateFromHistory(), verschoben um die mittlere Abweichung, die
+     * dieselbe Methode am letzten bekannten Tag gegenueber den echten Preisen hat (anchorEstimate()).
+     */
+    public static function estimateAnchored(array $hist, array $needStarts, array $knownActual): array
+    {
+        $est = self::estimateFromHistory($hist, $needStarts);
+        return self::anchorEstimate($est, $knownActual, self::estimateFromHistory($hist, array_keys($knownActual)));
+    }
 }

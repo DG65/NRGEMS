@@ -3986,10 +3986,10 @@ check('Grosser Akku (114 kWh, voll): tagsueber bei 33 ct wird entladen statt geh
     $dayHold === 0, json_encode([$dayHold, $oP1[60]['soc'] ?? null, $oP1[95]['soc'] ?? null]));
 check('Grosser Akku: auch mit der Aenderung kein Laden auf geschaetzte Preise im Plan',
     empty(array_filter($oP1, fn($x, $i) => $i >= 96 && $x['act'] === 'charge', ARRAY_FILTER_USE_BOTH)));
-$an = call($ems, 'anchorEstimate', [[1000 => 0.40, 1900 => 0.45], array_combine(range(0, 59), array_fill(0, 60, 0.30)), array_combine(range(0, 59), array_fill(0, 60, 0.354))]);
+$an = EMS_Planner::anchorEstimate(...[[1000 => 0.40, 1900 => 0.45], array_combine(range(0, 59), array_fill(0, 60, 0.30)), array_combine(range(0, 59), array_fill(0, 60, 0.354))]);
 check('Schaetzung wird am bekannten Tag ausgerichtet: echte Preise 5,4 ct unter der Methode -> Schaetzung 5,4 ct tiefer, Verlauf bleibt',
     abs($an[1000] - 0.346) < 1e-9 && abs($an[1900] - 0.396) < 1e-9, json_encode($an));
-$an2 = call($ems, 'anchorEstimate', [[1000 => 0.40], array_fill(0, 20, 0.30), array_fill(0, 20, 0.354)]);
+$an2 = EMS_Planner::anchorEstimate(...[[1000 => 0.40], array_fill(0, 20, 0.30), array_fill(0, 20, 0.354)]);
 check('Zu wenig Vergleichs-Slots (< 48): Schaetzung unveraendert', $an2 === [1000 => 0.40]);
 check('Optimierer: ohne Preise leer', call($ems, 'optimizeBattery', [[], $pvZ0, $ld3, 0, 50.0, $ctxA]) === []);
 // 5) Schalter aus

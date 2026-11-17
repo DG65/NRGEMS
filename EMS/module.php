@@ -4559,39 +4559,32 @@ class EMS extends IPSModule
     }
 
     /**
-     * Preisschaetzung fuer Viertelstunden ohne veroeffentlichten Preis (0.103.0): Mittel derselben Uhrzeit an den letzten
-     * vier gleichartigen Tagen (Werktag bzw. Wochenende) aus dem Bezugspreis-Archiv. Nachgerechnet 14.10.-12.11.2026:
-     * mittlere Abweichung 7,9 ct, aber 80 % Treffer bei den billigsten/teuersten vier Stunden -- fuer die Bewertung der
-     * Restenergie reicht das, gehandelt wird darauf nie. Rueckgabe EUR/kWh je Startzeit, fehlend = nicht im Ergebnis.
+     * Bezugspreise aus dem Archiv fuer die Preisschaetzung (EUR/kWh je Viertelstunden-Start), ab 22 Tage vor $fromTs bis heute.
+     * Leer bei Fehler. Die Schaetzung selbst rechnet EMS_Planner (Umbau 2c Schritt 1).
      */
-    private function estimatePrices(array $slotStarts): array
+    private function priceHistoryForEstimate(int $fromTs): array
     {
-        if (empty($slotStarts)) { return array(); }
-        $we = function (int $t): bool { return (int)date('N', $t) >= 6; };
-        $from = strtotime('-22 days', strtotime(date('Y-m-d', min($slotStarts))));
+        $from = strtotime('-22 days', strtotime(date('Y-m-d', $fromTs)));
         $hist = array();
         try {
             $h = $this->GetPurchasePriceHistory($from, strtotime('tomorrow'));
             foreach ((array)($h['slots'] ?? array()) as $sl) { if ($sl['priceCt'] !== null) { $hist[(int)$sl['start']] = (float)$sl['priceCt'] / 100.0; } }
         } catch (Throwable $e) { return array(); }
-        $out = array();
-        foreach ($slotStarts as $t) {
-            $d0 = strtotime(date('Y-m-d', $t)); $off = $t - $d0; $v = array();
-            for ($k = 1; $k <= 21 && count($v) < 4; $k++) {
-                $d = strtotime('-' . $k . ' days', $d0);
-                if ($we($d) !== $we($d0)) { continue; }
-                if (isset($hist[$d + $off])) { $v[] = $hist[$d + $off]; }
-            }
-            if (!empty($v)) { $out[$t] = array_sum($v) / count($v); }
-        }
-        return $out;
+        return $hist;
     }
 
-    /** Preisschaetzung am bekannten Tag ausrichten -- Rechnung in EMS_Planner::anchorEstimate() (Umbau 2c). */
-    private function anchorEstimate(array $est, array $knownActual, array $knownEst): array
+    /**
+     * Preisschaetzung fuer die Viertelstunden hinter dem letzten bekannten Preis, am Niveau des letzten bekannten Tages
+     * ausgerichtet (0.105.3, seit Umbau 2c ein Schritt statt Schaetzung plus Nachkorrektur; das Archiv wird einmal gelesen).
+     * @param int[] $needStarts Startzeiten ohne Preis; @param array<int,float> $knownActual Startzeit => echter Preis (EUR/kWh)
+     */
+    private function estimatePricesAnchored(array $needStarts, array $knownActual): array
     {
-        return EMS_Planner::anchorEstimate($est, $knownActual, $knownEst);
+        if (empty($needStarts)) { return array(); }
+        $from = empty($knownActual) ? min($needStarts) : min(min($needStarts), min(array_keys($knownActual)));
+        return EMS_Planner::estimateAnchored($this->priceHistoryForEstimate($from), $needStarts, $knownActual);
     }
+
 
     /** Akku-Physik einer Viertelstunde -- Rechnung in EMS_Planner::batteryStep() (Umbau 2c), Rueckgabe dort beschrieben. */
     private function batteryStep(float $soc, float $pvW, float $loadW, string $act, array $ctx): array
@@ -6217,10 +6210,9 @@ class EMS extends IPSModule
             $known = 0; for ($i = 0; $i < 192; $i++) { if ($price192[$i] !== null) { $known = $i + 1; } else { break; } }
             $d0 = strtotime('today'); $need = array();
             for ($i = $known; $i < $known + 96; $i++) { $need[$i] = $d0 + $i * 900; }
-            $est = $this->estimatePrices(array_values($need));
-            // 0.105.3: Niveau der Schaetzung am letzten bekannten Tag ausrichten (Befund Paul 17.11.2026)
+            // Schaetzung am Niveau des letzten bekannten Tages ausgerichtet (0.105.3, Befund Paul 17.11.2026)
             $kn = array(); for ($i = max(0, $known - 96); $i < $known; $i++) { $kn[$d0 + $i * 900] = (float)$price192[$i]; }
-            $est = $this->anchorEstimate($est, $kn, $this->estimatePrices(array_keys($kn)));
+            $est = $this->estimatePricesAnchored(array_values($need), $kn);
             $lfcX = $this->getLfcInstance(); $loadD2 = ($lfcX > 0) ? $this->getLoadForecastSlots($lfcX, 2) : array();
             foreach ($need as $i => $ts) {
                 if (!isset($est[$ts])) { break; }
