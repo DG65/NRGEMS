@@ -2,6 +2,12 @@
 
 Ältere Versionen: [CHANGELOG-Archiv.md](CHANGELOG-Archiv.md)
 
+## 0.105.4 (2026-11-17)
+- **Umbau Schritt 1 (Code-Bestandsaufnahme 17.11.2026), Verhalten unverändert:** Die Schritte nach der Steuerentscheidung (Smart-Charging-Netzkauf, Mittagsspitze, Hinweis bei negativem Börsenpreis, Plausibilitätswächter, Netzladen ohne Wirkung, Einspeise-Überwachung) stehen jetzt als feste Liste mit Vorrang in `decisionSteps()`, statt als sechs Einzelaufrufe in `Update()`. Später in der Liste bedeutet höheren Vorrang, die Sicherheitsprüfungen stehen am Ende. Reihenfolge und Wirkung sind gleich geblieben. Neu: Das EMS merkt sich, welcher Schritt die Entscheidung zuletzt geändert hat (Attribut `LastDecisionSteps`, Debug-Ausgabe „Schritte“).
+- Neue Prüfungen für Stellen, die bisher ungetestet waren: GoodWe-Totmann (Reaktion auf 255, Flanke, Sicherheits-Stopp, Pendel-Bremse) und „Auto aus dem Netz“ (Modus 9 oder 2 je nach Schalter, Autoleistung, Reserve, voller Akku). Dazu die Reihenfolge der Schritte. Mutationsproben an allen drei Stellen schlagen wie erwartet an.
+- Prüfstand: Eine Hilfsfunktion erzeugte 8602 PHP-Warnungen und verdeckte damit echte Warnungen. Jetzt sind es 0. Die einzige echte Warnung darunter (Lastverteilung ohne Begründungstext) ist behoben.
+- `date` in `library.json` wird wieder gepflegt (SUITE.md Release-Regel Punkt 8).
+
 ## 0.105.3 (2026-11-17)
 - **Preisschätzung am bekannten Tag ausgerichtet (Befund Paul 17.11.2026):** Der Optimierer plant seit 0.103.0 einen Tag über die bekannten Preise hinaus. Geschätzt wird dieser Tag als Mittel der letzten vier gleichartigen Tage. Bei Paul lag diese Schätzung für den 19.11. bei 37–46 ct, auch nachts, und damit im Schnitt 5,4 ct über den echten Preisen des 18.11. Der Optimierer hielt deshalb den 114-kWh-Akku am 18.11. bei 31–36 ct den ganzen Tag voll und lud mittags sogar nach. Um Mitternacht hätte er noch 78 % gehabt. Jetzt wird die Schätzung um die mittlere Abweichung verschoben, die dieselbe Methode am letzten bekannten Tag gegenüber den echten Preisen hat. Der Tagesverlauf bleibt, nur das Niveau passt. Nachgerechnet mit Pauls echten Daten: Entladen ab 07 Uhr, Halten nur zur günstigsten Mittagszeit, um Mitternacht 41 % statt 79 %. Bei weniger als 48 vergleichbaren Viertelstunden bleibt die Schätzung unverändert.
 - Vier neue Prüfungen: Verschiebung, zu wenig Vergleichswerte, großer Akku entlädt tagsüber bei billigem Nachladen, kein Laden auf geschätzte Preise. Die Mutationsprobe an der Verschiebung schlägt wie erwartet an.
