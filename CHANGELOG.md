@@ -2,6 +2,11 @@
 
 Ältere Versionen: [CHANGELOG-Archiv.md](CHANGELOG-Archiv.md)
 
+## 0.105.5 (2026-11-17)
+- **Statuszeile „Auto aus dem Netz“ am Solis korrigiert (Live-Befund Paul 17.11.2026):** Bei Grid Rewards bzw. Smart Charging zeigte die Statuszeile „Netzbezug auf 9,9 kW geregelt …, Haus aus PV und Batterie“. Das beschreibt die Netzbezugsregelung (Modus 9) des GoodWe, die es am Solis nicht gibt. Dort hält das EMS den Akku (Speicherbetrieb 17), und das Haus läuft ebenfalls aus dem Netz. Die Zeile sagt das jetzt so. Die Steuerung selbst bleibt unverändert, bei GoodWe auch der Text.
+- **Neu im Formular:** Eine Zeile zeigt, welcher Korrekturschritt die letzte Entscheidung geändert hat (etwa Plausibilitätswächter, Netzladen ohne Wirkung, Einspeise-Überwachung) oder dass sie unverändert aus dem Plan kam.
+- Vier neue Prüfungen. Die Mutationsprobe an der Solis-Erkennung schlägt wie erwartet an.
+
 ## 0.105.4 (2026-11-17)
 - **Umbau Schritt 1 (Code-Bestandsaufnahme 17.11.2026), Verhalten unverändert:** Die Schritte nach der Steuerentscheidung (Smart-Charging-Netzkauf, Mittagsspitze, Hinweis bei negativem Börsenpreis, Plausibilitätswächter, Netzladen ohne Wirkung, Einspeise-Überwachung) stehen jetzt als feste Liste mit Vorrang in `decisionSteps()`, statt als sechs Einzelaufrufe in `Update()`. Später in der Liste bedeutet höheren Vorrang, die Sicherheitsprüfungen stehen am Ende. Reihenfolge und Wirkung sind gleich geblieben. Neu: Das EMS merkt sich, welcher Schritt die Entscheidung zuletzt geändert hat (Attribut `LastDecisionSteps`, Debug-Ausgabe „Schritte“).
 - Neue Prüfungen für Stellen, die bisher ungetestet waren: GoodWe-Totmann (Reaktion auf 255, Flanke, Sicherheits-Stopp, Pendel-Bremse) und „Auto aus dem Netz“ (Modus 9 oder 2 je nach Schalter, Autoleistung, Reserve, voller Akku). Dazu die Reihenfolge der Schritte. Mutationsproben an allen drei Stellen schlagen wie erwartet an.

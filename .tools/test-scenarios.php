@@ -4346,6 +4346,23 @@ $r = call($ems, 'runDecisionSteps', [$dP, state(['bat_soc' => 70.0, 'pv_total_w'
 check('Plausibilitaetswaechter greift: Rueckfall in WR-Eigenregelung, Schritt "plausibility" protokolliert',
     isNativeAuto($r) && !empty($r['force']) && in_array('plausibility', json_decode($ems->ReadAttributeString('LastDecisionSteps'), true), true), json_encode([$r['reason'] ?? '', $ems->ReadAttributeString('LastDecisionSteps')]));
 
+echo "\n8aq) 0.105.5: Statuszeile Auto aus dem Netz am Solis, Formularzeile letzter Korrekturschritt\n";
+$ems = freshEms();
+prop('WB_Smart_HouseFromBattery', true); prop('BAT_SOC_Min', 10); prop('BAT_SOC_Reserve_Backup', 0);
+obj(420, 1, 'Solis-Test', 0); vari('Zwangsmodus', 420, 'ctl_force_mode', 0, 1); vari('Zwangsleistung', 420, 'ctl_force_w', 0, 1);
+attr('PartnerCache', json_encode(['inverterhub' => [['instanceID' => 420, 'controlAuthority' => 'ems', 'controllable' => true]]]));
+$r = call($ems, 'carFromGridSetting', [10100.0, ['bat_soc' => 72.0, 'pv_total_w' => 0.0, 'house_pow_w' => 1700.0, 'grid_total_w' => -12100.0, 'bat_pow_w' => 20.0]]);
+check('Solis: Text nennt gehaltenen Akku und Haus aus dem Netz (nicht "Haus aus PV und Batterie"), Modus bleibt 9 fuer setSolisMode',
+    $r['gw_mode'] === GW_MODE_BUY && strpos($r['text'], 'Akku wird gehalten') !== false && strpos($r['text'], 'Haus ebenfalls aus dem Netz') !== false, json_encode($r, JSON_UNESCAPED_UNICODE));
+attr('PartnerCache', json_encode(['inverterhub' => [['instanceID' => 410, 'controlAuthority' => 'ems', 'controllable' => true]]]));
+$r = call($ems, 'carFromGridSetting', [10100.0, ['bat_soc' => 72.0, 'pv_total_w' => 0.0, 'house_pow_w' => 1700.0, 'grid_total_w' => -12100.0, 'bat_pow_w' => 20.0]]);
+check('GoodWe (ctl_ems_mode vorhanden): Text unveraendert "Haus aus PV und Batterie"', strpos($r['text'], 'Haus aus PV und Batterie') !== false, json_encode($r, JSON_UNESCAPED_UNICODE));
+attr('PartnerCache', '');
+attr('LastDecisionSteps', '[]');
+check('Formularzeile ohne Eingriff', strpos(call($ems, 'decisionStepsStatusLine'), 'unverändert aus dem Plan') !== false);
+attr('LastDecisionSteps', json_encode(['plausibility', 'export_overlap']));
+check('Formularzeile nennt die eingreifenden Schritte in Reihenfolge', call($ems, 'decisionStepsStatusLine') === 'Letzte Entscheidung geändert durch: Plausibilitätswächter → Einspeise-Überwachung', call($ems, 'decisionStepsStatusLine'));
+
 // ===========================================================================
 if (getenv('EMS_DUMP')) { file_put_contents(getenv('EMS_DUMP'), implode("\n", $GLOBALS['DUMP'] ?? []) . "\n"); }
 echo "\n" . ($fails === 0 ? "ALLE SZENARIEN BESTANDEN" : "$fails SZENARIO(S) VERLETZT") . "\n\n";

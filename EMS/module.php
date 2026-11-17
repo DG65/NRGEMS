@@ -952,6 +952,11 @@ class EMS extends IPSModule
                     'caption' => $this->getBoostStatusLine(),
                 ),
                 array(
+                    'type'    => 'Label',
+                    'name'    => 'DecisionStepsLabel',
+                    'caption' => $this->decisionStepsStatusLine(),
+                ),
+                array(
                     'type'    => 'ExpansionPanel',
                     'caption' => 'Details per partner module type',
                     'expanded' => false,
@@ -1665,6 +1670,19 @@ class EMS extends IPSModule
             array('charge_no_effect',        'Sicherheit',         'applyChargeNoEffectGuard'),
             array('export_overlap',          'Sicherheit',         'applyExportOverlapGuard'),
         );
+    }
+
+    /** Formularzeile: welcher nachgelagerte Schritt die letzte Entscheidung geaendert hat (0.105.5). */
+    private function decisionStepsStatusLine(): string
+    {
+        $names = array(
+            'smart_charging_grid_buy' => $this->t('Smart Charging grid purchase'), 'grid_service_b1' => $this->t('midday peak (grid-friendly)'),
+            'negative_price_note' => $this->t('negative exchange price'), 'plausibility' => $this->t('plausibility monitor'),
+            'charge_no_effect' => $this->t('grid charging without effect'), 'export_overlap' => $this->t('feed-in monitor'),
+        );
+        $trail = json_decode($this->ReadAttributeString('LastDecisionSteps'), true);
+        if (!is_array($trail) || empty($trail)) { return $this->t('Last decision: taken over unchanged from the plan (no correction step intervened)'); }
+        return sprintf($this->t('Last decision changed by: %s'), implode(' → ', array_map(function ($k) use ($names) { return $names[$k] ?? $k; }, $trail)));
     }
 
     /** Fuehrt decisionSteps() aus und merkt, welcher Schritt die Stellgroessen geaendert hat (Attribut LastDecisionSteps, Debug). */
@@ -9953,6 +9971,12 @@ class EMS extends IPSModule
             }
         }
         if ($why === '') {
+            // Solis kennt keine Netzbezugsregelung (Modus 9): setSolisMode() haelt dort den Akku (Speicherbetrieb 17), das Haus
+            // laeuft also ebenfalls aus dem Netz (Live-Befund Paul 17.11.2026: Statuszeile nannte "Haus aus PV und Batterie").
+            if ($this->inverterIsSolis()) {
+                return array('gw_mode' => GW_MODE_BUY, 'gw_power_w' => $xset, 'gw_enable' => true,
+                    'text' => sprintf($this->t('car charging at %.1f kW from the grid, battery is held (Solis has no grid import control), house also from the grid'), $carW / 1000.0));
+            }
             return array('gw_mode' => GW_MODE_BUY, 'gw_power_w' => $xset, 'gw_enable' => true,
                 'text' => sprintf($this->t('car charging at %.1f kW, grid import controlled to %.1f kW (car from the grid), house from PV and battery'), $carW / 1000.0, $xset / 1000.0));
         }
@@ -10356,6 +10380,14 @@ class EMS extends IPSModule
     }
 
     /** Hat dieser InverterHub die Solis-Steuerpunkte (Zwangsmodus/-leistung) und KEINE GoodWe-EMS-Stellglieder? */
+    /** Laeuft der Akku-Wechselrichter ueber den Solis-Weg (kein ctl_ems_mode, Solis-Treiber)? Wie die Weiche in applyDecision(). */
+    private function inverterIsSolis(): bool
+    {
+        $inv = $this->getInverterEntry();
+        $iid = (int)($inv['instanceID'] ?? 0);
+        return $iid > 0 && $this->findChildVariableIdByIdent($iid, 'ctl_ems_mode') <= 0 && $this->isSolisDriver($iid);
+    }
+
     private function isSolisDriver(int $iid): bool
     {
         return $this->findChildVariableIdByIdent($iid, 'ctl_force_mode') > 0
