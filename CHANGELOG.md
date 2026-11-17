@@ -2,6 +2,10 @@
 
 Ältere Versionen: [CHANGELOG-Archiv.md](CHANGELOG-Archiv.md)
 
+## 0.105.2 (2026-11-17)
+- **Schreib-Überwachung auch für Wallboxen:** Steuert das EMS Wallboxen, prüft es jetzt auch die Wallboxen über ChargerHub (ab 0.14.0-beta.1) auf hängende Schreibbefehle (Variablen `ctl_write_*`, SUITE.md Stolperstein 31). Kommt länger als 3 min kein Befehl an, steht das im Log und kommt als Push mit dem betroffenen Gerät („Wallbox 1“, „Wechselrichter“). Jedes Gerät wird getrennt gemeldet und entwarnt. Ohne aktive Wallbox-Steuerung werden Wallboxen nicht überwacht. Wallboxen über OCPPHub und EEBUS bieten diese Variablen bisher nicht an.
+- Zwei neue Prüfungen. Die Mutationsprobe am Wallbox-Zweig schlägt wie erwartet an.
+
 ## 0.105.1 (2026-11-17)
 - **Benachrichtigungen an Kachel-Visualisierungen (Live-Fund Paul 17.11.2026):** Die Auswahlliste unter „🔔 Benachrichtigungen“ zeigte nur klassische WebFront-Instanzen. Wer nur eine Kachel-Visualisierung hat, konnte nichts auswählen und bekam keine Push-Nachrichten. Die Liste zeigt jetzt beide Arten. Auch die Störungsmeldung des Verbunds geht jetzt an beide Oberflächen, bisher ging sie nur an WebFront. Eine neue Prüfung.
 

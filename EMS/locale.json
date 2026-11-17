@@ -1017,12 +1017,14 @@
             "Battery optimizer: plans charging, holding and discharging together over the whole price horizon (today and tomorrow) and compares every quarter-hour with the price at which the energy would otherwise have to be bought later. No fixed price threshold decides about buying. Replaces night window, demand safeguard and rank simulation; manual entries, pre-discharge and §14a keep priority. Off = previous threshold logic.": "Akku-Optimierer: plant Laden, Halten und Entladen gemeinsam über den ganzen Preis-Horizont (heute und morgen) und vergleicht jede Viertelstunde mit dem Preis, zu dem die Energie sonst später eingekauft werden müsste. Keine feste Preisgrenze entscheidet über den Einkauf. Ersetzt Nachtfenster, Bedarfsabsicherung und Rang-Simulation; manuelle Einträge, Vorentladen und §14a behalten Vorrang. Aus = bisherige Schwellen-Logik.",
             "EMS: grid charging failed": "EMS: Netzladen ohne Wirkung",
             "The battery charges only %.0f W at setpoint %.0f W (SOC %.0f %%). Inverter self-regulation for 20 min.": "Die Batterie lädt nur %.0f W bei Sollwert %.0f W (SOC %.0f %%). Wechselrichter regelt 20 min selbst.",
-            "EMS: inverter OK again": "EMS: Wechselrichter wieder OK",
-            "Commands reach the inverter again.": "Befehle kommen wieder am Wechselrichter an.",
-            "EMS: inverter not reachable": "EMS: WR nicht erreichbar",
-            "Commands have not reached the inverter for %d min. %s": "Befehle kommen seit %d min nicht am Wechselrichter an. %s",
             "yes, %s": "ja, %s",
-            "no": "nein"
+            "no": "nein",
+            "inverter": "Wechselrichter",
+            "wallbox %d": "Wallbox %d",
+            "EMS: device OK again": "EMS: Gerät wieder OK",
+            "Commands reach the %s again.": "Befehle kommen wieder an (%s).",
+            "EMS: device not reachable": "EMS: Gerät nicht erreichbar",
+            "Commands have not reached the %s for %d min. %s": "Befehle kommen nicht an (%s), seit %d min. %s"
         }
     }
 }

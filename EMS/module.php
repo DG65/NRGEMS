@@ -702,8 +702,7 @@ class EMS extends IPSModule
         $this->RegisterAttributeString('NoControlReason', ''); // leer = EMS kann schreiben; sonst Grund, warum es nur beobachtet
         $this->RegisterAttributeInteger('ChargeNoEffectSince', 0);
         // 0.105.0: Schreib-Ueberwachung (Vorfall Paul 15.11.2026) und Zyklus-Luecken-Protokoll
-        $this->RegisterAttributeInteger('WriteStallSince', 0);
-        $this->RegisterAttributeBoolean('WriteStallAlarm', false);
+        $this->RegisterAttributeString('WriteStallState', '{}');
         $this->RegisterAttributeInteger('LastCycleTs', 0);
         $this->RegisterAttributeInteger('ChargeNoEffectHoldUntil', 0);
         $this->RegisterAttributeString('DryRunLast', '');
@@ -1629,7 +1628,7 @@ class EMS extends IPSModule
             $decision = $this->applyChargeNoEffectGuard($decision, $state);
             $decision = $this->applyExportOverlapGuard($decision, $state);
             $this->applyDecision($decision, $state);
-            try { $this->checkInverterWriteStall(); } catch (Throwable $e) { $this->emsLog(EMS_LOG_VERBOSE, 'Schreib-Ueberwachung: ' . $e->getMessage()); }
+            try { $this->checkWriteStalls(); } catch (Throwable $e) { $this->emsLog(EMS_LOG_VERBOSE, 'Schreib-Ueberwachung: ' . $e->getMessage()); }
             // WP-Zusatzlauf: rein additive Stellgroesse nach der Batterie-/WR-Entscheidung, beeinflusst sie nie
             try { $this->applyHeatpumpOptionalRun($state); } catch (Throwable $e) { $this->emsLog(EMS_LOG_BASIC, 'WP-Zusatzlauf-Fehler: ' . $e->getMessage()); }
             $this->trackSpecialEvents($state);
@@ -2180,51 +2179,74 @@ class EMS extends IPSModule
 
     /**
      * Schreib-Ueberwachung (Vorfall Paul 15.11.2026: 30 Schreibfehler am Solis, das EMS hielt den Plan fuer
-     * ausgefuehrt). Liest die InverterHub-Variablen ctl_write_fail_time/ctl_write_ok_time (ab InverterHub
-     * 0.86.0). Haengt das Schreiben laenger als 3 min (Solis vergisst einen Befehl nach 182 s), steht es im
-     * Log und kommt als Push; die Erholung wird einmal gemeldet. Ohne diese Variablen: nichts.
+     * ausgefuehrt). Liest die Variablen ctl_write_fail_time/ctl_write_ok_time (SUITE.md Stolperstein 31) am
+     * Wechselrichter (InverterHub ab 0.86.0) und, wenn das EMS Wallboxen steuert, an den ChargerHub-Wallboxen
+     * (ab 0.14.0-beta.1, EMS 0.105.2). Haengt das Schreiben laenger als 3 min (Solis vergisst einen Befehl
+     * nach 182 s), steht es im Log und kommt als Push; die Erholung wird einmal gemeldet. Ohne Variablen: still.
+     * Rueckgabe je Instanz 'alarm'/'recovered', nur fuer Instanzen mit Zustandswechsel.
      */
-    private function checkInverterWriteStall(?int $now = null): ?string
+    private function checkWriteStalls(?int $now = null): array
     {
         $now = $now ?? time();
+        $targets = array();
         $inv = $this->getInverterEntry();
-        $iid = (int)($inv['instanceID'] ?? 0);
-        if ($iid <= 0) {
-            return null;
+        if ((int)($inv['instanceID'] ?? 0) > 0) {
+            $targets[(int)$inv['instanceID']] = $this->t('inverter');
         }
+        if ($this->ReadPropertyBoolean('WB_Active')) {
+            for ($n = 1; $n <= min(2, max(1, $this->ReadPropertyInteger('WB_Count'))); $n++) {
+                $c = $this->getChargerEntry($n);
+                if (($c['source'] ?? '') === 'chargerhub' && (int)($c['instanceID'] ?? 0) > 0) {
+                    $targets[(int)$c['instanceID']] = sprintf($this->t('wallbox %d'), $n);
+                }
+            }
+        }
+        $state = json_decode($this->ReadAttributeString('WriteStallState'), true);
+        $state = is_array($state) ? $state : array();
+        $out = array();
+        foreach ($targets as $iid => $label) {
+            $r = $this->checkWriteStallOne($iid, $label, $now, $state);
+            if ($r !== null) { $out[$iid] = $r; }
+        }
+        $state = array_intersect_key($state, array_flip(array_map('strval', array_keys($targets))));
+        $this->WriteAttributeString('WriteStallState', json_encode((object)$state));
+        return $out;
+    }
+
+    private function checkWriteStallOne(int $iid, string $label, int $now, array &$state): ?string
+    {
         $failVar = $this->findChildVariableIdByIdent($iid, 'ctl_write_fail_time');
         $okVar   = $this->findChildVariableIdByIdent($iid, 'ctl_write_ok_time');
         if ($failVar <= 0 || $okVar <= 0) {
             return null;
         }
+        $key  = (string)$iid;
         $fail = (int)GetValue($failVar);
         $ok   = (int)GetValue($okVar);
-        $alarmed = $this->ReadAttributeBoolean('WriteStallAlarm');
+        $st   = $state[$key] ?? array('since' => 0, 'alarm' => false);
         if ($fail <= $ok) {
-            if ($this->ReadAttributeInteger('WriteStallSince') > 0) {
-                $this->WriteAttributeInteger('WriteStallSince', 0);
-            }
-            if ($alarmed) {
-                $this->WriteAttributeBoolean('WriteStallAlarm', false);
-                $this->emsLog(EMS_LOG_BASIC, 'Schreiben an den Wechselrichter klappt wieder');
-                $this->notifyUser($this->t('EMS: inverter OK again'), $this->t('Commands reach the inverter again.'), 'info');
+            $state[$key] = array('since' => 0, 'alarm' => false);
+            if (!empty($st['alarm'])) {
+                $this->emsLog(EMS_LOG_BASIC, 'Schreiben klappt wieder: ' . $label . ' (#' . $iid . ')');
+                $this->notifyUser($this->t('EMS: device OK again'), sprintf($this->t('Commands reach the %s again.'), $label), 'info');
                 return 'recovered';
             }
             return null;
         }
-        $since = $this->ReadAttributeInteger('WriteStallSince');
-        if ($since <= 0) {
-            $since = max($ok, $fail);
-            $this->WriteAttributeInteger('WriteStallSince', $since);
+        if ((int)$st['since'] <= 0) {
+            $st['since'] = max($ok, $fail);
         }
-        if ($alarmed || ($now - $since) < 180) {
+        $state[$key] = $st;
+        if (!empty($st['alarm']) || ($now - (int)$st['since']) < 180) {
             return null;
         }
         $textVar = $this->findChildVariableIdByIdent($iid, 'ctl_write_fail_text');
         $why = $textVar > 0 ? (string)GetValue($textVar) : '';
-        $this->WriteAttributeBoolean('WriteStallAlarm', true);
-        $this->emsLog(EMS_LOG_BASIC, sprintf('Schreiben an den Wechselrichter haengt seit %d min: %s', (int)round(($now - $since) / 60), $why));
-        $this->notifyUser($this->t('EMS: inverter not reachable'), sprintf($this->t('Commands have not reached the inverter for %d min. %s'), (int)round(($now - $since) / 60), $why), 'alert');
+        $st['alarm'] = true;
+        $state[$key] = $st;
+        $min = (int)round(($now - (int)$st['since']) / 60);
+        $this->emsLog(EMS_LOG_BASIC, sprintf('Schreiben haengt seit %d min: %s (#%d): %s', $min, $label, $iid, $why));
+        $this->notifyUser($this->t('EMS: device not reachable'), sprintf($this->t('Commands have not reached the %s for %d min. %s'), $label, $min, $why), 'alert');
         return 'alarm';
     }
 

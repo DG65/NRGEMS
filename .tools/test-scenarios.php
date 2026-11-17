@@ -4227,7 +4227,7 @@ foreach ([71001, 71002, 71003, 71004, 71005, 71006] as $i) { unset($GLOBALS['INS
 }
 
 echo "\n8an) Schreib-Ueberwachung, Zyklus-Luecke, Push bei Netzladen ohne Wirkung (0.105.0, Vorfall Paul 15.11.2026)\n";
-if (method_exists('EMS', 'checkInverterWriteStall')) {
+if (method_exists('EMS', 'checkWriteStalls')) {
 $ems = freshEms();
 attr('PartnerCache', json_encode(['inverterhub' => [['instanceID' => IHUB_IID, 'controlAuthority' => 'ems', 'controllable' => true]]]));
 $GLOBALS['INSTMOD'][990] = GUID_WEBFRONT; prop('NOTIFY_Visualization_ID', 990);
@@ -4236,16 +4236,28 @@ $oT = vari('ok_time', IHUB_IID, 'ctl_write_ok_time', 0, 1);
 vari('fail_text', IHUB_IID, 'ctl_write_fail_text', 'keine Verbindung (110)', 3);
 $now = 1795000000; $GLOBALS['PUSH'] = [];
 $GLOBALS['VAL'][$oT] = $now - 30; $GLOBALS['VAL'][$fT] = $now - 600;
-check('Erfolg nach dem letzten Fehler = kein Alarm', call($ems, 'checkInverterWriteStall', [$now]) === null && empty($GLOBALS['PUSH']));
+check('Erfolg nach dem letzten Fehler = kein Alarm', call($ems, 'checkWriteStalls', [$now]) === [] && empty($GLOBALS['PUSH']));
 $GLOBALS['VAL'][$oT] = $now - 300; $GLOBALS['VAL'][$fT] = $now - 120;
-check('Fehler juenger als Erfolg, erst seit 2 min = noch kein Alarm', call($ems, 'checkInverterWriteStall', [$now]) === null && empty($GLOBALS['PUSH']));
-check('Nach 3 min ununterbrochen = Alarm mit Push und Fehlergrund', call($ems, 'checkInverterWriteStall', [$now + 70]) === 'alarm' && count($GLOBALS['PUSH']) === 1 && strpos($GLOBALS['PUSH'][0][1], '110') !== false, json_encode($GLOBALS['PUSH']));
-check('Alarm kommt nur einmal', call($ems, 'checkInverterWriteStall', [$now + 400]) === null && count($GLOBALS['PUSH']) === 1);
+check('Fehler juenger als Erfolg, erst seit 2 min = noch kein Alarm', call($ems, 'checkWriteStalls', [$now]) === [] && empty($GLOBALS['PUSH']));
+check('Nach 3 min ununterbrochen = Alarm mit Push und Fehlergrund', call($ems, 'checkWriteStalls', [$now + 70]) === [IHUB_IID => 'alarm'] && count($GLOBALS['PUSH']) === 1 && strpos($GLOBALS['PUSH'][0][1], '110') !== false && strpos($GLOBALS['PUSH'][0][1], 'Wechselrichter') !== false, json_encode($GLOBALS['PUSH']));
+check('Alarm kommt nur einmal', call($ems, 'checkWriteStalls', [$now + 400]) === [] && count($GLOBALS['PUSH']) === 1);
 $GLOBALS['VAL'][$oT] = $now + 410;
-check('Erholung wird einmal gemeldet', call($ems, 'checkInverterWriteStall', [$now + 420]) === 'recovered' && count($GLOBALS['PUSH']) === 2 && call($ems, 'checkInverterWriteStall', [$now + 450]) === null && count($GLOBALS['PUSH']) === 2);
+check('Erholung wird einmal gemeldet', call($ems, 'checkWriteStalls', [$now + 420]) === [IHUB_IID => 'recovered'] && count($GLOBALS['PUSH']) === 2 && call($ems, 'checkWriteStalls', [$now + 450]) === [] && count($GLOBALS['PUSH']) === 2);
 $GLOBALS['INSTMOD'][991] = '{B5B875BB-9B76-45FD-4E67-2607E45B3AC4}'; prop('NOTIFY_Visualization_ID', 991);
-$GLOBALS['VAL'][$fT] = $now + 500; call($ems, 'checkInverterWriteStall', [$now + 500]);
-check('Kachel-Visualisierung bekommt den Push ueber VISU_PostNotificationEx', call($ems, 'checkInverterWriteStall', [$now + 700]) === 'alarm' && (end($GLOBALS['PUSH'])[2] ?? '') === 'visu', json_encode(end($GLOBALS['PUSH'])));
+$GLOBALS['VAL'][$fT] = $now + 500; call($ems, 'checkWriteStalls', [$now + 500]);
+check('Kachel-Visualisierung bekommt den Push ueber VISU_PostNotificationEx', call($ems, 'checkWriteStalls', [$now + 700]) === [IHUB_IID => 'alarm'] && (end($GLOBALS['PUSH'])[2] ?? '') === 'visu', json_encode(end($GLOBALS['PUSH'])));
+// 0.105.2: Wallbox ueber ChargerHub, nur wenn das EMS Wallboxen steuert
+$GLOBALS['VAL'][$oT] = $now + 800;
+call($ems, 'checkWriteStalls', [$now + 800]);
+attr('PartnerCache', json_encode(['inverterhub' => [['instanceID' => IHUB_IID, 'controlAuthority' => 'ems', 'controllable' => true]], 'chargerhub' => [['instanceID' => 402, 'label' => 'WB']]]));
+$cF = vari('fail_time', 402, 'ctl_write_fail_time', $now + 900, 1);
+vari('ok_time', 402, 'ctl_write_ok_time', $now + 100, 1);
+$n0 = count($GLOBALS['PUSH']);
+prop('WB_Active', false);
+check('Wallbox ohne aktive EMS-Wallboxsteuerung wird nicht ueberwacht', call($ems, 'checkWriteStalls', [$now + 900]) === [] && call($ems, 'checkWriteStalls', [$now + 1200]) === [] && count($GLOBALS['PUSH']) === $n0);
+prop('WB_Active', true); prop('WB_Count', 1);
+$r = call($ems, 'checkWriteStalls', [$now + 1200]);
+check('ChargerHub-Wallbox mit haengendem Schreiben = Alarm "Wallbox 1", Wechselrichter bleibt still', $r === [402 => 'alarm'] && strpos(end($GLOBALS['PUSH'])[1], 'Wallbox 1') !== false, json_encode([$r, end($GLOBALS['PUSH'])]));
 $lst = array_column($ems->GetWebFrontInstances(), 'value');
 check('Auswahlliste zeigt WebFront und Kachel-Visualisierung (Live-Fund Paul 17.11.2026)', in_array(990, $lst, true) && in_array(991, $lst, true), json_encode($lst));
 prop('NOTIFY_Visualization_ID', 0); $n = count($GLOBALS['PUSH']);
@@ -4253,7 +4265,7 @@ call($ems, 'notifyUser', ['x', 'y']);
 check('Ohne eingestellte Visualisierung kein Push', count($GLOBALS['PUSH']) === $n);
 $ems = freshEms();
 attr('PartnerCache', json_encode(['inverterhub' => [['instanceID' => 401, 'controlAuthority' => 'ems', 'controllable' => true]]]));
-check('InverterHub ohne ctl_write_*-Variablen (vor 0.86.0) = still', call($ems, 'checkInverterWriteStall', [$now]) === null);
+check('InverterHub ohne ctl_write_*-Variablen (vor 0.86.0) = still', call($ems, 'checkWriteStalls', [$now]) === []);
 check('Erster Durchlauf ohne Vorgaenger = keine Luecke', call($ems, 'checkCycleGap', [$now]) === null);
 check('60 s Abstand = keine Luecke', call($ems, 'checkCycleGap', [$now + 60]) === null);
 $GLOBALS['KERNEL_START'] = $now + 3000;
