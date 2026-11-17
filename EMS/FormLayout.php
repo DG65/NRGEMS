@@ -47,7 +47,9 @@ trait EMSFormLayout
     }
 
     /** Gespeicherte Auswahl: key => ['open' => std|open|closed|hidden, 'pos' => 1..99, 'idx' => Ursprungsindex], in der anzuwendenden Reihenfolge. */
-    private function formLayoutRead(array $keys, string $json): array
+    // $legacyPos: Schluessel => Standardposition einer frueheren Formularfassung. Eine gespeicherte Zeile ohne Haken, deren Position genau
+    // dieser alten Standardposition entspricht, stammt von "Auf Standard zuruecksetzen" und gilt als Standard (EMS 0.106.8, Befund Paul 18.11.2026).
+    private function formLayoutRead(array $keys, string $json, array $legacyPos = []): array
     {
         $saved = json_decode($json, true);
         $by = [];
@@ -59,6 +61,9 @@ trait EMSFormLayout
         $out = [];
         foreach (array_values($keys) as $i => $k) {
             $r = $by[$k] ?? [];
+            if (isset($r['Pos'], $legacyPos[$k]) && (int) $r['Pos'] === (int) $legacyPos[$k] && empty($r['Hidden']) && empty($r['Closed']) && empty($r['Opened'])) {
+                unset($r['Pos']);
+            }
             $open = !empty($r['Hidden']) ? 'hidden' : (!empty($r['Closed']) ? 'closed' : (!empty($r['Opened']) ? 'open' : 'std'));
             $out[$k] = ['open' => $open, 'pos' => isset($r['Pos']) ? max(1, min(99, (int) $r['Pos'])) : $i + 1, 'idx' => $i];
         }
@@ -67,13 +72,13 @@ trait EMSFormLayout
     }
 
     /** Setzt Reihenfolge, Aufklapp-Zustand und Sichtbarkeit der Fachpanels; haengt das Panel "Formular: Aufbau" hinten an. Rueckgabe: neue Elementliste. */
-    private function formLayoutApply(array $elements, array $panels): array
+    private function formLayoutApply(array $elements, array $panels, array $legacyPos = []): array
     {
         [$head, $bundles] = $this->formLayoutSplit($elements, $panels);
         if (count($bundles) === 0) {
             return $elements;
         }
-        $layout = $this->formLayoutRead(array_keys($bundles), (string) $this->ReadPropertyString('FormLayout'));
+        $layout = $this->formLayoutRead(array_keys($bundles), (string) $this->ReadPropertyString('FormLayout'), $legacyPos);
         $middle = [];
         foreach ($layout as $key => $l) {
             $panel = $bundles[$key]['panel'];

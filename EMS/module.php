@@ -247,6 +247,10 @@ class EMS extends IPSModule
     );
     // 0.106.7 (Formular-Umbau nach Arbeitsablauf): p14a/pvforecast/optimizer entfallen (Felder in "Netz & Gesetz" bzw. "Planung");
     // gespeicherte Zeilen mit diesen Schluesseln werden von formLayoutRead() ignoriert, die neuen Panels stehen dann auf Standard.
+    // Standardpositionen bis 0.106.6: nach "Auf Standard zuruecksetzen" gespeicherte Zeilen mit genau dieser Position gelten als Standard,
+    // sonst haelt eine alte Standard-Reihenfolge die neue Gliederung fest (Befund Paul 18.11.2026, 0.106.8).
+    private const FORM_LAYOUT_LEGACY_POS = array('general' => 1, 'plant' => 2, 'grid' => 3, 'inverter' => 4, 'battery' => 5, 'wallboxes' => 6, 'heatpump' => 7,
+        'tariff' => 8, 'dayplan' => 9, 'selfbalance' => 13, 'ai' => 14, 'notify' => 15);
     // Kurzname je Schluessel fuer die Spalte "Bereich" nach "Auf Standard zuruecksetzen" (englischer Quelltext, Listenzelle -> selbst uebersetzt)
     private const FORM_LAYOUT_TITLES = array(
         'general'     => '▶️ Operation',
@@ -1364,7 +1368,7 @@ class EMS extends IPSModule
         $form['elements'] = array_merge(array_values($form['elements']), $tail);
 
         // 4a. "🪟 Formular: Aufbau" (SUITE.md Punkt 3a): Reihenfolge, Auf-/Zuklappen, Ausblenden der Fachpanels, Panel selbst dahinter
-        $form['elements'] = $this->formLayoutApply($form['elements'], self::FORM_LAYOUT_PANELS);
+        $form['elements'] = $this->formLayoutApply($form['elements'], self::FORM_LAYOUT_PANELS, self::FORM_LAYOUT_LEGACY_POS);
 
         // 4. Symcon-Forum-Hinweis — nach den Haupteinstellungen, einmalig dismissible
         if (!$this->ReadAttributeBoolean('ForumHintDismissed')) {

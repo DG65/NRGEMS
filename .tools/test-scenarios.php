@@ -1068,6 +1068,18 @@ $topO = array_column(array_filter($fOld['elements'] ?? [], function ($e) { retur
 check('Gespeicherter Aufbau mit alten Schluesseln laedt, neue Panels sichtbar, gueltige Schluessel wirken',
     is_array($fOld) && isset($topO['PanelGridLaw'], $topO['PanelSafety'], $topO['PanelFormLayout']) && ($topO['PanelGridLaw']['visible'] ?? true) !== false
     && array_search('PanelGrid', array_keys($topO), true) < array_search('PanelPlant', array_keys($topO), true));
+// 0.106.8: alte Standard-Reihenfolge (nach "Auf Standard zuruecksetzen" gespeichert, Pauls Anlage) haelt die neue Gliederung nicht fest
+$oldStd = []; foreach (['general', 'plant', 'grid', 'inverter', 'battery', 'wallboxes', 'heatpump', 'tariff', 'dayplan', 'p14a', 'pvforecast', 'optimizer', 'selfbalance', 'ai', 'notify'] as $i => $k) {
+    $oldStd[] = ['Key' => $k, 'Panel' => $k, 'Opened' => false, 'Closed' => false, 'Hidden' => false, 'Pos' => $i + 1]; }
+prop('FormLayout', json_encode($oldStd));
+$ordP = function () use ($ems) { return array_values(array_intersect(array_column(array_filter(json_decode($ems->GetConfigurationForm(), true)['elements'], function ($e) { return ($e['type'] ?? '') === 'ExpansionPanel'; }), 'name'),
+    ['PanelGeneral', 'PanelPlant', 'PanelBattery', 'PanelTariff', 'PanelDayplan', 'PanelWallboxes', 'PanelHeatpump', 'PanelGridLaw', 'PanelSafety', 'PanelNotify', 'PanelGrid', 'PanelInverter'])); };
+$stdOrd = ['PanelGeneral', 'PanelPlant', 'PanelBattery', 'PanelTariff', 'PanelDayplan', 'PanelWallboxes', 'PanelHeatpump', 'PanelGridLaw', 'PanelSafety', 'PanelNotify', 'PanelGrid', 'PanelInverter'];
+check('0.106.8: gespeicherte alte Standard-Reihenfolge gilt als Standard, neue Gliederung erscheint', $ordP() === $stdOrd, json_encode($ordP()));
+$oldStd[2]['Pos'] = 1; prop('FormLayout', json_encode($oldStd));
+check('0.106.8: bewusst geaenderte Position bleibt wirksam (Netzmesspunkte auf 1: direkt hinter Betrieb, vor Meine Anlage)', array_slice($ordP(), 0, 3) === ['PanelGeneral', 'PanelGrid', 'PanelPlant'], json_encode($ordP()));
+$oldStd[2]['Pos'] = 3; $oldStd[3]['Opened'] = true; prop('FormLayout', json_encode($oldStd));
+check('0.106.8: Zeile mit Haken behaelt ihre Position (Wechselrichter aufgeklappt, Pos 4)', array_search('PanelInverter', $ordP(), true) === 4 && array_search('PanelInverter', $ordP(), true) < array_search('PanelDayplan', $ordP(), true), json_encode($ordP()));
 prop('FormLayout', '[]');
 $memo->setValue(null, []);
 prop('EMS_Risk_Acknowledged', false); prop('WB_Active', false); prop('WB_Count', 1); prop('HP_Active', false);
