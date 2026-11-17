@@ -1599,7 +1599,7 @@ class EMS extends IPSModule
                 try {
                     $inv = $this->getInverterEntry();
                     if ($inv !== null && ($inv['instanceID'] ?? 0) > 0) {
-                        if ($this->findChildVariableIdByIdent($inv['instanceID'], 'ctl_ems_mode') <= 0 && $this->isSolisDriver((int)$inv['instanceID'])) {
+                        if ($this->inverterKind((int)$inv['instanceID']) === 'solis') {
                             $this->setSolisMode((int)$inv['instanceID'], GW_MODE_AUTO, 0); // Zwangsmodus freigeben, falls aktiv
                         } else {
                             $this->ipsWrite($inv['instanceID'], 'ctl_ems_enable', false);
@@ -5411,7 +5411,7 @@ class EMS extends IPSModule
                     return $this->t('ℹ️ No InverterHub instance found — the fields below are needed for control.');
                 }
                 $authority = $inv['controlAuthority'] ?? 'none';
-                if ($authority === 'ems' && ($inv['controllable'] ?? false) && $this->isSolisDriver((int)$inv['instanceID'])) {
+                if ($authority === 'ems' && ($inv['controllable'] ?? false) && $this->inverterKind((int)$inv['instanceID']) === 'solis') {
                     return $this->connectedLine(sprintf(
                         $this->t('EMS controls the Solis via InverterHub #%d (grid charging via forced charging, otherwise automatic mode; fields below are ignored).'),
                         $inv['instanceID']
@@ -9991,14 +9991,7 @@ class EMS extends IPSModule
             }
         }
         if ($why === '') {
-            // Solis kennt keine Netzbezugsregelung (Modus 9): setSolisMode() haelt dort den Akku (Speicherbetrieb 17), das Haus
-            // laeuft also ebenfalls aus dem Netz (Live-Befund Paul 17.11.2026: Statuszeile nannte "Haus aus PV und Batterie").
-            if ($this->inverterIsSolis()) {
-                return array('gw_mode' => GW_MODE_BUY, 'gw_power_w' => $xset, 'gw_enable' => true,
-                    'text' => sprintf($this->t('car charging at %.1f kW from the grid, battery is held (Solis has no grid import control), house also from the grid'), $carW / 1000.0));
-            }
-            return array('gw_mode' => GW_MODE_BUY, 'gw_power_w' => $xset, 'gw_enable' => true,
-                'text' => sprintf($this->t('car charging at %.1f kW, grid import controlled to %.1f kW (car from the grid), house from PV and battery'), $carW / 1000.0, $xset / 1000.0));
+            return array('gw_mode' => GW_MODE_BUY, 'gw_power_w' => $xset, 'gw_enable' => true, 'text' => $this->carFromGridText($carW, $xset));
         }
         return array('gw_mode' => GW_MODE_CHARGE_PV, 'gw_power_w' => 0, 'gw_enable' => true,
             'text' => sprintf($this->t('car charging at %.1f kW, battery is spared (charges only from PV, does not discharge), house and car from PV or grid (%s)'), $carW / 1000.0, $why));
@@ -10095,8 +10088,11 @@ class EMS extends IPSModule
             $r['reason'] .= $this->t(' (switch lock 2 min)');
         }
         if (!$r['active']) {
-            // Sichtbar statt still (Konzept §2.6): warum B1 gerade nicht greift
-            $d['reason'] = ($d['reason'] ?? '') . $this->t(' | 🌞 Midday peak not active: ') . $r['reason'];
+            // Sichtbar statt still (Konzept §2.6): warum B1 gerade nicht greift -- aber nur, solange die PV erzeugt. Ohne PV gibt es
+            // keine Mittagsspitze; nachts stand sonst "spaetester Freigabezeitpunkt 16:00 erreicht" in der Statuszeile (17.11.2026).
+            if ((float)($s['pv_total_w'] ?? 0.0) > 0.0) {
+                $d['reason'] = ($d['reason'] ?? '') . $this->t(' | 🌞 Midday peak not active: ') . $r['reason'];
+            }
             return $d;
         }
         $d['svc']    = 'chargeInhibit';
@@ -10383,14 +10379,14 @@ class EMS extends IPSModule
         // Nur, wenn der Zyklus in letzter Zeit lief (kein Halten eines veralteten Sollwerts nach Ausfall)
         if (time() - $this->ReadAttributeInteger('LastGoodweWriteAt') > 3 * max(30, (int)$this->ReadPropertyInteger('EMS_Interval')) + 60) {
             // Solis: eine gesetzte Entladesperre (hat keinen Totmann) bei ausbleibendem Zyklus freigeben
-            if (($this->ReadAttributeBoolean('SolisHoldActive') || $this->ReadAttributeBoolean('SolisGcActive')) && $this->isSolisDriver((int)$inv['instanceID'])) {
+            if (($this->ReadAttributeBoolean('SolisHoldActive') || $this->ReadAttributeBoolean('SolisGcActive')) && $this->inverterKind((int)$inv['instanceID']) === 'solis') {
                 $this->emsLog(EMS_LOG_BASIC, 'Solis: Regelzyklus bleibt aus -- Entladesperre/Netzlade-Erlaubnis wird freigegeben');
                 $this->setSolisMode((int)$inv['instanceID'], GW_MODE_AUTO, 0);
             }
             return;
         }
         $iid = $inv['instanceID'];
-        if ($this->findChildVariableIdByIdent($iid, 'ctl_ems_mode') <= 0 && $this->isSolisDriver((int)$iid)) {
+        if ($this->inverterKind((int)$iid) === 'solis') {
             $this->setSolisMode((int)$iid, (int)$mode, $this->ReadAttributeInteger('LastGoodwePowerW')); // gedrosselt auf das Wiederholintervall
             return;
         }
@@ -10400,12 +10396,42 @@ class EMS extends IPSModule
     }
 
     /** Hat dieser InverterHub die Solis-Steuerpunkte (Zwangsmodus/-leistung) und KEINE GoodWe-EMS-Stellglieder? */
-    /** Laeuft der Akku-Wechselrichter ueber den Solis-Weg (kein ctl_ems_mode, Solis-Treiber)? Wie die Weiche in applyDecision(). */
-    private function inverterIsSolis(): bool
+    // ----------------------------------------------------------------
+    //  Wechselrichter-Wissen (Umbau 2b, 17.11.2026): welche Art von Wechselrichter, und was ein Befehl dort bewirkt.
+    //  Vorher fragten sechs Stellen selbst "ctl_ems_mode fehlt und Solis-Steuerpunkte da?". Neue Hersteller kommen hier dazu,
+    //  nicht als weitere Weiche irgendwo im Code.
+    // ----------------------------------------------------------------
+
+    /**
+     * Art des Wechselrichters nach seinen InverterHub-Steuerpunkten: 'goodwe' (ctl_ems_mode/-power/-enable), 'solis'
+     * (ctl_force_mode/-w ohne ctl_ems_*), 'readonly' (keine EMS-Stellglieder), 'none' (keine Instanz).
+     */
+    private function inverterKind(int $iid): string
+    {
+        if ($iid <= 0) { return 'none'; }
+        if ($this->isSolisDriver($iid)) { return 'solis'; }
+        $has = function (string $ident) use ($iid): bool { return $this->findChildVariableIdByIdent($iid, $ident) > 0; };
+        return ($has('ctl_ems_mode') && $has('ctl_ems_power') && $has('ctl_ems_enable')) ? 'goodwe' : 'readonly';
+    }
+
+    /** Art des Akku-Wechselrichters aus der Discovery (siehe inverterKind()). */
+    private function batteryInverterKind(): string
     {
         $inv = $this->getInverterEntry();
-        $iid = (int)($inv['instanceID'] ?? 0);
-        return $iid > 0 && $this->findChildVariableIdByIdent($iid, 'ctl_ems_mode') <= 0 && $this->isSolisDriver($iid);
+        return $this->inverterKind((int)($inv['instanceID'] ?? 0));
+    }
+
+    /**
+     * Statussatz fuer "Auto aus dem Netz" (Modus 9) je Wechselrichter: GoodWe regelt den Netzbezug auf das Auto, das Haus laeuft
+     * aus PV und Akku; Solis kennt das nicht, setSolisMode() haelt dort den Akku, das Haus laeuft ebenfalls aus dem Netz
+     * (Live-Befund Paul 17.11.2026). Ersetzt die Solis-Weiche in carFromGridSetting() aus 0.105.5.
+     */
+    private function carFromGridText(float $carW, int $xsetW): string
+    {
+        if ($this->batteryInverterKind() === 'solis') {
+            return sprintf($this->t('car charging at %.1f kW from the grid, battery is held (Solis has no grid import control), house also from the grid'), $carW / 1000.0);
+        }
+        return sprintf($this->t('car charging at %.1f kW, grid import controlled to %.1f kW (car from the grid), house from PV and battery'), $carW / 1000.0, $xsetW / 1000.0);
     }
 
     private function isSolisDriver(int $iid): bool
@@ -10924,7 +10950,7 @@ class EMS extends IPSModule
                 $modeVarId = $this->findChildVariableIdByIdent($iid, 'ctl_ems_mode');
                 // Wechselrichter ohne EMS-Stellglieder (andere Hersteller): nichts schreiben, einmal pro Stunde melden
                 // Solis (InverterHub-Steuerpunkte ctl_force_mode/ctl_force_w, ohne ctl_ems_*): eigener, kleiner Zweig
-                if ($modeVarId <= 0 && $this->isSolisDriver((int)$iid)) {
+                if ($this->inverterKind((int)$iid) === 'solis') {
                     $this->setSolisMode((int)$iid, (int)$mode, (int)$powerW);
                     return;
                 }

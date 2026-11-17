@@ -2927,6 +2927,8 @@ check('keine PV-Prognose im Zwischenspeicher: B1 greift nicht, Grund sichtbar an
 $d = call($ems, 'applyGridServiceB1', [$autoD, state(['bat_soc' => 50.0, 'pv_total_w' => 500.0, 'house_pow_w' => 400.0])]);
 check('Wolke (PV kaum ueber Haus): Grund "deckt die Hauslast nicht sicher" sichtbar, Entscheidung sonst unveraendert',
     empty($d['svc']) && $d['op_mode'] === EMS_OP_AUTO && $d['gw_enable'] === false && strpos($d['reason'], 'Mittagsspitze nicht aktiv') !== false, $d['reason']);
+$d = call($ems, 'applyGridServiceB1', [$autoD, state(['bat_soc' => 50.0, 'pv_total_w' => 0.0, 'house_pow_w' => 400.0])]);
+check('Nachts ohne PV: kein Mittagsspitzen-Hinweis in der Begruendung (0.106.1)', $d === $autoD, $d['reason'] ?? '');
 attr('FcPvToday', json_encode(array_fill(0, 96, 50000.0)));
 
 echo "\n   Steuerpfad in applyDecision()\n";
@@ -4413,6 +4415,18 @@ if ($ref !== null) {
         check('Referenzlauf ' . $part . ': ' . count($ref[$part]) . ' Faelle gleich wie gespeichert', $diff === [], count($diff) . ' abweichend, z. B. ' . json_encode(array_slice($diff, 0, 3)));
     }
 }
+
+echo "\n8as) Umbau 2b: eine Erkennung der Wechselrichter-Art\n";
+$ems = freshEms();
+obj(430, 1, 'GoodWe-Art', 0); vari('m', 430, 'ctl_ems_mode', 1, 1); vari('p', 430, 'ctl_ems_power', 0, 1); vari('e', 430, 'ctl_ems_enable', false, 0);
+obj(431, 1, 'Solis-Art', 0); vari('f', 431, 'ctl_force_mode', 0, 1); vari('w', 431, 'ctl_force_w', 0, 1);
+obj(432, 1, 'Nur-Lesen-Art', 0); vari('x', 432, 'pv_total', 0.0, 2);
+obj(433, 1, 'Unvollstaendig', 0); vari('m', 433, 'ctl_ems_mode', 1, 1);
+check('Wechselrichter-Art: GoodWe / Solis / nur lesbar / keine Instanz',
+    [call($ems, 'inverterKind', [430]), call($ems, 'inverterKind', [431]), call($ems, 'inverterKind', [432]), call($ems, 'inverterKind', [0])] === ['goodwe', 'solis', 'readonly', 'none']);
+check('ctl_ems_mode ohne -power/-enable gilt als nur lesbar (wie bisher in setGoodweMode)', call($ems, 'inverterKind', [433]) === 'readonly');
+obj(434, 1, 'Beides', 0); vari('m', 434, 'ctl_ems_mode', 1, 1); vari('f', 434, 'ctl_force_mode', 0, 1); vari('w', 434, 'ctl_force_w', 0, 1);
+check('Zwangsmodus-Punkte UND ctl_ems_mode: kein Solis (GoodWe-Weg bleibt unberuehrt)', call($ems, 'inverterKind', [434]) !== 'solis');
 
 // ===========================================================================
 if (getenv('EMS_DUMP')) { file_put_contents(getenv('EMS_DUMP'), implode("\n", $GLOBALS['DUMP'] ?? []) . "\n"); }
