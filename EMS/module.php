@@ -43,6 +43,7 @@ define('EMS_LOG_VERBOSE',     2);
 define('EMS_COLOR_AUTO', 0x2E8B3D); // Gruen: Wert wurde automatisch uebernommen (🔗-Zeilen im Formular)
 // Quelltexte englisch, deutsche Fassung in locale.json; newsBanner() uebersetzt je Zeile.
 define('EMS_NEWS_VERSIONS', array(
+    '0.106.7' => array('CHANGED: The configuration form follows the order in which you set things up: ▶️ Operation, 🏠 My system, 🔋 Battery storage, 💰 Electricity price, 📅 Planning, 🚗 Wallboxes, 🌡️ Heat pump, ⚡ Grid & law, 🛡️ Safety & monitoring, 🔔 Notifications. The manual assignment of meters and inverter variables (only needed without partner modules) is at the very bottom. No setting was changed or lost, only the place where it appears. A saved order in "Form: layout" stays valid; the new sections start with their default.'),
     '0.101.0' => array('CHANGED (Symcon Store rules): Charging mode, charging target, deadline and weekly deadlines of the wallboxes and the manual day plan entries changed in the WebFront, in the panel "🚗 Operate wallboxes" or by other modules are now kept separately and no longer overwrite your settings. A value you change and apply in the settings replaces them; all existing values are kept. Removed: the button "Force apply". Switching a foreign variable without an action is no longer possible (it only changed the display); the log names such variables. The wallbox charging target slider in the WebFront now goes up to 200 kWh.'),
     '0.100.0' => array('CHANGED: Realistic battery losses for every system. Two new settings in the panel Battery storage: round-trip efficiency PV → battery → house (default 91 %) and grid → battery → house (default 82 %), measured values of common home storage systems. They replace the old "efficiency per conversion" (95 % = 90 % round trip), which now only applies if both new fields are set to 0. As a result EMS charges from the grid and holds the battery less often. NEW: Grid charging and holding only when it pays off after losses and a new safety factor (default 90 %); the reason names the limit when grid charging is skipped. The EMS balance charges the automatic mode with the same losses; press "Recalculate the last 30 days" once. The PV forecast correction is used only after 7 learned days.'),
     '0.99.2' => array('FIX: Since Symcon 9.1, the day plan schedule logged a warning every 15 minutes ("schedule action ID must be greater than 0"). Existing schedules keep their actions, new ones start at action 1.'),
@@ -231,37 +232,37 @@ class EMS extends IPSModule
     private const FORM_LAYOUT_PANELS = array(
         'PanelGeneral'     => 'general',
         'PanelPlant'       => 'plant',
-        'PanelGrid'        => 'grid',
-        'PanelInverter'    => 'inverter',
         'PanelBattery'     => 'battery',
-        'PanelWallboxes'   => 'wallboxes',
-        'PanelHeatpump'    => 'heatpump',
         'PanelTariff'      => 'tariff',
         'PanelDayplan'     => 'dayplan',
-        'PanelP14a'        => 'p14a',
-        'PanelPvForecast'  => 'pvforecast',
-        'PanelOptimizer'   => 'optimizer',
+        'PanelWallboxes'   => 'wallboxes',
+        'PanelHeatpump'    => 'heatpump',
+        'PanelGridLaw'     => 'gridlaw',
+        'PanelSafety'      => 'safety',
         'PanelSelfBalance' => 'selfbalance',
         'PanelAI'          => 'ai',
         'PanelNotify'      => 'notify',
+        'PanelGrid'        => 'grid',
+        'PanelInverter'    => 'inverter',
     );
+    // 0.106.7 (Formular-Umbau nach Arbeitsablauf): p14a/pvforecast/optimizer entfallen (Felder in "Netz & Gesetz" bzw. "Planung");
+    // gespeicherte Zeilen mit diesen Schluesseln werden von formLayoutRead() ignoriert, die neuen Panels stehen dann auf Standard.
     // Kurzname je Schluessel fuer die Spalte "Bereich" nach "Auf Standard zuruecksetzen" (englischer Quelltext, Listenzelle -> selbst uebersetzt)
     private const FORM_LAYOUT_TITLES = array(
-        'general'     => '🔧 General',
-        'plant'       => '🏠 System',
-        'grid'        => '📡 Grid metering points',
-        'inverter'    => '⚡ Inverter & PV',
+        'general'     => '▶️ Operation',
+        'plant'       => '🏠 My system',
         'battery'     => '🔋 Battery storage',
+        'tariff'      => '💰 Electricity price',
+        'dayplan'     => '📅 Planning',
         'wallboxes'   => '🚗 Wallboxes',
         'heatpump'    => '🌡️ Heat pump',
-        'tariff'      => '💰 Tibber & tariff',
-        'dayplan'     => '📅 Day plan',
-        'p14a'        => '⚖️ §14a EnWG',
-        'pvforecast'  => '☀️ PV Forecast',
-        'optimizer'   => '⚙️ Optimisation parameters',
+        'gridlaw'     => '⚡ Grid & law',
+        'safety'      => '🛡️ Safety & monitoring',
         'selfbalance' => '📊 EMS balance',
         'ai'          => '🤖 AI assistant',
         'notify'      => '🔔 Notifications',
+        'grid'        => '🔌 Manual assignment: grid metering points',
+        'inverter'    => '🔌 Manual assignment: inverter & PV',
     );
 
     // Netzdienliche Faehigkeiten -> InverterHub-Ident (Vertrag 1.3,
@@ -874,7 +875,7 @@ class EMS extends IPSModule
         $this->WriteAttributeBoolean('DryRunAuto', false);
         $this->emsLog(EMS_LOG_BASIC, 'EMS live geschaltet (Einführungs-Trockenlauf beendet)');
         if ($this->ReadPropertyBoolean('EMS_DryRun')) {
-            return $this->t('⚠️ Dry run is still switched on in the form (section "General"): switch it off there so that EMS writes.');
+            return $this->t('⚠️ Dry run is still switched on in the form (section "Operation"): switch it off there so that EMS writes.');
         }
         return $this->t('✅ From the next cycle on, EMS writes to the inverter and wallbox.');
     }
@@ -1012,8 +1013,9 @@ class EMS extends IPSModule
         // (Dietmars Einwand 20.08.2026, siehe SUITE.md "Formular-Konvention:
         // Status neben manuellen Fallback-Feldern"). Sucht das Tibber-Panel
         // per Caption und splict die Zeile direkt vor VAR_TIB_PT15M_Today ein.
+        // 0.106.7: Suche ueber den Feldnamen in jedem Panel, nicht ueber den Panelnamen (Formular-Umbau, Felder duerfen wandern)
         foreach ($form['elements'] as &$element) {
-            if (($element['type'] ?? '') === 'ExpansionPanel' && ($element['name'] ?? '') === 'PanelTariff') {
+            if (($element['type'] ?? '') === 'ExpansionPanel' && in_array('VAR_TIB_PT15M_Today', array_column($element['items'] ?? array(), 'name'), true)) {
                 foreach ($element['items'] as $idx => $item) {
                     if (($item['name'] ?? '') === 'VAR_TIB_PT15M_Today') {
                         $ptLine = $this->getPT15MStatusLine();
@@ -1038,8 +1040,9 @@ class EMS extends IPSModule
 
         // 3b1. Preisschwellen: wirksamen Wert und Herkunft unter jedem Feld anzeigen (Dietmar 20.10.2026)
         $thKeys = array('TIB_Threshold_Charge' => 'charge', 'TIB_Threshold_Discharge' => 'discharge', 'TIB_Threshold_WB' => 'wb');
+        // 0.106.7: in jedem Panel ueber den Feldnamen (die Schwellen stehen seit dem Formular-Umbau unter "Planung")
         foreach ($form['elements'] as &$element) {
-            if (($element['type'] ?? '') === 'ExpansionPanel' && ($element['name'] ?? '') === 'PanelTariff') {
+            if (($element['type'] ?? '') === 'ExpansionPanel' && isset($element['items'])) {
                 $newItems = array();
                 foreach ($element['items'] as $item) {
                     $newItems[] = $item;
@@ -1049,7 +1052,6 @@ class EMS extends IPSModule
                     }
                 }
                 $element['items'] = $newItems;
-                break;
             }
         }
         unset($element);
@@ -1058,7 +1060,7 @@ class EMS extends IPSModule
         $manLines = $this->manualPlanStatusLines();
         if (!empty($manLines)) {
             foreach ($form['elements'] as &$element) {
-                if (($element['type'] ?? '') === 'ExpansionPanel' && ($element['name'] ?? '') === 'PanelDayplan') {
+                if (($element['type'] ?? '') === 'ExpansionPanel' && in_array('PLAN_Manual', array_column($element['items'] ?? array(), 'name'), true)) {
                     $newItems = array();
                     foreach ($element['items'] as $item) {
                         $newItems[] = $item;
@@ -1332,11 +1334,12 @@ class EMS extends IPSModule
                 array(
                     'type'    => 'NumberSpinner',
                     'name'    => 'NOTIFY_Grace_Minutes',
-                    'caption' => 'Grace period before reporting (minutes) — prevents false alarms on short/expected interruptions (e.g. car in sleep mode)',
+                    'caption' => 'Grace period before reporting',
                     'minimum' => 0,
                     'maximum' => 180,
                     'suffix'  => ' min'
                 ),
+                array('type' => 'Label', 'name' => 'NOTIFY_Grace_MinutesHint', 'caption' => 'Grace period before reporting (minutes) — prevents false alarms on short/expected interruptions (e.g. car in sleep mode)'),
             )
         );
 
@@ -1352,6 +1355,13 @@ class EMS extends IPSModule
             }
         }
         unset($element);
+
+        // 4a0. 0.106.7: die beiden reinen Zuordnungs-Panels (manuelle Variablen ohne Partnermodul) stehen ganz unten, hinter den Benachrichtigungen
+        $tail = array();
+        foreach ($form['elements'] as $k => $el) {
+            if (in_array($el['name'] ?? '', array('PanelGrid', 'PanelInverter'), true)) { $tail[] = $el; unset($form['elements'][$k]); }
+        }
+        $form['elements'] = array_merge(array_values($form['elements']), $tail);
 
         // 4a. "🪟 Formular: Aufbau" (SUITE.md Punkt 3a): Reihenfolge, Auf-/Zuklappen, Ausblenden der Fachpanels, Panel selbst dahinter
         $form['elements'] = $this->formLayoutApply($form['elements'], self::FORM_LAYOUT_PANELS);
@@ -4667,10 +4677,10 @@ class EMS extends IPSModule
             return $this->t('The battery storage is switched off in EMS (section “Battery storage”, switch it on).');
         }
         if (!$this->ReadPropertyBoolean('TIBBER_Active')) {
-            return $this->t('Price optimisation with a dynamic tariff is switched off (section “Tibber & tariff”, switch it on).');
+            return $this->t('Price optimisation with a dynamic tariff is switched off (section “Electricity price”, switch it on).');
         }
         if (trim((string)$this->getPT15MTodayJson()) === '') {
-            return $this->t('No quarter-hour prices available (price source missing or not supplying anything, see section “Tibber & tariff”).');
+            return $this->t('No quarter-hour prices available (price source missing or not supplying anything, see section “Electricity price”).');
         }
         return $this->t('The day plan is still being calculated, it appears with the next price update.');
     }
@@ -6595,7 +6605,8 @@ class EMS extends IPSModule
                 array('caption' => 'Claude (Anthropic, internet, own key)', 'value' => 1),
                 array('caption' => 'Ollama (local in your own network)', 'value' => 2),
             )),
-            array('type' => 'ValidationTextBox', 'name' => 'AI_Model', 'caption' => sprintf($this->t('Model (empty = %s or %s)'), EMS_AI_DEFAULT_CLAUDE, EMS_AI_DEFAULT_OLLAMA)),
+            array('type' => 'ValidationTextBox', 'name' => 'AI_Model', 'caption' => 'Model'),
+            array('type' => 'Label', 'name' => 'AI_ModelHint', 'caption' => sprintf($this->t('Model (empty = %s or %s)'), EMS_AI_DEFAULT_CLAUDE, EMS_AI_DEFAULT_OLLAMA)),
             array('type' => 'ValidationTextBox', 'name' => 'AI_OllamaUrl', 'caption' => 'Ollama address', 'visible' => $provider === 2),
             array('type' => 'RowLayout', 'visible' => $provider === 1, 'items' => array(
                 array('type' => 'PasswordTextBox', 'name' => 'FormAiKey', 'caption' => 'API key (Anthropic)'),
@@ -6604,9 +6615,10 @@ class EMS extends IPSModule
             array('type' => 'Label', 'visible' => $provider === 1, 'caption' => $hasKey ? self::fest('✅ Key stored (saving an empty value deletes it).') : self::fest('⚠️ No key stored yet.')),
             array('type' => 'Label', 'caption' => 'Only system values are sent: power values, state of charge, prices, forecasts and the plan rows for the next hours. No names, addresses or credentials. With Claude these values go to Anthropic, with Ollama they stay in your own network. The cost of the queries is borne by the key holder.'),
             array('type' => 'RowLayout', 'items' => array(
-                array('type' => 'ValidationTextBox', 'name' => 'FormAiQuestion', 'caption' => 'Question (empty = "What is the EMS doing right now and why?")', 'width' => '500px'),
+                array('type' => 'ValidationTextBox', 'name' => 'FormAiQuestion', 'caption' => 'Question', 'width' => '500px'),
                 array('type' => 'Button', 'caption' => '💬 Ask', 'onClick' => 'echo EMS_Ask($id, $FormAiQuestion);'),
             )),
+            array('type' => 'Label', 'name' => 'FormAiQuestionHint', 'caption' => 'Question (empty = "What is the EMS doing right now and why?")'),
         );
         return array('type' => 'ExpansionPanel', 'name' => 'PanelAI', 'caption' => '🤖 AI assistant (explains the plan)', 'expanded' => false, 'items' => $items);
     }

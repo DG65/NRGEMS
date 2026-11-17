@@ -16,7 +16,9 @@ $root = dirname(__DIR__);
 $ref = $argv[1] ?? 'HEAD';
 $tmp = sys_get_temp_dir() . '/ems-deutsch-vergleich-' . getmypid();
 @mkdir($tmp . '/EMS', 0777, true);
-foreach (['module.php', 'FormLayout.php', 'form.json', 'eeg-pv-verguetung.json', 'EegTabelle.php'] as $f) {
+// 0.106.7: alle Dateien des Moduls (seit der Aufteilung 0.106.3-0.106.5 braucht module.php weitere Dateien)
+foreach (array_filter(explode("\n", (string)shell_exec('git -C ' . escapeshellarg($root) . ' ls-tree --name-only ' . escapeshellarg($ref) . ' EMS/'))) as $f) {
+    $f = basename($f);
     file_put_contents($tmp . '/EMS/' . $f, (string)shell_exec('git -C ' . escapeshellarg($root) . ' show ' . escapeshellarg($ref . ':EMS/' . $f) . ' 2>/dev/null'));
 }
 $run = function (string $module, string $out) use ($root) {
