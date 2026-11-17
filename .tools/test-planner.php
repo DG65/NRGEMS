@@ -70,5 +70,18 @@ $a2 = EMS_Planner::estimateAnchored($hist, [$wed], $known);
 $k0 = EMS_Planner::estimateFromHistory($hist, [strtotime('2026-11-17')]);
 ok('Mit Ausrichtung: Schaetzung um (echter Preis 17.11. minus Methode am 17.11.) verschoben', abs($a2[$wed] - ($e[$wed] + 0.25 - $k0[strtotime('2026-11-17')])) < 1e-9, json_encode([$a2, $k0]));
 
+echo "Horizont\n";
+$P = array_merge(array_fill(0, 120, 0.30), array_fill(0, 72, null));
+ok('Bekannte Preise bis zur ersten Luecke: 120', EMS_Planner::knownPriceSlots($P) === 120);
+$estIdx = []; for ($i = 120; $i < 216; $i++) { $estIdx[$i] = 0.25; }
+list($P2, $PV2, $L2, $ef) = EMS_Planner::extendHorizon($P, array_fill(0, 192, 100.0), array_fill(0, 192, 500.0), 120, $estIdx, array_fill(0, 96, 700.0), 400.0);
+ok('Verlaengert: Schaetzpreise ab Slot 120 bis 215, erster geschaetzter Slot 120', $ef === 120 && $P2[120] === 0.25 && $P2[215] === 0.25 && !isset($P2[216]));
+ok('Vorhandene PV/Last bleiben, Tag 3 PV = 0 und Last aus Prognose Tag 3', $PV2[150] === 100.0 && $PV2[200] === 0.0 && $L2[150] === 500.0 && $L2[200] === 700.0);
+unset($estIdx[130]);
+list(, , , $ef2) = EMS_Planner::extendHorizon($P, [], [], 120, $estIdx, [], 400.0);
+list($P3) = EMS_Planner::extendHorizon($P, [], [], 120, $estIdx, [], 400.0);
+ok('Luecke in der Schaetzung: Horizont endet davor', $ef2 === 120 && isset($P3[129]) && $P3[130] === null);
+ok('Ohne Schaetzung: Horizont unveraendert, estFrom offen', EMS_Planner::extendHorizon($P, [], [], 120, [], [], 400.0)[3] === PHP_INT_MAX);
+
 echo "\n" . ($fails === 0 ? "PLANUNGSKERN BESTANDEN" : "$fails PRUEFUNG(EN) VERLETZT") . "\n";
 exit($fails === 0 ? 0 : 1);

@@ -183,4 +183,31 @@ final class EMS_Planner
         $est = self::estimateFromHistory($hist, $needStarts);
         return self::anchorEstimate($est, $knownActual, self::estimateFromHistory($hist, array_keys($knownActual)));
     }
+
+    /** Anzahl der Viertelstunden mit bekanntem Preis vom Horizontbeginn an (bis zur ersten Luecke). */
+    public static function knownPriceSlots(array $prices): int
+    {
+        $known = 0;
+        for ($i = 0; $i < count($prices); $i++) { if (isset($prices[$i]) && $prices[$i] !== null) { $known = $i + 1; } else { break; } }
+        return $known;
+    }
+
+    /**
+     * Optimierer-Horizont hinter dem letzten bekannten Preis um bis zu 96 geschaetzte Viertelstunden verlaengern (0.103.0). Bricht
+     * an der ersten Luecke der Schaetzung ab. PV fehlt dort vorsichtig mit 0, Last aus der Lastprognose fuer Tag 3 ($loadD3,
+     * Index ab 0 = Slot 192), sonst $avgW. Auf geschaetzte Slots laedt der Optimierer nie aktiv (Rueckgabe estFrom).
+     * @return array{0: array, 1: array, 2: array, 3: int} [Preise, PV, Last, erster geschaetzter Slot oder PHP_INT_MAX]
+     */
+    public static function extendHorizon(array $P, array $PV, array $L, int $known, array $estIdx, array $loadD3, float $avgW): array
+    {
+        $estFrom = PHP_INT_MAX;
+        for ($i = $known; $i < $known + 96; $i++) {
+            if (!isset($estIdx[$i])) { break; }
+            if ($estFrom === PHP_INT_MAX) { $estFrom = $i; }
+            $P[$i] = $estIdx[$i];
+            if (!isset($PV[$i])) { $PV[$i] = 0.0; } // ohne PV-Prognose fuer Tag 3 vorsichtig: keine PV
+            if (!isset($L[$i])) { $L[$i] = (float)($loadD3[$i - 192] ?? $avgW); }
+        }
+        return array($P, $PV, $L, $estFrom);
+    }
 }

@@ -2,6 +2,11 @@
 
 Ältere Versionen: [CHANGELOG-Archiv.md](CHANGELOG-Archiv.md)
 
+## 0.106.3 (2026-11-17)
+- **Umbau Schritt 2c, Preisschätzung und Horizont im Planungskern, Verhalten unverändert:** Die Rechnung der Preisschätzung (Mittel der letzten vier gleichartigen Tage) und ihre Ausrichtung am letzten bekannten Tag sind jetzt ein Schritt in `EMS_Planner::estimateAnchored()`. Bisher waren es Schätzung und Nachkorrektur, zwei getrennte Aufrufe in der Tagesplanung. Das Archiv wird dafür nur noch einmal gelesen statt zweimal. Auch das Verlängern des Optimierer-Horizonts um die geschätzten Viertelstunden steht im Kern (`extendHorizon()`, `knownPriceSlots()`). Das Lesen von Archiv und Prognosen bleibt im Modul.
+- Zwei nicht mehr benutzte Funktionen im Modul entfernt (`estimatePrices`, Weiterleitung `anchorEstimate`).
+- Prüfstand Planungskern: 9 neue Prüfungen (Werktag/Wochenende, fehlende Historie, Ausrichtung, Horizont mit und ohne Lücke), jetzt 23. Mutationsprobe an der Werktag/Wochenende-Trennung schlägt an. Alle 1.185 Prüfungen und der Referenzlauf sind gleich.
+
 ## 0.106.2 (2026-11-17)
 - **Umbau Schritt 2c (erster Teil), Verhalten unverändert:** Der Planungskern liegt jetzt in einer eigenen Klasse `EMS_Planner` (`EMS/Planner.php`, 154 Zeilen) ohne einen einzigen Symcon-Aufruf. Darin stehen die Akku-Physik einer Viertelstunde, der Optimierer, die Ladekurve und die Ausrichtung der Preisschätzung. Die Wirkungsgrade kommen von außen. Das Modul ruft den Kern über gleichnamige Weiterleitungen, Aufrufer und Prüfungen bleiben unverändert.
 - **Neuer Prüfstand** `.tools/test-planner.php`: Er lädt nur die Planungsklasse, ohne Symcon-Nachbildung, und prüft Physik, Ladekurve, Optimierer und Preisschätzung (14 Prüfungen). Er läuft auch in der GitHub-Prüfung mit. Alle 1.185 bisherigen Prüfungen und der Referenzlauf (36 Optimierer-Läufe, 1.440 Planzeilen) sind Stelle für Stelle gleich.

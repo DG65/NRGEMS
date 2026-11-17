@@ -6207,20 +6207,15 @@ class EMS extends IPSModule
         // nicht nur mit dem guenstigsten bekannten Preis bewertet wird. Auf geschaetzte Preise wird nie aktiv geladen.
         $dpP = $price192; $dpPvX = $dpPv; $dpL = $load192; $estFrom = PHP_INT_MAX;
         if ($this->ReadPropertyBoolean('PLAN_Optimizer')) {
-            $known = 0; for ($i = 0; $i < 192; $i++) { if ($price192[$i] !== null) { $known = $i + 1; } else { break; } }
+            $known = EMS_Planner::knownPriceSlots($price192);
             $d0 = strtotime('today'); $need = array();
             for ($i = $known; $i < $known + 96; $i++) { $need[$i] = $d0 + $i * 900; }
             // Schaetzung am Niveau des letzten bekannten Tages ausgerichtet (0.105.3, Befund Paul 17.11.2026)
             $kn = array(); for ($i = max(0, $known - 96); $i < $known; $i++) { $kn[$d0 + $i * 900] = (float)$price192[$i]; }
-            $est = $this->estimatePricesAnchored(array_values($need), $kn);
+            $estTs = $this->estimatePricesAnchored(array_values($need), $kn);
+            $estIdx = array(); foreach ($need as $i => $ts) { if (isset($estTs[$ts])) { $estIdx[$i] = $estTs[$ts]; } }
             $lfcX = $this->getLfcInstance(); $loadD2 = ($lfcX > 0) ? $this->getLoadForecastSlots($lfcX, 2) : array();
-            foreach ($need as $i => $ts) {
-                if (!isset($est[$ts])) { break; }
-                if ($estFrom === PHP_INT_MAX) { $estFrom = $i; }
-                $dpP[$i] = $est[$ts];
-                if (!isset($dpPvX[$i])) { $dpPvX[$i] = 0.0; } // ohne PV-Prognose fuer Tag 3 vorsichtig: keine PV
-                if (!isset($dpL[$i])) { $dpL[$i] = (float)($loadD2[$i - 192] ?? $avgHouseWTomorrow); }
-            }
+            list($dpP, $dpPvX, $dpL, $estFrom) = EMS_Planner::extendHorizon($dpP, $dpPvX, $dpL, $known, $estIdx, $loadD2, (float)$avgHouseWTomorrow);
         }
         $dp = $this->ReadPropertyBoolean('PLAN_Optimizer') ? $this->optimizeBattery($dpP, $dpPvX, $dpL, $nowSlot, $soc, $ctx, $dpForced, $estFrom) : array();
 
