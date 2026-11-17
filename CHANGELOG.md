@@ -2,6 +2,10 @@
 
 Ältere Versionen: [CHANGELOG-Archiv.md](CHANGELOG-Archiv.md)
 
+## 0.105.3 (2026-11-17)
+- **Preisschätzung am bekannten Tag ausgerichtet (Befund Paul 17.11.2026):** Der Optimierer plant seit 0.103.0 einen Tag über die bekannten Preise hinaus. Geschätzt wird dieser Tag als Mittel der letzten vier gleichartigen Tage. Bei Paul lag diese Schätzung für den 19.11. bei 37–46 ct, auch nachts, und damit im Schnitt 5,4 ct über den echten Preisen des 18.11. Der Optimierer hielt deshalb den 114-kWh-Akku am 18.11. bei 31–36 ct den ganzen Tag voll und lud mittags sogar nach. Um Mitternacht hätte er noch 78 % gehabt. Jetzt wird die Schätzung um die mittlere Abweichung verschoben, die dieselbe Methode am letzten bekannten Tag gegenüber den echten Preisen hat. Der Tagesverlauf bleibt, nur das Niveau passt. Nachgerechnet mit Pauls echten Daten: Entladen ab 07 Uhr, Halten nur zur günstigsten Mittagszeit, um Mitternacht 41 % statt 79 %. Bei weniger als 48 vergleichbaren Viertelstunden bleibt die Schätzung unverändert.
+- Vier neue Prüfungen: Verschiebung, zu wenig Vergleichswerte, großer Akku entlädt tagsüber bei billigem Nachladen, kein Laden auf geschätzte Preise. Die Mutationsprobe an der Verschiebung schlägt wie erwartet an.
+
 ## 0.105.2 (2026-11-17)
 - **Schreib-Überwachung auch für Wallboxen:** Steuert das EMS Wallboxen, prüft es jetzt auch die Wallboxen über ChargerHub (ab 0.14.0-beta.1) auf hängende Schreibbefehle (Variablen `ctl_write_*`, SUITE.md Stolperstein 31). Kommt länger als 3 min kein Befehl an, steht das im Log und kommt als Push mit dem betroffenen Gerät („Wallbox 1“, „Wechselrichter“). Jedes Gerät wird getrennt gemeldet und entwarnt. Ohne aktive Wallbox-Steuerung werden Wallboxen nicht überwacht. Wallboxen über OCPPHub und EEBUS bieten diese Variablen bisher nicht an.
 - Zwei neue Prüfungen. Die Mutationsprobe am Wallbox-Zweig schlägt wie erwartet an.

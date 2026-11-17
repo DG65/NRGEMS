@@ -3973,6 +3973,21 @@ $oK = call($ems, 'optimizeBattery', [$pK, array_fill(0, 192, 0.0), array_fill(0,
 $oK2 = call($ems, 'optimizeBattery', [$pK2, array_fill(0, 192, 0.0), array_fill(0, 192, 1500.0), 0, 60.0, $ctxA, [], 96]);
 check('Geschaetzter teurer Abend morgen (60 ct): heute wird Akkuenergie aufgehoben (Halten), ohne Schaetzung nicht',
     $cnt($oK2, 'hold') > 0 && $cnt($oK, 'hold') === 0 && $oK2[95]['soc'] > $oK[95]['soc'], json_encode([$cnt($oK, 'hold'), $cnt($oK2, 'hold'), $oK[95]['soc'], $oK2[95]['soc']]));
+// 0.105.3: grosser Akku (Befund Paul 17.11.2026, 114 kWh): Die Restenergie darf nicht so bewertet werden, als koenne der Akku
+// am geschaetzten Tag nie nachgeladen werden -- sonst haelt der Plan den ganzen Tag bei 33 ct, obwohl der Abend den Akku kaum leert.
+$ctxP = array_merge($ctxA, ['capKwh' => 114.0, 'chargeKw' => 17.0, 'dischargeKw' => 17.0, 'maxW' => 29900, 'socMin' => 10.0, 'socReserve' => 0.0, 'chargeCurve' => []]);
+$pP = []; for ($i = 0; $i < 192; $i++) { $h = $i % 96; $pP[$i] = $h < 24 ? 0.28 : ($h < 61 ? 0.33 : 0.42); }
+$oP1 = call($ems, 'optimizeBattery', [$pP, array_fill(0, 192, 0.0), array_fill(0, 192, 2500.0), 24, 100.0, $ctxP, [], 96]);
+$dayHold = count(array_filter($oP1, fn($x, $i) => $i >= 24 && $i < 61 && $x['act'] === 'hold', ARRAY_FILTER_USE_BOTH));
+check('Grosser Akku (114 kWh, voll): tagsueber bei 33 ct wird entladen statt gehalten, wenn die naechste Nacht zu 28 ct nachladen kann',
+    $dayHold === 0, json_encode([$dayHold, $oP1[60]['soc'] ?? null, $oP1[95]['soc'] ?? null]));
+check('Grosser Akku: auch mit der Aenderung kein Laden auf geschaetzte Preise im Plan',
+    empty(array_filter($oP1, fn($x, $i) => $i >= 96 && $x['act'] === 'charge', ARRAY_FILTER_USE_BOTH)));
+$an = call($ems, 'anchorEstimate', [[1000 => 0.40, 1900 => 0.45], array_combine(range(0, 59), array_fill(0, 60, 0.30)), array_combine(range(0, 59), array_fill(0, 60, 0.354))]);
+check('Schaetzung wird am bekannten Tag ausgerichtet: echte Preise 5,4 ct unter der Methode -> Schaetzung 5,4 ct tiefer, Verlauf bleibt',
+    abs($an[1000] - 0.346) < 1e-9 && abs($an[1900] - 0.396) < 1e-9, json_encode($an));
+$an2 = call($ems, 'anchorEstimate', [[1000 => 0.40], array_fill(0, 20, 0.30), array_fill(0, 20, 0.354)]);
+check('Zu wenig Vergleichs-Slots (< 48): Schaetzung unveraendert', $an2 === [1000 => 0.40]);
 check('Optimierer: ohne Preise leer', call($ems, 'optimizeBattery', [[], $pvZ0, $ld3, 0, 50.0, $ctxA]) === []);
 // 5) Schalter aus
 prop('PLAN_Bedarf_Aktiv', false);

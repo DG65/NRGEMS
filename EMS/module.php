@@ -4541,6 +4541,22 @@ class EMS extends IPSModule
     }
 
     /**
+     * Schaetzpreise am Niveau des letzten bekannten Tages ausrichten (0.105.3, Befund Paul 17.11.2026): Das Mittel der letzten
+     * vier gleichartigen Tage lag 5,4 ct ueber den echten Preisen von morgen; der Optimierer hielt deshalb den 114-kWh-Akku
+     * den ganzen Tag voll fuer einen vermeintlich teuren Folgetag. Verschiebung = mittlere Abweichung echter Preis minus
+     * Schaetzung (gleiche Methode) am bekannten Tag; der Tagesverlauf bleibt. Weniger als 48 Vergleichs-Slots: unveraendert.
+     */
+    private function anchorEstimate(array $est, array $knownActual, array $knownEst): array
+    {
+        $diff = array();
+        foreach ($knownActual as $t => $v) { if (isset($knownEst[$t])) { $diff[] = (float)$v - (float)$knownEst[$t]; } }
+        if (count($diff) < 48 || empty($est)) { return $est; }
+        $shift = array_sum($diff) / count($diff);
+        foreach ($est as $t => $v) { $est[$t] = (float)$v + $shift; }
+        return $est;
+    }
+
+    /**
      * Akku-Optimierer (0.102.0, Dietmar 13.11.2026: "Eine feste Preisgrenze darf nicht darueber entscheiden, ob gekauft wird").
      * Dynamische Programmierung ueber den ganzen Preis-Horizont (bis 192 Viertelstunden): je Slot Automatik, Halten
      * oder Netzladen, so dass Netzbezug x Preis - Einspeisung x Verguetung minimal wird. Jede Entscheidung wird gegen
@@ -6225,6 +6241,9 @@ class EMS extends IPSModule
             $d0 = strtotime('today'); $need = array();
             for ($i = $known; $i < $known + 96; $i++) { $need[$i] = $d0 + $i * 900; }
             $est = $this->estimatePrices(array_values($need));
+            // 0.105.3: Niveau der Schaetzung am letzten bekannten Tag ausrichten (Befund Paul 17.11.2026)
+            $kn = array(); for ($i = max(0, $known - 96); $i < $known; $i++) { $kn[$d0 + $i * 900] = (float)$price192[$i]; }
+            $est = $this->anchorEstimate($est, $kn, $this->estimatePrices(array_keys($kn)));
             $lfcX = $this->getLfcInstance(); $loadD2 = ($lfcX > 0) ? $this->getLoadForecastSlots($lfcX, 2) : array();
             foreach ($need as $i => $ts) {
                 if (!isset($est[$ts])) { break; }
