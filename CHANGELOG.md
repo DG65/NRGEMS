@@ -2,6 +2,10 @@
 
 Ältere Versionen: [CHANGELOG-Archiv.md](CHANGELOG-Archiv.md)
 
+## 0.106.4 (2026-11-17)
+- **Umbau Schritt 3, Wechselrichter in eigenen Dateien, Verhalten unverändert:** Die Schreibwege der Wechselrichter liegen jetzt je Hersteller in eigenen Dateien: `EMS/InverterSolis.php` (341 Zeilen: Halten, Netzlade-Erlaubnis, Zwangsladen und -entladen) und `EMS/InverterGoodwe.php` (193 Zeilen: Schreibweg ctl_ems_*, Totmann-Erkennung). Die Erkennung der Wechselrichter-Art samt Wirkungstext steht in `EMS/Inverter.php`. Sie sind als Traits Teil der Klasse EMS, wie bisher schon das Formular-Layout. Der Code wurde wörtlich verschoben, mit doppelter Prüfung: Jede Zeile der neuen Dateien stammt aus der alten `module.php`, und keine Zeile ging verloren. Die Hauptdatei schrumpft dadurch von 12.164 auf 11.619 Zeilen.
+- Alle 1.185 Prüfungen, der Referenzlauf und der Prüfstand des Planungskerns sind gleich.
+
 ## 0.106.3 (2026-11-17)
 - **Umbau Schritt 2c, Preisschätzung und Horizont im Planungskern, Verhalten unverändert:** Die Rechnung der Preisschätzung (Mittel der letzten vier gleichartigen Tage) und ihre Ausrichtung am letzten bekannten Tag sind jetzt ein Schritt in `EMS_Planner::estimateAnchored()`. Bisher waren es Schätzung und Nachkorrektur, zwei getrennte Aufrufe in der Tagesplanung. Das Archiv wird dafür nur noch einmal gelesen statt zweimal. Auch das Verlängern des Optimierer-Horizonts um die geschätzten Viertelstunden steht im Kern (`extendHorizon()`, `knownPriceSlots()`). Das Lesen von Archiv und Prognosen bleibt im Modul.
 - Zwei nicht mehr benutzte Funktionen im Modul entfernt (`estimatePrices`, Weiterleitung `anchorEstimate`).

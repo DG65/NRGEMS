@@ -1,0 +1,341 @@
+<?php
+
+declare(strict_types=1);
+
+/**
+ * EMS, Teil der Klasse EMS (Umbau Schritt 3, 17.11.2026): Schreibweg Solis (InverterHub ctl_force_mode/-w, Speicherbetrieb 43110: Halten, Netzlade-Erlaubnis, Zwangsladen/-entladen).
+ * Wörtlich aus module.php verschoben, Verhalten unverändert. Eingebunden per "use EMSInverterSolis;" in der Klasse EMS.
+ */
+trait EMSInverterSolis
+{
+    private function isSolisDriver(int $iid): bool
+    {
+        return $this->findChildVariableIdByIdent($iid, 'ctl_force_mode') > 0
+            && $this->findChildVariableIdByIdent($iid, 'ctl_force_w') > 0
+            && $this->findChildVariableIdByIdent($iid, 'ctl_ems_mode') <= 0;
+    }
+
+    /**
+     * Wiederholabstand fuer den Solis-Zwangsmodus (s). Das Geraet nimmt ihn nach dem Fernsteuer-Zeitlimit (Register 43282,
+     * InverterHub `cfg_rc_timeout_min`, gemessen 3 min) zurueck. EMS schreibt hoechstens alle halbe Zeitlimit-Dauer neu,
+     * nie seltener als alle 60 s, nie oefter als alle 15 s; ohne lesbares Zeitlimit 60 s.
+     */
+    private function solisRewriteIntervalSec(int $iid): int
+    {
+        $id = $this->findChildVariableIdByIdent($iid, 'cfg_rc_timeout_min');
+        $min = ($id > 0) ? (int)GetValue($id) : 0;
+        if ($min <= 0) { return 60; }
+        return (int)max(15, min(60, intdiv($min * 60, 2)));
+    }
+
+    private function solisPvSurplusW(): float
+    {
+        try { return (float)$this->GetValue('EMS_PVPower') - (float)$this->GetValue('EMS_HousePower'); }
+        catch (Throwable $e) { return 0.0; }
+    }
+
+    /**
+     * Darf der Akku jetzt gehalten werden? Nicht bei PV-Ueberschuss (Beginn ab 200 W, Fortsetzen bis 500 W), solange nicht
+     * gemessen ist, ob PV bei gesperrtem Entladen weiter in die Batterie laedt. Gesperrt nach wiederholtem Fehlschlag (10 min).
+     */
+    private function solisHoldAllowed(int $iid = 0): bool
+    {
+        if (time() < $this->ReadAttributeInteger('SolisHoldBlockedUntil')) { return false; }
+        $limit = $this->ReadAttributeBoolean('SolisHoldActive') ? 500.0 : 200.0;
+        if ($this->solisPvSurplusW() > $limit) { return false; }
+        // Speicherbetrieb 17 (Reserve) haelt den Akku NUR unter dem Reserve-SOC des Geraets (Register 43024, InverterHub
+        // `cfg_soc_backup`): darueber entlaedt der Solis ganz normal. Gemessen 22.10.2026: unter dem Reserve-SOC (80 %) mit PV
+        // laedt 17 die Batterie mit der gesamten PV und bezieht das Haus aus dem Netz; ohne Reserve-SOC-Wert nie raten.
+        if ($iid > 0) {
+            $rid = $this->findChildVariableIdByIdent($iid, 'cfg_soc_backup');
+            if ($rid <= 0) { return false; }
+            try { $soc = (float)$this->GetValue('EMS_BatSOC'); } catch (Throwable $e) { return false; }
+            if ($soc >= (float)GetValue($rid) - 1.0) { return false; }
+        }
+        return true;
+    }
+
+    /**
+     * Nach dem Freigeben der Entladesperre: erwarteten Speicherbetrieb zuruecklesen und bei Abweichung hoechstens dreimal
+     * (im Abstand von 60 s) ausdruecklich neu schreiben. Das Schreiben von Register 43110 kam am Solis nur bei 2 von 4
+     * Versuchen an (gemessen 20.10.2026), deshalb nie blind vertrauen.
+     */
+    private function solisHoldHousekeeping(int $iid): void
+    {
+        $target = $this->ReadAttributeInteger('SolisRestoreTarget');
+        if ($target <= 0) { return; }
+        $stId = $this->findChildVariableIdByIdent($iid, 'cfg_storage_mode');
+        $cur = ($stId > 0) ? (int)GetValue($stId) : -1;
+        if ($cur !== $target && $stId > 0 && IPS_GetVariable($stId)['VariableUpdated'] <= $this->ReadAttributeInteger('SolisHoldTryAt')) { return; } // Rueckmeldung noch aelter als das Schreiben (Lesezyklus 5 min)
+        if ($cur === $target || $cur <= 0) { if ($cur === $target) { $this->WriteAttributeInteger('SolisRestoreTarget', -1); $this->WriteAttributeInteger('SolisHoldTries', 0); } return; }
+        $now = time();
+        if ($now - $this->ReadAttributeInteger('SolisHoldTryAt') < 60) { return; }
+        if ($this->ReadAttributeInteger('SolisHoldTries') >= 3) {
+            $this->emsLog(EMS_LOG_BASIC, sprintf('Solis: Speicherbetrieb steht auf %d statt auf dem gemerkten Wert %d, auch nach drei Versuchen -- bitte am Gerät prüfen', $cur, $target));
+            $this->WriteAttributeInteger('SolisRestoreTarget', -1);
+            $this->WriteAttributeInteger('SolisHoldTries', 0);
+            return;
+        }
+        $this->WriteAttributeInteger('SolisHoldTries', $this->ReadAttributeInteger('SolisHoldTries') + 1);
+        $this->WriteAttributeInteger('SolisHoldTryAt', $now);
+        $this->ipsWrite($iid, 'ctl_storage_mode', $target);
+    }
+
+    private function solisGridChargeTarget(int $cur): int
+    {
+        return (($cur & 16) !== 0) ? (($cur & ~16) | 32) : ($cur | 32);
+    }
+
+    private function solisGridChargeEnsure(int $iid, bool $wantCharge, int $now): void
+    {
+        $active = $this->ReadAttributeBoolean('SolisGcActive');
+        $stId = $this->findChildVariableIdByIdent($iid, 'cfg_storage_mode');
+        if ($stId <= 0 || $this->findChildVariableIdByIdent($iid, 'ctl_storage_mode') <= 0) { return; }
+        $cur = (int)GetValue($stId);
+        $fresh = (IPS_GetVariable($stId)['VariableUpdated'] > $this->ReadAttributeInteger('SolisGcTryAt'));
+        if (!$wantCharge) {
+            if (!$active) { return; }
+            $saved = $this->ReadAttributeInteger('SolisGcSaved');
+            $this->WriteAttributeBoolean('SolisGcActive', false);
+            $this->WriteAttributeInteger('SolisGcTries', 0);
+            if ($saved > 0) {
+                $this->ipsWrite($iid, 'ctl_storage_mode', $saved);
+                // Ruecklesen/Wiederholen uebernimmt solisHoldHousekeeping(); fuer ein anschliessendes Halten ist das der Nutzerwert
+                $this->WriteAttributeInteger('SolisUserStorage', $saved);
+                $this->WriteAttributeInteger('SolisRestoreTarget', $saved);
+                $this->WriteAttributeInteger('SolisHoldTries', 0);
+                $this->WriteAttributeInteger('SolisHoldTryAt', $now);
+            }
+            return;
+        }
+        if ($this->ReadAttributeInteger('SolisRestoreTarget') > 0) { return; } // erst die laufende Wiederherstellung abwarten
+        if ($cur <= 0) { return; }
+        if (!$active) {
+            if (($cur & 32) !== 0) { return; } // Netzladen ist schon erlaubt
+            $this->WriteAttributeInteger('SolisGcSaved', $cur);
+            $this->WriteAttributeBoolean('SolisGcActive', true);
+            $this->WriteAttributeInteger('SolisGcTries', 1);
+            $this->WriteAttributeInteger('SolisGcTryAt', $now);
+            $this->ipsWrite($iid, 'ctl_storage_mode', $this->solisGridChargeTarget($cur));
+            $this->emsLog(EMS_LOG_BASIC, sprintf('Solis: Speicherbetrieb %d erlaubt kein Netzladen -- für das Zwangsladen vorübergehend %d', $cur, $this->solisGridChargeTarget($cur)));
+            return;
+        }
+        if (($cur & 32) !== 0) { if ($this->ReadAttributeInteger('SolisGcTries') !== 0) { $this->WriteAttributeInteger('SolisGcTries', 0); } return; }
+        if (!$fresh || ($now - $this->ReadAttributeInteger('SolisGcTryAt')) < 60) { return; }
+        $tries = $this->ReadAttributeInteger('SolisGcTries');
+        if ($tries >= 3) {
+            if ($tries === 3) {
+                $this->emsLog(EMS_LOG_BASIC, sprintf('Solis: Netzlade-Erlaubnis kam nach drei Versuchen nicht an (Speicherbetrieb %d) -- Zwangsladen wirkt nur aus PV, bitte am Gerät prüfen', $cur));
+                $this->WriteAttributeInteger('SolisGcTries', 4);
+            }
+            return;
+        }
+        $this->WriteAttributeInteger('SolisGcTries', $tries + 1);
+        $this->WriteAttributeInteger('SolisGcTryAt', $now);
+        $this->ipsWrite($iid, 'ctl_storage_mode', $this->solisGridChargeTarget($this->ReadAttributeInteger('SolisGcSaved')));
+    }
+
+    /**
+     * Entladesperre setzen oder freigeben (InverterHub `svc_discharge_inhibit`, Vertrag 1.5; Solis: Speicherbetrieb 17 = Reserve
+     * ohne Netzladen, nie 49/51). EMS merkt den Nutzerwert VOR dem Setzen (zusaetzlich zum InverterHub) und stellt ihn beim
+     * Freigeben wieder her. Schreiben nur bei Wechsel, mindestens 60 s Abstand (Register fest gespeichert, nicht zyklisch).
+     */
+    private function solisHoldApply(int $iid, bool $want, int $now): void
+    {
+        $active = $this->ReadAttributeBoolean('SolisHoldActive');
+        $stId = $this->findChildVariableIdByIdent($iid, 'cfg_storage_mode');
+        $cur = ($stId > 0) ? (int)GetValue($stId) : -1;
+        if ($want) {
+            if ($active) {
+                // Rücklesen: kam der Befehl an? Sonst hoechstens dreimal im Abstand von 60 s neu, danach 10 min Pause
+                if ($cur > 0 && $cur !== 17 && $now - $this->ReadAttributeInteger('SolisHoldTryAt') >= 60) {
+                    if ($this->ReadAttributeInteger('SolisHoldTries') >= 3) {
+                        $this->emsLog(EMS_LOG_BASIC, 'Solis: Entladesperre kam nach drei Versuchen nicht an (Speicherbetrieb ' . $cur . ') -- Pause 10 min, Wechselrichter in Automatik');
+                        $this->WriteAttributeBoolean('SolisHoldActive', false);
+                        $this->WriteAttributeInteger('SolisHoldBlockedUntil', $now + 600);
+                        $this->WriteAttributeInteger('SolisHoldTries', 0);
+                        return;
+                    }
+                    $this->WriteAttributeInteger('SolisHoldTries', $this->ReadAttributeInteger('SolisHoldTries') + 1);
+                    $this->WriteAttributeInteger('SolisHoldTryAt', $now);
+                    $this->ipsWrite($iid, 'svc_discharge_inhibit', true);
+                } elseif ($cur === 17) {
+                    $this->WriteAttributeInteger('SolisHoldTries', 0);
+                }
+                return;
+            }
+            if ($now - $this->ReadAttributeInteger('SolisHoldChangedAt') < 60) { return; }
+            if ($cur > 0 && $cur !== 17 && $this->ReadAttributeInteger('SolisRestoreTarget') <= 0) { $this->WriteAttributeInteger('SolisUserStorage', $cur); }
+            $this->WriteAttributeInteger('SolisRestoreTarget', -1);
+            $this->ipsWrite($iid, 'svc_discharge_inhibit', true);
+            $this->WriteAttributeBoolean('SolisHoldActive', true);
+            $this->WriteAttributeInteger('SolisHoldChangedAt', $now);
+            $this->WriteAttributeInteger('SolisHoldTries', 0);
+            $this->WriteAttributeInteger('SolisHoldTryAt', $now);
+            return;
+        }
+        if (!$active) { return; }
+        $saved = $this->ReadAttributeInteger('SolisUserStorage');
+        $prevId = $this->findChildVariableIdByIdent($iid, 'svc_prev_storage');
+        $prev = ($prevId > 0) ? (int)GetValue($prevId) : 0;
+        if ($prev > 0) {
+            $this->ipsWrite($iid, 'svc_discharge_inhibit', false); // InverterHub schreibt den gemerkten Wert zurueck
+            $this->WriteAttributeInteger('SolisRestoreTarget', $saved > 0 ? $saved : $prev);
+        } elseif ($saved > 0) {
+            $this->ipsWrite($iid, 'ctl_storage_mode', $saved);    // eigener gemerkter Wert (InverterHub hat nichts gemerkt)
+            $this->WriteAttributeInteger('SolisRestoreTarget', $saved);
+        } else {
+            $this->emsLog(EMS_LOG_BASIC, 'Solis: Entladesperre soll freigegeben werden, aber kein vorheriger Speicherbetrieb ist gemerkt -- bitte den Speicherbetrieb am Gerät prüfen');
+        }
+        $this->WriteAttributeBoolean('SolisHoldActive', false);
+        $this->WriteAttributeInteger('SolisHoldChangedAt', $now);
+        $this->WriteAttributeInteger('SolisHoldTries', 0);
+        $this->WriteAttributeInteger('SolisHoldTryAt', $now);
+    }
+
+    /**
+     * Solis, Entladen auf Vorgabe (Dietmar 22.10.2026, Pauls Anlage): Sollleistung (W) fuer das Zwangsentladen, 0 = nicht entladen.
+     * Nur fuer Entlademodi (3 "Entladen", 12) und nur ins Haus: Hauslast plus Wallboxen minus PV minus 150 W Reserve, hoechstens die
+     * Vorgabe des Plans (bei Modus 3 eine Obergrenze), die vom InverterHub gemeldete Entladegrenze und 30 kW. Der Solis haelt die
+     * Vorgabe als Sollwert (gemessen ~85 bis 98 %) und speist ins Netz ein, wenn sie die Hauslast uebersteigt; die Ausgangsbegrenzung
+     * des Wechselrichters stoppt das nicht. Deshalb senkt eine Einspeisung ueber 200 W die Vorgabe sofort um den eingespeisten Betrag.
+     */
+    private function solisDischargeW(int $iid, int $mode, int $powerW): int
+    {
+        if ($mode !== GW_MODE_DISCHARGE && $mode !== GW_MODE_BAT_DISCH) { return 0; }
+        try {
+            // Wallbox nur, wenn EMS sie selbst steuert (Modus 'ems') und kein Grid Rewards laeuft (0.101.2, Pauls Anlage 12.11.2026:
+            // bei Grid Rewards/Smart Charging entlud der Akku 3-4 kW ins von Tibber gesteuerte Auto -- die Praemie gibt es nur fuer Netzstrom).
+            $demand = (float)$this->GetValue('EMS_HousePower');
+            $gr = false;
+            try { $gr = (bool)$this->GetValue('EMS_GridRewards'); } catch (Throwable $e) { }
+            if (!$gr) {
+                foreach (array(1, 2) as $n) {
+                    if (($this->wallboxMode($n)['mode'] ?? '') === 'ems') { $demand += (float)$this->GetValue('EMS_WB' . $n . 'Power'); }
+                }
+            }
+            $pv = (float)$this->GetValue('EMS_PVPower');
+            $grid = (float)$this->GetValue('EMS_GridPower'); // + Einspeisung
+        } catch (Throwable $e) { return 0; }
+        $w = $demand - $pv - 150.0;
+        if ($powerW > 0) { $w = min($w, (float)$powerW); }
+        $capId = $this->findChildVariableIdByIdent($iid, 'bat_discharge_max_w');
+        $cap = ($capId > 0) ? (float)GetValue($capId) : 0.0;
+        if ($cap > 0.0) { $w = min($w, $cap); }
+        $w = min($w, 30000.0);
+        if ($grid > 200.0 && $this->ReadAttributeInteger('SolisLastMode') === 2) {
+            $w = min($w, (float)$this->ReadAttributeInteger('SolisLastPowerW') - $grid);
+        }
+        return ($w < 100.0) ? 0 : (int)(round($w / 10.0) * 10);
+    }
+
+    /**
+     * Solis (minimale Steuerung, Dietmar 20.10.2026): EMS-Entscheidung auf Zwangsladen/Automatik abbilden. Reine Weitergabe im
+     * InverterHub, Dauerhalten und Rueckfall liegen hier: Netzladen (Modus 11 mit Leistung) setzt ctl_force_w und
+     * ctl_force_mode=1 und schreibt sie im Wiederholabstand neu; alles andere gibt den Zwangsmodus frei (ctl_force_mode=0,
+     * der Wechselrichter regelt selbst). Nicht abbildbare Modi (Laden aus PV, Netzbezugsregelung, Halten, Entladen) laufen als
+     * Automatik und stehen als Grund in der Statuszeile. Die Leistung wird auf die vom InverterHub gemeldete Ladegrenze begrenzt.
+     */
+    private function setSolisMode(int $iid, int $mode, int $powerW): void
+    {
+        $now = time();
+        $capId = $this->findChildVariableIdByIdent($iid, 'bat_charge_max_w');
+        $cap = ($capId > 0) ? (float)GetValue($capId) : 0.0;
+        if ($cap <= 0.0) { $cap = 30000.0; }
+        $w = (int)(round(max(0.0, min((float)$powerW, $cap, 30000.0)) / 10.0) * 10);
+        $wantCharge = ($mode === GW_MODE_BAT_CHARGE && $w > 0);
+        // Akku halten (Plan/manuell: Modus 5 mit 0 W): Entladesperre ueber den Speicherbetrieb, nur wenn der InverterHub sie anbietet
+        // und kein PV-Ueberschuss da ist (ob PV bei gesperrtem Entladen weiter laedt, ist am Solis noch nicht gemessen)
+        $holdCapable = ($this->findChildVariableIdByIdent($iid, 'svc_discharge_inhibit') > 0 && $this->findChildVariableIdByIdent($iid, 'cfg_storage_mode') > 0);
+        // Modus 2 (Laden aus PV, Akku entlaedt nicht) und Modus 9 (Auto aus dem Netz, Smart Charging/Grid Rewards) gibt es am Solis
+        // nicht; beide sollen vor allem verhindern, dass der Akku entlaedt -- am Solis also Halten (0.101.2, Pauls Anlage 12.11.2026:
+        // als Automatik gefahren speiste der Akku bei Grid Rewards 3-4 kW ins Auto).
+        $isHold = ((($mode === GW_MODE_AC_EXPORT || $mode === GW_MODE_STANDBY) && $powerW <= 0)
+            || $mode === GW_MODE_CHARGE_PV || $mode === GW_MODE_BUY);
+        $wantHold = (!$wantCharge && $holdCapable && $isHold && $this->solisHoldAllowed($iid));
+        $this->solisGridChargeEnsure($iid, $wantCharge, $now);
+        $this->solisHoldHousekeeping($iid);
+        $this->solisHoldApply($iid, $wantHold, $now);
+        $dischW = $wantCharge ? 0 : $this->solisDischargeW($iid, $mode, $powerW);
+        $wantDisch = ($dischW > 0);
+        $unsupported = (!$wantCharge && !$wantHold && !$wantDisch && $mode !== GW_MODE_AUTO && $mode !== GW_MODE_STOP);
+        $why = $unsupported ? sprintf($this->t('Solis: mode %d is not supported, the inverter stays in automatic mode'), $mode) : '';
+        if ($unsupported && ($mode === GW_MODE_DISCHARGE || $mode === GW_MODE_BAT_DISCH)) {
+            $why = $this->t('Solis: discharging on demand paused (no demand beyond PV and reserve), the inverter stays in automatic mode');
+        }
+        if ($unsupported && $isHold && $holdCapable) {
+            $why = $this->t('Solis: hold battery paused (PV surplus, state of charge above the device\'s reserve SOC, or waiting time), the inverter stays in automatic mode');
+        }
+        if ($this->ReadAttributeString('NoControlReason') !== $why) { $this->WriteAttributeString('NoControlReason', $why); }
+
+        $devId = $this->findChildVariableIdByIdent($iid, 'cfg_force_mode');
+        $dev = ($devId > 0) ? (int)GetValue($devId) : -1; // vom Geraet zurueckgelesen, -1 = unbekannt
+        $interval = $this->solisRewriteIntervalSec($iid);
+        $lastMode = $this->ReadAttributeInteger('SolisLastMode');
+        $lastPower = $this->ReadAttributeInteger('SolisLastPowerW');
+        $lastAt = $this->ReadAttributeInteger('SolisLastWriteAt');
+
+        if ($wantCharge) {
+            $need = ($lastMode !== 1) || ($w !== $lastPower) || (($now - $lastAt) >= $interval) || ($dev === 0 && ($now - $lastAt) >= 10);
+            if ($dev === 0 && $lastMode === 1 && ($now - $lastAt) > (2 * $interval + 30)
+                && $now - $this->ReadAttributeInteger('NoControlLoggedAt') > 3600) {
+                $this->WriteAttributeInteger('NoControlLoggedAt', $now);
+                $this->emsLog(EMS_LOG_BASIC, sprintf('Solis: der Zwangsmodus wurde vom Gerät zurückgenommen, obwohl alle %d s neu geschrieben wird -- Fernsteuer-Zeitlimit prüfen', $interval));
+            }
+            if ($need) {
+                $this->ipsWrite($iid, 'ctl_force_w', $w);       // erst die Leistung, dann der Modus
+                $this->ipsWrite($iid, 'ctl_force_mode', 1);
+                $this->WriteAttributeInteger('SolisLastMode', 1);
+                $this->WriteAttributeInteger('SolisLastPowerW', $w);
+                $this->WriteAttributeInteger('SolisLastWriteAt', $now);
+                $this->WriteAttributeInteger('SolisReleaseTries', 0);
+            }
+            return;
+        }
+        if ($wantDisch) {
+            // Zwangsentladen (Register 43135 = 2): fallt ohne Neuschreiben nach dem Zeitlimit zurueck und reagiert frueher, daher alle
+            // 30 s neu; sonst wie das Laden (erst die Leistung, dann der Modus, sofort neu bei zurueckgelesenem Modus 0)
+            $intD = min($interval, 30);
+            $need = ($lastMode !== 2) || (abs($dischW - $lastPower) >= 100) || (($now - $lastAt) >= $intD) || ($dev === 0 && ($now - $lastAt) >= 10);
+            if ($need) {
+                $this->ipsWrite($iid, 'ctl_force_w', $dischW);
+                $this->ipsWrite($iid, 'ctl_force_mode', 2);
+                $this->WriteAttributeInteger('SolisLastMode', 2);
+                $this->WriteAttributeInteger('SolisLastPowerW', $dischW);
+                $this->WriteAttributeInteger('SolisLastWriteAt', $now);
+                $this->WriteAttributeInteger('SolisReleaseTries', 0);
+            }
+            return;
+        }
+        // Freigeben: NUR einen Zwangsmodus, den EMS selbst gesetzt hat (SolisLastMode = 1 Laden, 2 Entladen). Ein Zwangsmodus von aussen
+        // (Messskript, Solis-App/-Portal, Fremdregler) wird nie angefasst, auch nicht im Trockenlauf und nicht bei
+        // EMS aus (Befund 21.10.2026: mit EMS im Trockenlauf fiel ein extern gesetztes Zwangsentladen nach 31 bis 122 s
+        // zurueck, mit EMS aus erst nach dem Geraete-Zeitlimit). Das Freigeben wird bis zur Bestaetigung hoechstens
+        // dreimal im Abstand von 10 s wiederholt (Schreibbefehle gehen am Solis gelegentlich verloren), danach gibt das
+        // Geraete-Zeitlimit den Modus ohnehin frei.
+        if ($lastMode !== 1 && $lastMode !== 2) { return; }
+        if ($dev === 0) {
+            $this->WriteAttributeInteger('SolisLastMode', 0);
+            $this->WriteAttributeInteger('SolisLastPowerW', 0);
+            $this->WriteAttributeInteger('SolisReleaseTries', 0);
+            return;
+        }
+        $tries = $this->ReadAttributeInteger('SolisReleaseTries');
+        if ($tries >= 3 || ($tries > 0 && ($now - $lastAt) < 10)) {
+            if ($tries >= 3) {
+                $this->WriteAttributeInteger('SolisLastMode', 0);
+                $this->WriteAttributeInteger('SolisLastPowerW', 0);
+                $this->WriteAttributeInteger('SolisReleaseTries', 0);
+            }
+            return;
+        }
+        $this->ipsWrite($iid, 'ctl_force_mode', 0);
+        $this->WriteAttributeInteger('SolisLastWriteAt', $now);
+        if ($dev < 0) { // ohne Rueckmeldung nicht wiederholen
+            $this->WriteAttributeInteger('SolisLastMode', 0);
+            $this->WriteAttributeInteger('SolisLastPowerW', 0);
+            return;
+        }
+        $this->WriteAttributeInteger('SolisReleaseTries', $tries + 1);
+    }
+}
