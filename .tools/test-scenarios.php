@@ -4363,6 +4363,57 @@ check('Formularzeile ohne Eingriff', strpos(call($ems, 'decisionStepsStatusLine'
 attr('LastDecisionSteps', json_encode(['plausibility', 'export_overlap']));
 check('Formularzeile nennt die eingreifenden Schritte in Reihenfolge', call($ems, 'decisionStepsStatusLine') === 'Letzte Entscheidung geändert durch: Plausibilitätswächter → Einspeise-Überwachung', call($ems, 'decisionStepsStatusLine'));
 
+echo "\n8ar) Umbau 2: Referenzlauf Planung (golden-planung.json; neu schreiben nur bewusst mit EMS_GOLDEN=write)\n";
+$ems = freshEms();
+$gold = [];
+$rnd = function (int $seed) { mt_srand($seed); };
+$base = ['avgHouseW' => 400.0, 'socMin' => 10.0, 'socReserve' => 0.0, 'chargeCurve' => [], 'maxW' => 29900.0, 'houseLoadSlots' => []];
+$cases = [
+    ['capKwh' => 10.0,  'chargeKw' => 5.0,  'dischargeKw' => 5.0,  'cycleCost' => 0.0,   'feedTariff' => 0.08],
+    ['capKwh' => 40.0,  'chargeKw' => 20.0, 'dischargeKw' => 20.0, 'cycleCost' => 0.031, 'feedTariff' => 0.1836],
+    ['capKwh' => 40.0,  'chargeKw' => 20.0, 'dischargeKw' => 3.0,  'cycleCost' => 0.0,   'feedTariff' => 0.0],
+    ['capKwh' => 114.0, 'chargeKw' => 17.0, 'dischargeKw' => 17.0, 'cycleCost' => 0.015, 'feedTariff' => 0.0],
+    ['capKwh' => 114.0, 'chargeKw' => 17.0, 'dischargeKw' => 4.0,  'cycleCost' => 0.0,   'feedTariff' => 0.07, 'socReserve' => 10.0],
+    ['capKwh' => 20.0,  'chargeKw' => 10.0, 'dischargeKw' => 10.0, 'cycleCost' => 0.02,  'feedTariff' => 0.12, 'chargeCurve' => [0 => 10.0, 18 => 6.0, 19 => 2.0]],
+];
+foreach ($cases as $ci => $cx) {
+    $ctxG = array_merge($base, $cx);
+    foreach ([1, 2] as $variant) {
+        $rnd(1000 * $ci + $variant);
+        $P = []; $PV = []; $L = [];
+        for ($i = 0; $i < 288; $i++) {
+            $h = ($i % 96) / 4;
+            $P[$i] = round(0.22 + 0.12 * sin(($h - 4) / 24 * 2 * M_PI) + mt_rand(-30, 30) / 1000 + ($variant === 2 && $h > 11 && $h < 14 ? -0.25 : 0.0), 4);
+            $PV[$i] = ($h > 7 && $h < 17) ? round(mt_rand(0, 9000) * sin(($h - 7) / 10 * M_PI)) : 0.0;
+            $L[$i] = (float)mt_rand(200, 4500);
+        }
+        $ctxG['houseLoadSlots'] = array_slice($L, 0, 96);
+        foreach ([[0, 15.0], [30, 60.0], [70, 98.0]] as $st) {
+            $o = call($ems, 'optimizeBattery', [$P, $PV, $L, $st[0], $st[1], $ctxG, [], ($variant === 2 ? 192 : PHP_INT_MAX)]);
+            $gold['opt'][$ci . '-' . $variant . '-' . $st[0]] = array_map(fn($x) => $x['act'][0] . round($x['soc'], 1), $o);
+        }
+        for ($k = 0; $k < 40; $k++) {
+            $slot = mt_rand(0, 95); $soc = (float)mt_rand(0, 1000) / 10;
+            $r = call($ems, 'simulateAutomatikSlot', [$slot, $PV[$slot], $P[$slot], $soc, $ctxG]);
+            $gold['auto'][$ci . '-' . $variant . '-' . $k] = [round($r['soc'], 6), $r['plan']['reason']];
+            foreach (['charge', 'hold'] as $act) {
+                $r2 = call($ems, 'optimizerPlanSlot', [$slot, $P[$slot], $soc, ['act' => $act, 'soc' => $soc], $ctxG, $PV[$slot]]);
+                $gold['plan'][$ci . '-' . $variant . '-' . $k . '-' . $act] = [round($r2['soc'], 6), $r2['plan']['op'], $r2['plan']['power']];
+            }
+        }
+    }
+}
+$gf = __DIR__ . '/golden-planung.json';
+if (getenv('EMS_GOLDEN') === 'write') { file_put_contents($gf, json_encode($gold, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE)); echo "  (Referenz neu geschrieben)\n"; }
+$ref = is_file($gf) ? json_decode(file_get_contents($gf), true) : null;
+$gold = json_decode(json_encode($gold), true); // gleiche Typen wie aus der Datei (60.0 vs 60)
+if ($ref !== null) {
+    foreach (['opt', 'auto', 'plan'] as $part) {
+        $diff = []; foreach ($ref[$part] as $k => $v) { if (($gold[$part][$k] ?? null) !== $v) { $diff[] = $k; } }
+        check('Referenzlauf ' . $part . ': ' . count($ref[$part]) . ' Faelle gleich wie gespeichert', $diff === [], count($diff) . ' abweichend, z. B. ' . json_encode(array_slice($diff, 0, 3)));
+    }
+}
+
 // ===========================================================================
 if (getenv('EMS_DUMP')) { file_put_contents(getenv('EMS_DUMP'), implode("\n", $GLOBALS['DUMP'] ?? []) . "\n"); }
 echo "\n" . ($fails === 0 ? "ALLE SZENARIEN BESTANDEN" : "$fails SZENARIO(S) VERLETZT") . "\n\n";
