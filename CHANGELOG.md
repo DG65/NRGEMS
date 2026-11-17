@@ -2,6 +2,9 @@
 
 Ältere Versionen: [CHANGELOG-Archiv.md](CHANGELOG-Archiv.md)
 
+## 0.106.5 (2026-11-17)
+- **Umbau Schritt 4, Wallbox und Fahrzeuge in eigenen Dateien, Verhalten unverändert:** `EMS/Wallbox.php` (895 Zeilen: Freigaben, Ladepläne, Bedienvariablen, Statuszeilen, Tibber-Fahrzeugeinstellungen), `EMS/WallboxSources.php` (262 Zeilen: ChargerHub, OCPPHub und EEBUS finden, Zuordnung, Messwerte, Schreibrecht) und `EMS/Vehicle.php` (121 Zeilen: Fahrzeuge nach Vertrag vehicle 1.0, Datenfrische, Akkureserve für die Heimfahrt). Sie sind als Traits Teil der Klasse EMS. Der Code wurde wörtlich verschoben und in beide Richtungen zeilengenau geprüft. Öffentliche Funktionen (`EMS_GetWallboxes`, `EMS_WallboxModeChanged`, `EMS_WallboxLinkChanged`) bleiben in `module.php`. Die Hauptdatei schrumpft von 11.619 auf 10.377 Zeilen.
+
 ## 0.106.4 (2026-11-17)
 - **Umbau Schritt 3, Wechselrichter in eigenen Dateien, Verhalten unverändert:** Die Schreibwege der Wechselrichter liegen jetzt je Hersteller in eigenen Dateien: `EMS/InverterSolis.php` (341 Zeilen: Halten, Netzlade-Erlaubnis, Zwangsladen und -entladen) und `EMS/InverterGoodwe.php` (193 Zeilen: Schreibweg ctl_ems_*, Totmann-Erkennung). Die Erkennung der Wechselrichter-Art samt Wirkungstext steht in `EMS/Inverter.php`. Sie sind als Traits Teil der Klasse EMS, wie bisher schon das Formular-Layout. Der Code wurde wörtlich verschoben, mit doppelter Prüfung: Jede Zeile der neuen Dateien stammt aus der alten `module.php`, und keine Zeile ging verloren. Die Hauptdatei schrumpft dadurch von 12.164 auf 11.619 Zeilen.
 - Alle 1.185 Prüfungen, der Referenzlauf und der Prüfstand des Planungskerns sind gleich.
