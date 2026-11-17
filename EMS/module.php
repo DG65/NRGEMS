@@ -178,6 +178,7 @@ define('GUID_POWERPRICE', '{9354E28B-4E62-AEE5-8F88-BECA9F3F4F8F}'); // Symcon-S
 // Instanz-ID. Property NOTIFY_Visualization_ID laesst den Nutzer explizit
 // auswaehlen, siehe GetWebFrontInstances()/checkFederationHealthAlarm().
 define('GUID_WEBFRONT', '{3565B1F2-8F7B-4311-A4B6-1BF1D868F39E}');
+define('GUID_TILE_VISU', '{B5B875BB-9B76-45FD-4E67-2607E45B3AC4}'); // Kachel-Visualisierung (SUITE.md Stolperstein 22)
 
 require_once __DIR__ . '/FormLayout.php';
 
@@ -2123,7 +2124,8 @@ class EMS extends IPSModule
     public function GetWebFrontInstances()
     {
         $out = array(array('caption' => self::fest('(disabled)'), 'value' => 0));
-        foreach (IPS_GetInstanceListByModuleID(GUID_WEBFRONT) as $id) {
+        // 0.105.1: auch Kachel-Visualisierungen (Live-Fund Paul 17.11.2026: nur Kachel, Liste war leer)
+        foreach (array_merge(IPS_GetInstanceListByModuleID(GUID_WEBFRONT), IPS_GetInstanceListByModuleID(GUID_TILE_VISU)) as $id) {
             $out[] = array(
                 'caption' => IPS_GetName($id) . ' (#' . $id . ')',
                 'value'   => $id,
@@ -2240,8 +2242,8 @@ class EMS extends IPSModule
     private function checkFederationHealthAlarm()
     {
         $visID = $this->ReadPropertyInteger('NOTIFY_Visualization_ID');
-        if ($visID <= 0 || !function_exists('WFC_PushNotification')) {
-            return; // Feature deaktiviert oder WebFront-Push nicht verfuegbar
+        if ($visID <= 0) {
+            return; // Feature deaktiviert
         }
 
         $health      = $this->GetFederationHealth();
@@ -2252,13 +2254,7 @@ class EMS extends IPSModule
 
         if (!$isUnhealthy) {
             if ($wasAlarmed) {
-                @WFC_PushNotification(
-                    $visID,
-                    $this->t('✅ NRG-Stack federation back to normal'),
-                    $health['summary'],
-                    'info',
-                    0
-                );
+                $this->notifyUser($this->t('✅ NRG-Stack federation back to normal'), $health['summary'], 'info');
                 $this->WriteAttributeBoolean('LastHealthAlarmActive', false);
             }
             if ($since !== 0) {
@@ -2274,13 +2270,7 @@ class EMS extends IPSModule
         }
 
         if (!$wasAlarmed && (time() - $since) >= $graceSec) {
-            @WFC_PushNotification(
-                $visID,
-                $this->t('⚠️ NRG-Stack federation disrupted'),
-                sprintf($this->t('%s (ongoing for %d min.)'), $health['summary'], (int)round((time() - $since) / 60)),
-                'alert',
-                0
-            );
+            $this->notifyUser($this->t('⚠️ NRG-Stack federation disrupted'), sprintf($this->t('%s (ongoing for %d min.)'), $health['summary'], (int)round((time() - $since) / 60)), 'alert');
             $this->WriteAttributeBoolean('LastHealthAlarmActive', true);
         }
     }

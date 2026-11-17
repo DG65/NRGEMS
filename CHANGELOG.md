@@ -2,6 +2,9 @@
 
 Ältere Versionen: [CHANGELOG-Archiv.md](CHANGELOG-Archiv.md)
 
+## 0.105.1 (2026-11-17)
+- **Benachrichtigungen an Kachel-Visualisierungen (Live-Fund Paul 17.11.2026):** Die Auswahlliste unter „🔔 Benachrichtigungen“ zeigte nur klassische WebFront-Instanzen. Wer nur eine Kachel-Visualisierung hat, konnte nichts auswählen und bekam keine Push-Nachrichten. Die Liste zeigt jetzt beide Arten. Auch die Störungsmeldung des Verbunds geht jetzt an beide Oberflächen, bisher ging sie nur an WebFront. Eine neue Prüfung.
+
 ## 0.105.0 (2026-11-17)
 - **Schreib-Überwachung des Wechselrichters (Vorfall Paul 15.11.2026):** Von 08:36 bis 13:35 kamen 30 Ladebefehle nicht am Solis an, und das EMS hielt den Plan für ausgeführt. Das EMS liest jetzt die InverterHub-Variablen `ctl_write_fail_time` und `ctl_write_ok_time` (ab InverterHub 0.86.0). Kommt länger als 3 min kein Befehl durch, schreibt es das mit dem Fehlergrund ins Log und schickt eine Push-Nachricht. Ein Solis vergisst einen Befehl nach 182 s. Die Erholung wird einmal gemeldet. Ältere InverterHub-Stände ohne diese Variablen bleiben still.
 - **Push bei Netzladen ohne Wirkung:** Die bestehende Prüfung (Batterie lädt trotz Sollwert nicht, Wechselrichter regelt 20 min selbst) stand bisher nur im Log und meldet sich jetzt auch per Push.

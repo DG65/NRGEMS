@@ -4246,6 +4246,8 @@ check('Erholung wird einmal gemeldet', call($ems, 'checkInverterWriteStall', [$n
 $GLOBALS['INSTMOD'][991] = '{B5B875BB-9B76-45FD-4E67-2607E45B3AC4}'; prop('NOTIFY_Visualization_ID', 991);
 $GLOBALS['VAL'][$fT] = $now + 500; call($ems, 'checkInverterWriteStall', [$now + 500]);
 check('Kachel-Visualisierung bekommt den Push ueber VISU_PostNotificationEx', call($ems, 'checkInverterWriteStall', [$now + 700]) === 'alarm' && (end($GLOBALS['PUSH'])[2] ?? '') === 'visu', json_encode(end($GLOBALS['PUSH'])));
+$lst = array_column($ems->GetWebFrontInstances(), 'value');
+check('Auswahlliste zeigt WebFront und Kachel-Visualisierung (Live-Fund Paul 17.11.2026)', in_array(990, $lst, true) && in_array(991, $lst, true), json_encode($lst));
 prop('NOTIFY_Visualization_ID', 0); $n = count($GLOBALS['PUSH']);
 call($ems, 'notifyUser', ['x', 'y']);
 check('Ohne eingestellte Visualisierung kein Push', count($GLOBALS['PUSH']) === $n);
