@@ -2,6 +2,10 @@
 
 Ältere Versionen: [CHANGELOG-Archiv.md](CHANGELOG-Archiv.md)
 
+## 0.106.6 (2026-11-17)
+- **Formular: kurze Beschriftungen, Erklärung darunter (Rückmeldung eines Nutzers, SUITE.md Formular-Regel):** 92 von 202 Eingabefeldern hatten Beschriftungen über 40 Zeichen, die längste mit 586 Zeichen. Die Konsole schnitt sie nach etwa 40 Zeichen ab, und ein Hinweistext beim Darüberfahren existiert für Symcon-Formularfelder nicht. Jedes dieser Felder hat jetzt eine kurze Beschriftung (höchstens 35 Zeichen, deutsch und englisch). Der bisherige Text steht unverändert als Erklärung direkt darunter. Blendet das EMS ein Feld aus, etwa Wallbox-Variablen, die ChargerHub schon liefert, verschwindet seine Erklärung mit. Vor dem Bestätigen der Risiken bleibt die Erklärung zur Bestätigungs-Checkbox sichtbar.
+- Geprüft: Kein bisheriger deutscher Formulartext ist verloren, neu sind genau die 92 kurzen Beschriftungen. Vier neue Prüfungen (keine Beschriftung über 40 Zeichen, jede Erklärung gehört zu einem Feld, Ausblenden im echten Formularaufbau, Risiko-Sperre). Die Mutationsprobe am Ausblenden schlägt an.
+
 ## 0.106.5 (2026-11-17)
 - **Umbau Schritt 4, Wallbox und Fahrzeuge in eigenen Dateien, Verhalten unverändert:** `EMS/Wallbox.php` (895 Zeilen: Freigaben, Ladepläne, Bedienvariablen, Statuszeilen, Tibber-Fahrzeugeinstellungen), `EMS/WallboxSources.php` (262 Zeilen: ChargerHub, OCPPHub und EEBUS finden, Zuordnung, Messwerte, Schreibrecht) und `EMS/Vehicle.php` (121 Zeilen: Fahrzeuge nach Vertrag vehicle 1.0, Datenfrische, Akkureserve für die Heimfahrt). Sie sind als Traits Teil der Klasse EMS. Der Code wurde wörtlich verschoben und in beide Richtungen zeilengenau geprüft. Öffentliche Funktionen (`EMS_GetWallboxes`, `EMS_WallboxModeChanged`, `EMS_WallboxLinkChanged`) bleiben in `module.php`. Die Hauptdatei schrumpft von 11.619 auf 10.377 Zeilen.
 

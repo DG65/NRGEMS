@@ -1392,9 +1392,11 @@ class EMS extends IPSModule
                 if (($element['type'] ?? '') !== 'ExpansionPanel') { continue; }
                 $panelName = (string)($element['name'] ?? '');
                 if ($panelName === 'PanelGeneral') {
-                    // Nur Warnung + Bestaetigungs-Checkbox behalten (die
-                    // ersten zwei Eintraege, siehe form.json-Reihenfolge).
-                    $element['items'] = array_slice($element['items'], 0, 2);
+                    // Nur Warnung + Bestaetigungs-Checkbox + deren Erklaerung behalten (siehe form.json-Reihenfolge;
+                    // seit 0.106.6 steht die Erklaerung als eigenes Label EMS_Risk_AcknowledgedHint unter der Checkbox).
+                    $keep = 2;
+                    if (($element['items'][2]['name'] ?? '') === 'EMS_Risk_AcknowledgedHint') { $keep = 3; }
+                    $element['items'] = array_slice($element['items'], 0, $keep);
                     continue;
                 }
                 if (!in_array($panelName, $infoWhitelist, true)) {
@@ -1404,7 +1406,35 @@ class EMS extends IPSModule
             unset($element);
         }
 
+        $form['elements'] = $this->hideHintsOfHiddenFields($form['elements']);
         return json_encode($form);
+    }
+
+    /**
+     * Erklaerungs-Labels "<Feld>Hint" (0.106.6, SUITE.md Formular-Regel kurze Beschriftungen) folgen der Sichtbarkeit ihres Feldes:
+     * blendet der Formularaufbau ein Feld aus (z. B. Wallbox-Messvariablen bei ChargerHub), verschwindet auch seine Erklaerung.
+     */
+    private function hideHintsOfHiddenFields(array $items): array
+    {
+        $hidden = array();
+        $collect = function (array $list) use (&$collect, &$hidden) {
+            foreach ($list as $it) {
+                if (!is_array($it)) { continue; }
+                if (isset($it['name']) && array_key_exists('visible', $it) && $it['visible'] === false) { $hidden[$it['name'] . 'Hint'] = true; }
+                if (isset($it['items']) && is_array($it['items'])) { $collect($it['items']); }
+            }
+        };
+        $collect($items);
+        if (empty($hidden)) { return $items; }
+        $apply = function (array $list) use (&$apply, $hidden): array {
+            foreach ($list as $k => $it) {
+                if (!is_array($it)) { continue; }
+                if (isset($it['name']) && isset($hidden[$it['name']])) { $list[$k]['visible'] = false; }
+                if (isset($it['items']) && is_array($it['items'])) { $list[$k]['items'] = $apply($it['items']); }
+            }
+            return $list;
+        };
+        return $apply($items);
     }
 
     /** onChange der Preisquellen-Auswahl: die Statuszeile folgt der Auswahl im offenen Formular, nicht dem Speicherstand. */

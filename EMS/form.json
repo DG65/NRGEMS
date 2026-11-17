@@ -13,8 +13,9 @@
                 {
                     "type": "CheckBox",
                     "name": "EMS_Risk_Acknowledged",
-                    "caption": "I understand the risks of active control and want to continue"
+                    "caption": "Risks understood"
                 },
+                { "type": "Label", "name": "EMS_Risk_AcknowledgedHint", "caption": "I understand the risks of active control and want to continue" },
                 {
                     "type": "CheckBox",
                     "name": "EMS_Active",
@@ -23,8 +24,9 @@
                 {
                     "type": "CheckBox",
                     "name": "EMS_DryRun",
-                    "caption": "Dry run: EMS calculates and shows its decisions (plan, operating mode, reasoning) but writes nothing to inverters or wallboxes. For trying it out safely. Statutory feed-in limits remain active."
+                    "caption": "Dry run"
                 },
+                { "type": "Label", "name": "EMS_DryRunHint", "caption": "Dry run: EMS calculates and shows its decisions (plan, operating mode, reasoning) but writes nothing to inverters or wallboxes. For trying it out safely. Statutory feed-in limits remain active." },
                 {
                     "type": "Label",
                     "caption": "── Inverter safety stop (dead man's switch) ─────────────────────"
@@ -58,19 +60,21 @@
                 {
                     "type": "NumberSpinner",
                     "name": "PLAUSI_Minutes",
-                    "caption": "Trigger after a continuous deviation of",
+                    "caption": "Trigger after deviation",
                     "minimum": 1,
                     "maximum": 60,
                     "suffix": " min"
                 },
+                { "type": "Label", "name": "PLAUSI_MinutesHint", "caption": "Trigger after a continuous deviation of" },
                 {
                     "type": "NumberSpinner",
                     "name": "PLAUSI_GridImport_W",
-                    "caption": "Minimum grid import for the house (excluding wallbox) from which checks apply",
+                    "caption": "Minimum house grid import",
                     "minimum": 50,
                     "maximum": 5000,
                     "suffix": " W"
                 },
+                { "type": "Label", "name": "PLAUSI_GridImport_WHint", "caption": "Minimum grid import for the house (excluding wallbox) from which checks apply" },
                 {
                     "type": "NumberSpinner",
                     "name": "PLAUSI_Hold_Min",
@@ -95,19 +99,21 @@
                 {
                     "type": "NumberSpinner",
                     "name": "EXPOVL_Threshold_W",
-                    "caption": "Threshold for discharge and feed-in (against measurement noise)",
+                    "caption": "Discharge/feed-in threshold",
                     "minimum": 10,
                     "maximum": 2000,
                     "suffix": " W"
                 },
+                { "type": "Label", "name": "EXPOVL_Threshold_WHint", "caption": "Threshold for discharge and feed-in (against measurement noise)" },
                 {
                     "type": "NumberSpinner",
                     "name": "EXPOVL_Seconds",
-                    "caption": "Intervene after a continuous overlap of",
+                    "caption": "Intervene after overlap",
                     "minimum": 10,
                     "maximum": 900,
                     "suffix": " s"
                 },
+                { "type": "Label", "name": "EXPOVL_SecondsHint", "caption": "Intervene after a continuous overlap of" },
                 {
                     "type": "NumberSpinner",
                     "name": "EXPOVL_Hold_Min",
@@ -127,8 +133,9 @@
                 {
                     "type": "CheckBox",
                     "name": "NETZ_Aktiv",
-                    "caption": "Grid-supportive functions active (recommended)"
+                    "caption": "Grid-friendly functions active"
                 },
+                { "type": "Label", "name": "NETZ_AktivHint", "caption": "Grid-supportive functions active (recommended)" },
                 {
                     "type": "Label",
                     "caption": "🌞 Absorb the midday peak: if the forecast PV surplus up to the start of the peak window is certain to fill the battery anyway, EMS blocks charging beforehand. The surplus then goes to the grid. From the peak window on, EMS always releases charging — that is when the battery should charge instead of feeding in additionally (exactly when all PV systems feed into the grid the most). If the purchase price (including conversion and cycle costs) is currently lower than the feed-in tariff, EMS always blocks regardless of the time — buffering does not pay off then, cheap grid purchase later replaces the battery. If the measured PV is no longer safely above the house load, EMS releases immediately. Requires the PV forecast (detected automatically); the load forecast is optional (otherwise an average value)."
@@ -136,59 +143,66 @@
                 {
                     "type": "NumberSpinner",
                     "name": "NETZ_B1_Peak_Fraction_Pct",
-                    "caption": "Peak window = forecast at least this percentage of the daily maximum",
+                    "caption": "Peak window from daily maximum",
                     "minimum": 50,
                     "maximum": 100,
                     "suffix": " %"
                 },
+                { "type": "Label", "name": "NETZ_B1_Peak_Fraction_PctHint", "caption": "Peak window = forecast at least this percentage of the daily maximum" },
                 {
                     "type": "NumberSpinner",
                     "name": "NETZ_B1_Margin_W",
-                    "caption": "Measured PV at least this far above the house load",
+                    "caption": "PV margin above house load",
                     "minimum": 100,
                     "maximum": 5000,
                     "suffix": " W"
                 },
+                { "type": "Label", "name": "NETZ_B1_Margin_WHint", "caption": "Measured PV at least this far above the house load" },
                 {
                     "type": "NumberSpinner",
                     "name": "NETZ_B1_Latest_Hour",
-                    "caption": "Release no later than (manual emergency brake, independent of the peak window)",
+                    "caption": "Release at the latest at",
                     "minimum": 8,
                     "maximum": 18,
                     "suffix": " o'clock"
                 },
+                { "type": "Label", "name": "NETZ_B1_Latest_HourHint", "caption": "Release no later than (manual emergency brake, independent of the peak window)" },
                 {
                     "type": "NumberSpinner",
                     "name": "NETZ_B1_Safety_Pct",
-                    "caption": "Safety: remaining surplus at least space required × (median forecast)",
+                    "caption": "Safety, median forecast",
                     "minimum": 100,
                     "maximum": 300,
                     "suffix": " %"
                 },
+                { "type": "Label", "name": "NETZ_B1_Safety_PctHint", "caption": "Safety: remaining surplus at least space required × (median forecast)" },
                 {
                     "type": "NumberSpinner",
                     "name": "NETZ_B1_Safety_P10_Pct",
-                    "caption": "Safety when the conservative forecast (p10) is available (detected automatically)",
+                    "caption": "Safety, p10 forecast",
                     "minimum": 100,
                     "maximum": 300,
                     "suffix": " %"
                 },
+                { "type": "Label", "name": "NETZ_B1_Safety_P10_PctHint", "caption": "Safety when the conservative forecast (p10) is available (detected automatically)" },
                 {
                     "type": "NumberSpinner",
                     "name": "NETZ_B1_Max_MAPE",
-                    "caption": "Suspend if the forecast was recently off on average by more than",
+                    "caption": "Pause above forecast error",
                     "minimum": 5,
                     "maximum": 100,
                     "suffix": " %"
                 },
+                { "type": "Label", "name": "NETZ_B1_Max_MAPEHint", "caption": "Suspend if the forecast was recently off on average by more than" },
                 {
                     "type": "NumberSpinner",
                     "name": "NETZ_B1_Min_Days",
-                    "caption": "Only consider forecast quality from this number of rated days",
+                    "caption": "Forecast quality from days",
                     "minimum": 1,
                     "maximum": 60,
                     "suffix": " days"
                 },
+                { "type": "Label", "name": "NETZ_B1_Min_DaysHint", "caption": "Only consider forecast quality from this number of rated days" },
                 {
                     "type": "NumberSpinner",
                     "name": "EMS_Interval",
@@ -200,11 +214,12 @@
                 {
                     "type": "NumberSpinner",
                     "name": "EMS_Max_Power_W",
-                    "caption": "Max. power at the grid connection and inverter limit (W). The default of 11000 W is deliberately conservative: please adapt it to your own system (fuse rating of the grid connection)",
+                    "caption": "Max. power grid connection/inverter",
                     "minimum": 1000,
                     "maximum": 34642,
                     "suffix": " W"
                 },
+                { "type": "Label", "name": "EMS_Max_Power_WHint", "caption": "Max. power at the grid connection and inverter limit (W). The default of 11000 W is deliberately conservative: please adapt it to your own system (fuse rating of the grid connection)" },
                 {
                     "type": "Label",
                     "caption": "── Full PV harvest with full battery ───────────────────────"
@@ -215,7 +230,7 @@
                         {
                             "type": "NumberSpinner",
                             "name": "EXPORT_Min_Dwell_Minutes",
-                            "caption": "Minimum dwell time for full PV harvest (minutes) — prevents toggling with automatic mode",
+                            "caption": "Minimum time full PV harvest",
                             "minimum": 0,
                             "maximum": 60,
                             "suffix": " min"
@@ -236,6 +251,7 @@
                         }
                     ]
                 },
+                { "type": "Label", "name": "EXPORT_Min_Dwell_MinutesHint", "caption": "Minimum dwell time for full PV harvest (minutes) — prevents toggling with automatic mode" },
                 {
                     "type": "Label",
                     "caption": "── Fallback on communication error ─────────────────"
@@ -305,16 +321,18 @@
                 {
                     "type": "ValidationTextBox",
                     "name": "ANL_IBN_Datum",
-                    "caption": "Commissioning date (DD.MM.YYYY, e.g. 24.10.2012)",
+                    "caption": "Commissioning date",
                     "validate": "^(\\d{1,2}\\.\\d{1,2}\\.\\d{4})?$"
                 },
+                { "type": "Label", "name": "ANL_IBN_DatumHint", "caption": "Commissioning date (DD.MM.YYYY, e.g. 24.10.2012)" },
                 {
                     "type": "NumberSpinner",
                     "name": "ANL_kWp_Manuell",
-                    "caption": "System size (0 = automatically from the PV forecast)",
+                    "caption": "System size",
                     "digits": 2,
                     "suffix": " kWp"
                 },
+                { "type": "Label", "name": "ANL_kWp_ManuellHint", "caption": "System size (0 = automatically from the PV forecast)" },
                 {
                     "type": "Select",
                     "name": "ANL_Einspeiseart",
@@ -336,15 +354,17 @@
                 {
                     "type": "CheckBox",
                     "name": "ANL_Verguetung_Keine",
-                    "caption": "I receive no feed-in tariff (0 ct, e.g. full self-consumption). Without this and without a recognisable value, EMS does not use a tariff value but the replacement import price."
+                    "caption": "No feed-in tariff"
                 },
+                { "type": "Label", "name": "ANL_Verguetung_KeineHint", "caption": "I receive no feed-in tariff (0 ct, e.g. full self-consumption). Without this and without a recognisable value, EMS does not use a tariff value but the replacement import price." },
                 {
                     "type": "NumberSpinner",
                     "name": "ANL_Verguetung_ct",
-                    "caption": "Feed-in tariff (0 = automatic: linked variable, otherwise calculated from date and size)",
+                    "caption": "Feed-in tariff",
                     "digits": 2,
                     "suffix": " ct/kWh"
                 },
+                { "type": "Label", "name": "ANL_Verguetung_ctHint", "caption": "Feed-in tariff (0 = automatic: linked variable, otherwise calculated from date and size)" },
                 {
                     "type": "Select",
                     "name": "ANL_Einspeisemanagement",
@@ -360,7 +380,7 @@
                 {
                     "type": "Select",
                     "name": "ANL_Einspeisegrenze_Pct",
-                    "caption": "Permanent feed-in limit at the grid connection",
+                    "caption": "Permanent feed-in limit",
                     "options": [
                         {"caption": "Automatic from date and details (60 % Solar Peak Act, 70 % existing systems)", "value": -1},
                         {"caption": "50 % of kWp", "value": 50},
@@ -370,11 +390,13 @@
                         {"caption": "No limit", "value": 100}
                     ]
                 },
+                { "type": "Label", "name": "ANL_Einspeisegrenze_PctHint", "caption": "Permanent feed-in limit at the grid connection" },
                 {
                     "type": "CheckBox",
                     "name": "ANL_iMSys",
-                    "caption": "Smart metering system (smart meter) installed"
+                    "caption": "Smart meter installed"
                 },
+                { "type": "Label", "name": "ANL_iMSysHint", "caption": "Smart metering system (smart meter) installed" },
                 {
                     "type": "CheckBox",
                     "name": "ANL_Steuerbox",
@@ -383,8 +405,9 @@
                 {
                     "type": "CheckBox",
                     "name": "ANL_Neues_Modell",
-                    "caption": "Existing system voluntarily switched to the new model (no remuneration at negative prices, +0.6 ct)"
+                    "caption": "Voluntarily switched to new model"
                 },
+                { "type": "Label", "name": "ANL_Neues_ModellHint", "caption": "Existing system voluntarily switched to the new model (no remuneration at negative prices, +0.6 ct)" },
                 {
                     "type": "Label",
                     "caption": "Import tariff: other modules use it to calculate the actual electricity costs, e.g. the dashboard the costs per charging session. This means the final price including grid fees and taxes. If a fixed price changes, past periods keep the price that applied at the time."
@@ -410,8 +433,9 @@
                 {
                     "type": "SelectVariable",
                     "name": "BEZ_Preisvariable",
-                    "caption": "Own price variable (must be logged)"
+                    "caption": "Own price variable"
                 },
+                { "type": "Label", "name": "BEZ_PreisvariableHint", "caption": "Own price variable (must be logged)" },
                 {
                     "type": "Select",
                     "name": "BEZ_Preisvariable_Einheit",
@@ -713,85 +737,94 @@
                 {
                     "type": "Select",
                     "name": "NETZLADUNG_Referenz",
-                    "caption": "From which price does grid charging of the battery pay off?",
+                    "caption": "Price reference grid charging",
                     "options": [
                         { "caption": "Only below the feed-in tariff (after 5 % loss); without a known tariff, the replacement import price is used automatically", "value": 0 },
                         { "caption": "When the energy later replaces expensive grid import (replacement import price: average of the most expensive quarter of the next 24 hours, after losses, wear and minimum margin)", "value": 1 }
                     ]
                 },
+                { "type": "Label", "name": "NETZLADUNG_ReferenzHint", "caption": "From which price does grid charging of the battery pay off?" },
                 {
                     "type": "NumberSpinner",
                     "name": "NETZLADUNG_Sicherheit_Pct",
-                    "caption": "Safety factor on the expected replacement price (%): grid charging only if purchase price ≤ efficiency² × factor × expected later price (minus wear and minimum margin); holding only below efficiency × factor × expected price. 90 = 10 % reserve for forecast errors and losses not in the data sheet, 100 = off. Only for the reference \"replacement import price\"",
+                    "caption": "Safety factor replacement price",
                     "digits": 0,
                     "minimum": 50,
                     "maximum": 100,
                     "suffix": " %"
                 },
+                { "type": "Label", "name": "NETZLADUNG_Sicherheit_PctHint", "caption": "Safety factor on the expected replacement price (%): grid charging only if purchase price ≤ efficiency² × factor × expected later price (minus wear and minimum margin); holding only below efficiency × factor × expected price. 90 = 10 % reserve for forecast errors and losses not in the data sheet, 100 = off. Only for the reference \"replacement import price\"" },
                 {
                     "type": "NumberSpinner",
                     "name": "BAT_RT_PV_Pct",
-                    "caption": "Round-trip efficiency PV → battery → house (%), typical measured value 91. 0 = derive from the old efficiency per conversion",
+                    "caption": "Round-trip efficiency PV",
                     "digits": 0,
                     "minimum": 0,
                     "maximum": 100,
                     "suffix": " %"
                 },
+                { "type": "Label", "name": "BAT_RT_PV_PctHint", "caption": "Round-trip efficiency PV → battery → house (%), typical measured value 91. 0 = derive from the old efficiency per conversion" },
                 {
                     "type": "NumberSpinner",
                     "name": "BAT_RT_Grid_Pct",
-                    "caption": "Round-trip efficiency grid → battery → house (%), typical measured value 82. 0 = derive from the old efficiency per conversion",
+                    "caption": "Round-trip efficiency grid",
                     "digits": 0,
                     "minimum": 0,
                     "maximum": 100,
                     "suffix": " %"
                 },
+                { "type": "Label", "name": "BAT_RT_Grid_PctHint", "caption": "Round-trip efficiency grid → battery → house (%), typical measured value 82. 0 = derive from the old efficiency per conversion" },
                 {
                     "type": "NumberSpinner",
                     "name": "BAT_Conv_Eff_Pct",
-                    "caption": "Outdated: efficiency per AC/DC conversion (%). Only used to derive the round-trip efficiencies above if they are set to 0",
+                    "caption": "Efficiency per conversion (old)",
                     "digits": 1,
                     "minimum": 70,
                     "maximum": 100,
                     "suffix": " %"
                 },
+                { "type": "Label", "name": "BAT_Conv_Eff_PctHint", "caption": "Outdated: efficiency per AC/DC conversion (%). Only used to derive the round-trip efficiencies above if they are set to 0" },
                 {
                     "type": "NumberSpinner",
                     "name": "BAT_Price_EUR",
-                    "caption": "Purchase price of the storage system (EUR, optional): EMS calculates the wear costs from it if 0 is entered below",
+                    "caption": "Battery purchase price",
                     "digits": 0,
                     "minimum": 0,
                     "maximum": 200000,
                     "suffix": " €",
                     "onChange": "EMS_CycleCostChanged($id, $BAT_CycleCost_ct, $BAT_Price_EUR, $BAT_Cycles);"
                 },
+                { "type": "Label", "name": "BAT_Price_EURHint", "caption": "Purchase price of the storage system (EUR, optional): EMS calculates the wear costs from it if 0 is entered below" },
                 {
                     "type": "NumberSpinner",
                     "name": "BAT_Cycles",
-                    "caption": "Charge cycles according to the manufacturer (optional, e.g. 6000 to 8000)",
+                    "caption": "Charge cycles per manufacturer",
                     "minimum": 0,
                     "maximum": 50000,
                     "onChange": "EMS_CycleCostChanged($id, $BAT_CycleCost_ct, $BAT_Price_EUR, $BAT_Cycles);"
                 },
+                { "type": "Label", "name": "BAT_CyclesHint", "caption": "Charge cycles according to the manufacturer (optional, e.g. 6000 to 8000)" },
                 {
                     "type": "NumberSpinner",
                     "name": "BAT_CycleCost_ct",
-                    "caption": "Battery wear costs per discharged kWh (ct, 0 = not considered). Guide value: purchase price divided by (number of cycles × usable kWh)",
+                    "caption": "Wear cost per kWh",
                     "digits": 1,
                     "minimum": 0,
                     "maximum": 50,
                     "suffix": " ct",
                     "onChange": "EMS_CycleCostChanged($id, $BAT_CycleCost_ct, $BAT_Price_EUR, $BAT_Cycles);"
                 },
+                { "type": "Label", "name": "BAT_CycleCost_ctHint", "caption": "Battery wear costs per discharged kWh (ct, 0 = not considered). Guide value: purchase price divided by (number of cycles × usable kWh)" },
                 {
                     "type": "NumberSpinner",
                     "name": "BAT_Charge_Max_kW",
-                    "caption": "Real max. charging power (kW, 0 = value reported by the battery management system). If the inverter is connected via InverterHub, EMS additionally learns the charging power per state of charge itself (BMS reports and observed power) and plans night charging with it. Nothing is learned from manually entered battery variables; then only this value applies.",
+                    "caption": "Max. charging power",
                     "digits": 1,
                     "minimum": 0,
                     "maximum": 500,
                     "suffix": " kW"
                 },
+                { "type": "Label", "name": "BAT_Charge_Max_kWHint", "caption": "Real max. charging power (kW, 0 = value reported by the battery management system). If the inverter is connected via InverterHub, EMS additionally learns the charging power per state of charge itself (BMS reports and observed power) and plans night charging with it. Nothing is learned from manually entered battery variables; then only this value applies." },
                 {
                     "type": "Label",
                     "caption": "── SOC limits ───────────────────────────────────────"
@@ -958,12 +991,13 @@
                 {
                     "type": "CheckBox",
                     "name": "WB_PV_Ueberschuss",
-                    "caption": "Wallbox may also charge above the price threshold with genuine PV surplus (PV minus house load at least the minimum power of the wallbox)"
+                    "caption": "Wallbox charges on PV surplus"
                 },
+                { "type": "Label", "name": "WB_PV_UeberschussHint", "caption": "Wallbox may also charge above the price threshold with genuine PV surplus (PV minus house load at least the minimum power of the wallbox)" },
                 {
                     "type": "Select",
                     "name": "WB_Quelle",
-                    "caption": "Wallbox source (if wallboxes appear via ChargerHub and OCPPHub)",
+                    "caption": "Wallbox source",
                     "options": [
                         {"caption": "Automatic (only one source found: that one; both found: ChargerHub and a warning)", "value": 0},
                         {"caption": "ChargerHub", "value": 1},
@@ -971,6 +1005,7 @@
                         {"caption": "Both (they are different wallboxes)", "value": 3}
                     ]
                 },
+                { "type": "Label", "name": "WB_QuelleHint", "caption": "Wallbox source (if wallboxes appear via ChargerHub and OCPPHub)" },
                 {
                     "type": "Label",
                     "caption": "If the same wallbox appears in both modules, select the source that measures reliably. Otherwise EMS would count the charging power twice, and Grid Rewards would order twice as much grid power."
@@ -998,10 +1033,11 @@
                 {
                     "type": "Select",
                     "name": "WB1_TibberVehicle",
-                    "caption": "Tibber vehicle at wallbox 1 (confirm once so that EMS detects Smart Charging automatically)",
+                    "caption": "Tibber vehicle wallbox 1",
                     "options": [{"caption": "(no assignment)", "value": ""}],
                     "onChange": "EMS_WallboxModeChanged($id, 1, $WB1_Mode, $WB1_TibberVehicle);"
                 },
+                { "type": "Label", "name": "WB1_TibberVehicleHint", "caption": "Tibber vehicle at wallbox 1 (confirm once so that EMS detects Smart Charging automatically)" },
                 {
                     "type": "Select",
                     "name": "WB2_Mode",
@@ -1022,7 +1058,7 @@
                 {
                     "type": "Select",
                     "name": "WB2_TibberVehicle",
-                    "caption": "Tibber vehicle at wallbox 2 (confirm once so that EMS detects Smart Charging automatically)",
+                    "caption": "Tibber vehicle wallbox 2",
                     "options": [{"caption": "(no assignment)", "value": ""}],
                     "onChange": "EMS_WallboxModeChanged($id, 2, $WB2_Mode, $WB2_TibberVehicle);",
                     "visible": {
@@ -1031,16 +1067,19 @@
                         "value": 2
                     }
                 },
+                { "type": "Label", "name": "WB2_TibberVehicleHint", "caption": "Tibber vehicle at wallbox 2 (confirm once so that EMS detects Smart Charging automatically)" },
                 {
                     "type": "CheckBox",
                     "name": "WB_Smart_HouseFromBattery",
-                    "caption": "Cover the house consumption from PV and battery, only the car from the grid (grid import regulated to the car's power, recommended)"
+                    "caption": "House from PV and battery"
                 },
+                { "type": "Label", "name": "WB_Smart_HouseFromBatteryHint", "caption": "Cover the house consumption from PV and battery, only the car from the grid (grid import regulated to the car's power, recommended)" },
                 {
                     "type": "CheckBox",
                     "name": "WB_Smart_GridBuy",
-                    "caption": "Charge Smart Charging car from the grid, spare the battery (recommended)"
+                    "caption": "Smart Charging from the grid"
                 },
+                { "type": "Label", "name": "WB_Smart_GridBuyHint", "caption": "Charge Smart Charging car from the grid, spare the battery (recommended)" },
                 {
                     "type": "Label",
                     "caption": "While a car charges at a wallbox in Smart Charging mode, the battery only charges from PV and does not discharge. House and car are supplied from PV or the grid. Only takes effect if EMS would otherwise run the inverter's automatic mode: Grid Rewards, grid operator, boost and plan setpoints take precedence."
@@ -1048,10 +1087,11 @@
                 {
                     "type": "NumberSpinner",
                     "name": "VEH_Home_Radius_Km",
-                    "caption": "Homecoming radius (km) — vehicle charging demand on return",
+                    "caption": "Home-trip radius",
                     "minimum": 0,
                     "maximum": 2000
                 },
+                { "type": "Label", "name": "VEH_Home_Radius_KmHint", "caption": "Homecoming radius (km) — vehicle charging demand on return" },
                 {
                     "type": "Label",
                     "caption": "If a vehicle (Tessie) is on its way home according to its navigation and the distance is within this radius, the day plan includes the expected charging demand on arrival (battery is preferred over export). Outside the radius it is assumed that the vehicle will not return today."
@@ -1136,9 +1176,10 @@
                 {
                     "type": "SelectInstance",
                     "name": "WB1_Instance",
-                    "caption": "Wallbox 1: instance (empty = automatically the 1st wallbox found by ChargerHub/OCPPHub; otherwise assignment or old direct go-e Charger instance)",
+                    "caption": "Wallbox 1: instance",
                     "onChange": "EMS_WallboxLinkChanged($id, 1, $WB1_Instance, $VAR_WB1_Power, $VAR_WB1_Cable, $VAR_WB1_Status, $VAR_WB1_Error);"
                 },
+                { "type": "Label", "name": "WB1_InstanceHint", "caption": "Wallbox 1: instance (empty = automatically the 1st wallbox found by ChargerHub/OCPPHub; otherwise assignment or old direct go-e Charger instance)" },
                 {
                     "type": "NumberSpinner",
                     "name": "WB1_Max_Power_W",
@@ -1200,23 +1241,25 @@
                 {
                     "type": "NumberSpinner",
                     "name": "WB1_ManualCurrentA",
-                    "caption": "WB1 manual charging mode: current (A, 0 = maximum current of the wallbox)",
+                    "caption": "WB1 manual: current",
                     "minimum": 0,
                     "maximum": 80,
                     "suffix": " A"
                 },
+                { "type": "Label", "name": "WB1_ManualCurrentAHint", "caption": "WB1 manual charging mode: current (A, 0 = maximum current of the wallbox)" },
                 {
                     "type": "NumberSpinner",
                     "name": "WB1_PvSharePct",
-                    "caption": "WB1 PV share charging mode: share of the PV surplus for the car",
+                    "caption": "WB1 PV share",
                     "minimum": 0,
                     "maximum": 100,
                     "suffix": " %"
                 },
+                { "type": "Label", "name": "WB1_PvSharePctHint", "caption": "WB1 PV share charging mode: share of the PV surplus for the car" },
                 {
                     "type": "Select",
                     "name": "WB1_PhaseSetting",
-                    "caption": "WB1 phases (only if the wallbox can switch)",
+                    "caption": "WB1 phases",
                     "options": [
                         {
                             "caption": "Do not change",
@@ -1232,21 +1275,24 @@
                         }
                     ]
                 },
+                { "type": "Label", "name": "WB1_PhaseSettingHint", "caption": "WB1 phases (only if the wallbox can switch)" },
                 {
                     "type": "NumberSpinner",
                     "name": "WB1_TargetKwh",
-                    "caption": "WB1 charging target: energy since plugging in (kWh, 0 = off)",
+                    "caption": "WB1 charging target energy",
                     "minimum": 0,
                     "maximum": 200,
                     "digits": 1,
                     "suffix": " kWh"
                 },
+                { "type": "Label", "name": "WB1_TargetKwhHint", "caption": "WB1 charging target: energy since plugging in (kWh, 0 = off)" },
                 {
                     "type": "ValidationTextBox",
                     "name": "WB1_TargetTime",
-                    "caption": "WB1 charging target: deadline (time HH:MM, next occurrence after plugging in)",
+                    "caption": "WB1 charging target deadline",
                     "validate": "^([01]?\\d|2[0-3]):[0-5]\\d$"
                 },
+                { "type": "Label", "name": "WB1_TargetTimeHint", "caption": "WB1 charging target: deadline (time HH:MM, next occurrence after plugging in)" },
                 {
                     "type": "List",
                     "name": "WB1_WeekTargets",
@@ -1263,11 +1309,12 @@
                 {
                     "type": "NumberSpinner",
                     "name": "WB1_NowCurrentA",
-                    "caption": "WB1 \"Charge now\" (command in the WebFront): current in A, 0 = maximum current of the wallbox",
+                    "caption": "WB1 charge now: current",
                     "minimum": 0,
                     "maximum": 80,
                     "suffix": " A"
                 },
+                { "type": "Label", "name": "WB1_NowCurrentAHint", "caption": "WB1 \"Charge now\" (command in the WebFront): current in A, 0 = maximum current of the wallbox" },
                 {
                     "type": "Label",
                     "caption": "WebFront/app: for each active wallbox EMS creates the variables \"Wallbox n: plan (what happens next)\", \"Charging mode\", \"Charging target\", \"Deadline\" and \"Command\" (charge now for 1 hour, end override, delete charging target). Changing the charging mode, target and deadline there changes these settings here directly (one source). If this form is open at the same time, reload it before \"Apply\", otherwise it overwrites the change from the WebFront."
@@ -1283,37 +1330,43 @@
                 {
                     "type": "SelectVariable",
                     "name": "VAR_WB1_Status",
-                    "caption": "WB1 charging status as a number, meaning depends on the manufacturer (display only; only if not automatic via ChargerHub)",
+                    "caption": "WB1 charging status",
                     "onChange": "EMS_WallboxLinkChanged($id, 1, $WB1_Instance, $VAR_WB1_Power, $VAR_WB1_Cable, $VAR_WB1_Status, $VAR_WB1_Error);"
                 },
+                { "type": "Label", "name": "VAR_WB1_StatusHint", "caption": "WB1 charging status as a number, meaning depends on the manufacturer (display only; only if not automatic via ChargerHub)" },
                 {
                     "type": "SelectVariable",
                     "name": "VAR_WB1_Power",
-                    "caption": "WB1 charging power in kW (only if not automatic via ChargerHub)",
+                    "caption": "WB1 charging power",
                     "onChange": "EMS_WallboxLinkChanged($id, 1, $WB1_Instance, $VAR_WB1_Power, $VAR_WB1_Cable, $VAR_WB1_Status, $VAR_WB1_Error);"
                 },
+                { "type": "Label", "name": "VAR_WB1_PowerHint", "caption": "WB1 charging power in kW (only if not automatic via ChargerHub)" },
                 {
                     "type": "SelectVariable",
                     "name": "VAR_WB1_Active",
-                    "caption": "WB1 wallbox active (Boolean, only for the old go-e Charger module without ChargerHub)"
+                    "caption": "WB1 wallbox active"
                 },
+                { "type": "Label", "name": "VAR_WB1_ActiveHint", "caption": "WB1 wallbox active (Boolean, only for the old go-e Charger module without ChargerHub)" },
                 {
                     "type": "SelectVariable",
                     "name": "VAR_WB1_Cable",
-                    "caption": "WB1 vehicle plugged in (1/0; only if not automatic via ChargerHub)",
+                    "caption": "WB1 vehicle plugged in",
                     "onChange": "EMS_WallboxLinkChanged($id, 1, $WB1_Instance, $VAR_WB1_Power, $VAR_WB1_Cable, $VAR_WB1_Status, $VAR_WB1_Error);"
                 },
+                { "type": "Label", "name": "VAR_WB1_CableHint", "caption": "WB1 vehicle plugged in (1/0; only if not automatic via ChargerHub)" },
                 {
                     "type": "SelectVariable",
                     "name": "VAR_WB1_Phases",
-                    "caption": "WB1 phases currently in use (not evaluated; the phases come from ChargerHub)"
+                    "caption": "WB1 phases in use"
                 },
+                { "type": "Label", "name": "VAR_WB1_PhasesHint", "caption": "WB1 phases currently in use (not evaluated; the phases come from ChargerHub)" },
                 {
                     "type": "SelectVariable",
                     "name": "VAR_WB1_Error",
-                    "caption": "WB1 error code (0 = no error, anything else blocks enabling; only if not automatic via ChargerHub)",
+                    "caption": "WB1 error code",
                     "onChange": "EMS_WallboxLinkChanged($id, 1, $WB1_Instance, $VAR_WB1_Power, $VAR_WB1_Cable, $VAR_WB1_Status, $VAR_WB1_Error);"
                 },
+                { "type": "Label", "name": "VAR_WB1_ErrorHint", "caption": "WB1 error code (0 = no error, anything else blocks enabling; only if not automatic via ChargerHub)" },
                 {
                     "type": "Label",
                     "caption": "── Wallbox 2 (optional) ──────────────────────────────",
@@ -1326,7 +1379,7 @@
                 {
                     "type": "SelectInstance",
                     "name": "WB2_Instance",
-                    "caption": "Wallbox 2: instance (empty = automatically the 2nd wallbox found by ChargerHub/OCPPHub; otherwise assignment or old direct go-e Charger instance)",
+                    "caption": "Wallbox 2: instance",
                     "onChange": "EMS_WallboxLinkChanged($id, 2, $WB2_Instance, $VAR_WB2_Power, $VAR_WB2_Cable, $VAR_WB2_Status, $VAR_WB2_Error);",
                     "visible": {
                         "type": "PropertyCondition",
@@ -1334,6 +1387,7 @@
                         "value": 2
                     }
                 },
+                { "type": "Label", "name": "WB2_InstanceHint", "caption": "Wallbox 2: instance (empty = automatically the 2nd wallbox found by ChargerHub/OCPPHub; otherwise assignment or old direct go-e Charger instance)" },
                 {
                     "type": "NumberSpinner",
                     "name": "WB2_Max_Power_W",
@@ -1415,7 +1469,7 @@
                 {
                     "type": "NumberSpinner",
                     "name": "WB2_ManualCurrentA",
-                    "caption": "WB2 manual charging mode: current (A, 0 = maximum current of the wallbox)",
+                    "caption": "WB2 manual: current",
                     "minimum": 0,
                     "maximum": 80,
                     "suffix": " A",
@@ -1425,10 +1479,11 @@
                         "value": 2
                     }
                 },
+                { "type": "Label", "name": "WB2_ManualCurrentAHint", "caption": "WB2 manual charging mode: current (A, 0 = maximum current of the wallbox)" },
                 {
                     "type": "NumberSpinner",
                     "name": "WB2_PvSharePct",
-                    "caption": "WB2 PV share charging mode: share of the PV surplus for the car",
+                    "caption": "WB2 PV share",
                     "minimum": 0,
                     "maximum": 100,
                     "suffix": " %",
@@ -1438,10 +1493,11 @@
                         "value": 2
                     }
                 },
+                { "type": "Label", "name": "WB2_PvSharePctHint", "caption": "WB2 PV share charging mode: share of the PV surplus for the car" },
                 {
                     "type": "Select",
                     "name": "WB2_PhaseSetting",
-                    "caption": "WB2 phases (only if the wallbox can switch)",
+                    "caption": "WB2 phases",
                     "options": [
                         {
                             "caption": "Do not change",
@@ -1462,10 +1518,11 @@
                         "value": 2
                     }
                 },
+                { "type": "Label", "name": "WB2_PhaseSettingHint", "caption": "WB2 phases (only if the wallbox can switch)" },
                 {
                     "type": "NumberSpinner",
                     "name": "WB2_TargetKwh",
-                    "caption": "WB2 charging target: energy since plugging in (kWh, 0 = off)",
+                    "caption": "WB2 charging target energy",
                     "minimum": 0,
                     "maximum": 200,
                     "digits": 1,
@@ -1476,10 +1533,11 @@
                         "value": 2
                     }
                 },
+                { "type": "Label", "name": "WB2_TargetKwhHint", "caption": "WB2 charging target: energy since plugging in (kWh, 0 = off)" },
                 {
                     "type": "ValidationTextBox",
                     "name": "WB2_TargetTime",
-                    "caption": "WB2 charging target: deadline (time HH:MM, next occurrence after plugging in)",
+                    "caption": "WB2 charging target deadline",
                     "validate": "^([01]?\\d|2[0-3]):[0-5]\\d$",
                     "visible": {
                         "type": "PropertyCondition",
@@ -1487,6 +1545,7 @@
                         "value": 2
                     }
                 },
+                { "type": "Label", "name": "WB2_TargetTimeHint", "caption": "WB2 charging target: deadline (time HH:MM, next occurrence after plugging in)" },
                 {
                     "type": "List",
                     "name": "WB2_WeekTargets",
@@ -1503,7 +1562,7 @@
                 {
                     "type": "NumberSpinner",
                     "name": "WB2_NowCurrentA",
-                    "caption": "WB2 \"Charge now\" (command in the WebFront): current in A, 0 = maximum current of the wallbox",
+                    "caption": "WB2 charge now: current",
                     "minimum": 0,
                     "maximum": 80,
                     "suffix": " A",
@@ -1513,10 +1572,11 @@
                         "value": 2
                     }
                 },
+                { "type": "Label", "name": "WB2_NowCurrentAHint", "caption": "WB2 \"Charge now\" (command in the WebFront): current in A, 0 = maximum current of the wallbox" },
                 {
                     "type": "SelectVariable",
                     "name": "VAR_WB2_Status",
-                    "caption": "WB2 charging status as a number, meaning depends on the manufacturer (display only; only if not automatic via ChargerHub)",
+                    "caption": "WB2 charging status",
                     "onChange": "EMS_WallboxLinkChanged($id, 2, $WB2_Instance, $VAR_WB2_Power, $VAR_WB2_Cable, $VAR_WB2_Status, $VAR_WB2_Error);",
                     "visible": {
                         "type": "PropertyCondition",
@@ -1524,10 +1584,11 @@
                         "value": 2
                     }
                 },
+                { "type": "Label", "name": "VAR_WB2_StatusHint", "caption": "WB2 charging status as a number, meaning depends on the manufacturer (display only; only if not automatic via ChargerHub)" },
                 {
                     "type": "SelectVariable",
                     "name": "VAR_WB2_Power",
-                    "caption": "WB2 charging power in kW (only if not automatic via ChargerHub)",
+                    "caption": "WB2 charging power",
                     "onChange": "EMS_WallboxLinkChanged($id, 2, $WB2_Instance, $VAR_WB2_Power, $VAR_WB2_Cable, $VAR_WB2_Status, $VAR_WB2_Error);",
                     "visible": {
                         "type": "PropertyCondition",
@@ -1535,20 +1596,22 @@
                         "value": 2
                     }
                 },
+                { "type": "Label", "name": "VAR_WB2_PowerHint", "caption": "WB2 charging power in kW (only if not automatic via ChargerHub)" },
                 {
                     "type": "SelectVariable",
                     "name": "VAR_WB2_Active",
-                    "caption": "WB2 wallbox active (Boolean, only for the old go-e Charger module without ChargerHub)",
+                    "caption": "WB2 wallbox active",
                     "visible": {
                         "type": "PropertyCondition",
                         "property": "WB_Count",
                         "value": 2
                     }
                 },
+                { "type": "Label", "name": "VAR_WB2_ActiveHint", "caption": "WB2 wallbox active (Boolean, only for the old go-e Charger module without ChargerHub)" },
                 {
                     "type": "SelectVariable",
                     "name": "VAR_WB2_Cable",
-                    "caption": "WB2 vehicle plugged in (1/0; only if not automatic via ChargerHub)",
+                    "caption": "WB2 vehicle plugged in",
                     "onChange": "EMS_WallboxLinkChanged($id, 2, $WB2_Instance, $VAR_WB2_Power, $VAR_WB2_Cable, $VAR_WB2_Status, $VAR_WB2_Error);",
                     "visible": {
                         "type": "PropertyCondition",
@@ -1556,20 +1619,22 @@
                         "value": 2
                     }
                 },
+                { "type": "Label", "name": "VAR_WB2_CableHint", "caption": "WB2 vehicle plugged in (1/0; only if not automatic via ChargerHub)" },
                 {
                     "type": "SelectVariable",
                     "name": "VAR_WB2_Phases",
-                    "caption": "WB2 phases currently in use (not evaluated; the phases come from ChargerHub)",
+                    "caption": "WB2 phases in use",
                     "visible": {
                         "type": "PropertyCondition",
                         "property": "WB_Count",
                         "value": 2
                     }
                 },
+                { "type": "Label", "name": "VAR_WB2_PhasesHint", "caption": "WB2 phases currently in use (not evaluated; the phases come from ChargerHub)" },
                 {
                     "type": "SelectVariable",
                     "name": "VAR_WB2_Error",
-                    "caption": "WB2 error code (0 = no error, anything else blocks enabling; only if not automatic via ChargerHub)",
+                    "caption": "WB2 error code",
                     "onChange": "EMS_WallboxLinkChanged($id, 2, $WB2_Instance, $VAR_WB2_Power, $VAR_WB2_Cable, $VAR_WB2_Status, $VAR_WB2_Error);",
                     "visible": {
                         "type": "PropertyCondition",
@@ -1577,6 +1642,7 @@
                         "value": 2
                     }
                 },
+                { "type": "Label", "name": "VAR_WB2_ErrorHint", "caption": "WB2 error code (0 = no error, anything else blocks enabling; only if not automatic via ChargerHub)" },
                 {
                     "type": "Label",
                     "caption": "── Charging control ─────────────────────────────────────"
@@ -1612,8 +1678,9 @@
                 {
                     "type": "CheckBox",
                     "name": "HP_Active",
-                    "caption": "Enable heat pump (monitoring only, no control)"
+                    "caption": "Activate heat pump"
                 },
+                { "type": "Label", "name": "HP_ActiveHint", "caption": "Enable heat pump (monitoring only, no control)" },
                 {
                     "type": "SelectVariable",
                     "name": "VAR_HP_Power",
@@ -1655,24 +1722,27 @@
                 {
                     "type": "CheckBox",
                     "name": "WP_OptionalRun_Active",
-                    "caption": "Switch the heat pump additional run on PV surplus"
+                    "caption": "Heat pump extra run on PV surplus"
                 },
+                { "type": "Label", "name": "WP_OptionalRun_ActiveHint", "caption": "Switch the heat pump additional run on PV surplus" },
                 {
                     "type": "NumberSpinner",
                     "name": "WP_OptionalRun_MinSurplus_W",
-                    "caption": "Required surplus if the heat pump reports no power (W)",
+                    "caption": "Required surplus without metering",
                     "minimum": 100,
                     "maximum": 20000,
                     "suffix": " W"
                 },
+                { "type": "Label", "name": "WP_OptionalRun_MinSurplus_WHint", "caption": "Required surplus if the heat pump reports no power (W)" },
                 {
                     "type": "NumberSpinner",
                     "name": "WP_OptionalRun_OffImport_W",
-                    "caption": "Switch off at sustained grid import from (W)",
+                    "caption": "Switch off from grid import",
                     "minimum": 50,
                     "maximum": 20000,
                     "suffix": " W"
                 },
+                { "type": "Label", "name": "WP_OptionalRun_OffImport_WHint", "caption": "Switch off at sustained grid import from (W)" },
                 {
                     "type": "NumberSpinner",
                     "name": "WP_OptionalRun_Delay_Min",
@@ -1684,11 +1754,12 @@
                 {
                     "type": "NumberSpinner",
                     "name": "WP_OptionalRun_MinRun_Min",
-                    "caption": "Minimum run time after switching on (min.)",
+                    "caption": "Minimum run time",
                     "minimum": 0,
                     "maximum": 240,
                     "suffix": " min"
                 },
+                { "type": "Label", "name": "WP_OptionalRun_MinRun_MinHint", "caption": "Minimum run time after switching on (min.)" },
                 {
                     "type": "Label",
                     "name": "HpOptionalRunStatus",
@@ -1705,8 +1776,9 @@
                 {
                     "type": "CheckBox",
                     "name": "TIBBER_Active",
-                    "caption": "Enable price optimisation with a dynamic tariff (Tibber or own price variable)"
+                    "caption": "Activate price optimization"
                 },
+                { "type": "Label", "name": "TIBBER_ActiveHint", "caption": "Enable price optimisation with a dynamic tariff (Tibber or own price variable)" },
                 {
                     "type": "Label",
                     "caption": "── Tibber variables ──────────────────────────────────"
@@ -1714,9 +1786,10 @@
                 {
                     "type": "SelectVariable",
                     "name": "VAR_TIB_Price",
-                    "caption": "Current electricity price (EUR/kWh, e.g. Tibber CurrentPrice; empty = automatically from the price curve)",
+                    "caption": "Current electricity price",
                     "onChange": "EMS_PriceLinkChanged($id, $VAR_TIB_Price);"
                 },
+                { "type": "Label", "name": "VAR_TIB_PriceHint", "caption": "Current electricity price (EUR/kWh, e.g. Tibber CurrentPrice; empty = automatically from the price curve)" },
                 {
                     "type": "SelectVariable",
                     "name": "VAR_TIB_Level",
@@ -1807,23 +1880,26 @@
                 {
                     "type": "NumberSpinner",
                     "name": "OPT_Arbitrage_Min_Spread_ct",
-                    "caption": "Minimum margin for price arbitrage (the cheapest price of the day must be this far below the feed-in tariff)",
+                    "caption": "Minimum spread arbitrage",
                     "minimum": 0,
                     "maximum": 20,
                     "digits": 1,
                     "suffix": " ct/kWh"
                 },
+                { "type": "Label", "name": "OPT_Arbitrage_Min_Spread_ctHint", "caption": "Minimum margin for price arbitrage (the cheapest price of the day must be this far below the feed-in tariff)" },
                 {
                     "type": "SelectInstance",
                     "name": "PRICE_Source_Instance",
-                    "caption": "Symcon electricity price instance (only needed if there are several)",
+                    "caption": "Symcon power price instance",
                     "onChange": "EMS_PriceSourceChanged($id, $PRICE_Source_Instance);"
                 },
+                { "type": "Label", "name": "PRICE_Source_InstanceHint", "caption": "Symcon electricity price instance (only needed if there are several)" },
                 {
                     "type": "SelectVariable",
                     "name": "VAR_TIB_PT15M_Today",
-                    "caption": "15-min prices today JSON (fallback only, see below)"
+                    "caption": "15-min prices today (JSON)"
                 },
+                { "type": "Label", "name": "VAR_TIB_PT15M_TodayHint", "caption": "15-min prices today JSON (fallback only, see below)" },
                 {
                     "type": "Label",
                     "caption": "Obtained automatically from an installed Tibber Grid Reward instance (TIBBERGR_GetPriceCurve) -- only fill in this field if no Tibber Grid Reward instance is installed or another price source is to be used."
@@ -1850,30 +1926,33 @@
                 {
                     "type": "NumberSpinner",
                     "name": "TIB_Threshold_Charge",
-                    "caption": "Price threshold grid→battery charging (EUR/kWh, 0 = automatic: lowest quarter of the next 24 hours, at most as much as pays off after losses, wear and minimum margin)",
+                    "caption": "Price threshold charging",
                     "minimum": 0,
                     "maximum": 1,
                     "digits": 4,
                     "suffix": " €"
                 },
+                { "type": "Label", "name": "TIB_Threshold_ChargeHint", "caption": "Price threshold grid→battery charging (EUR/kWh, 0 = automatic: lowest quarter of the next 24 hours, at most as much as pays off after losses, wear and minimum margin)" },
                 {
                     "type": "NumberSpinner",
                     "name": "TIB_Threshold_Discharge",
-                    "caption": "Price threshold battery→house discharging (EUR/kWh, 0 = automatic: highest quarter of the next 24 hours, at least the feed-in tariff after losses plus wear)",
+                    "caption": "Price threshold discharging",
                     "minimum": 0,
                     "maximum": 1,
                     "digits": 4,
                     "suffix": " €"
                 },
+                { "type": "Label", "name": "TIB_Threshold_DischargeHint", "caption": "Price threshold battery→house discharging (EUR/kWh, 0 = automatic: highest quarter of the next 24 hours, at least the feed-in tariff after losses plus wear)" },
                 {
                     "type": "NumberSpinner",
                     "name": "TIB_Threshold_WB",
-                    "caption": "Price threshold vehicle charging (EUR/kWh, 0 = automatic: lower half of the next 24 hours; always allowed with a flat tariff)",
+                    "caption": "Price threshold vehicle",
                     "minimum": 0,
                     "maximum": 1,
                     "digits": 4,
                     "suffix": " €"
-                }
+                },
+                { "type": "Label", "name": "TIB_Threshold_WBHint", "caption": "Price threshold vehicle charging (EUR/kWh, 0 = automatic: lower half of the next 24 hours; always allowed with a flat tariff)" }
             ]
         },
         {
@@ -1889,53 +1968,61 @@
                 {
                     "type": "CheckBox",
                     "name": "PLAN_NightGrid_Active",
-                    "caption": "Night window: until the end hour, charge the battery from the grid in the cheapest quarter-hours and supply the house from the grid as long as the grid price is below the feed-in tariff (minus 5 % battery loss)"
+                    "caption": "Night window"
                 },
+                { "type": "Label", "name": "PLAN_NightGrid_ActiveHint", "caption": "Night window: until the end hour, charge the battery from the grid in the cheapest quarter-hours and supply the house from the grid as long as the grid price is below the feed-in tariff (minus 5 % battery loss)" },
                 {
                     "type": "NumberSpinner",
                     "name": "PLAN_NightGrid_ExtendHours",
-                    "caption": "Extend purchase: keep charging for up to this many hours after the end hour if the battery is not yet full and the price is reasonable (0 = off)",
+                    "caption": "Extend purchase by",
                     "minimum": 0,
                     "maximum": 6,
                     "suffix": " h"
                 },
+                { "type": "Label", "name": "PLAN_NightGrid_ExtendHoursHint", "caption": "Extend purchase: keep charging for up to this many hours after the end hour if the battery is not yet full and the price is reasonable (0 = off)" },
                 {
                     "type": "NumberSpinner",
                     "name": "PLAN_NightGrid_ExtendTol_ct",
-                    "caption": "Extend purchase: at most this much more expensive than the cheapest quarter-hour of the window (and below the feed-in tariff)",
+                    "caption": "Extend up to surcharge",
                     "digits": 1,
                     "minimum": 0,
                     "maximum": 50,
                     "suffix": " ct"
                 },
+                { "type": "Label", "name": "PLAN_NightGrid_ExtendTol_ctHint", "caption": "Extend purchase: at most this much more expensive than the cheapest quarter-hour of the window (and below the feed-in tariff)" },
                 {
                     "type": "CheckBox",
                     "name": "PLAN_NightGrid_NeedBased",
-                    "caption": "Night window: leave room for the next day's PV surplus (charges up to the night target, minus what PV will safely charge the next day according to the conservative forecast; at least the demand until the next night. Off: always up to the night target)"
+                    "caption": "Night window: room for PV"
                 },
+                { "type": "Label", "name": "PLAN_NightGrid_NeedBasedHint", "caption": "Night window: leave room for the next day's PV surplus (charges up to the night target, minus what PV will safely charge the next day according to the conservative forecast; at least the demand until the next night. Off: always up to the night target)" },
                 {
                     "type": "CheckBox",
                     "name": "PLAN_Restwert_Aktiv",
-                    "caption": "Residual value of the battery energy (beta): the battery is spared and the house runs from the grid if the stored energy will earn more later (until the next refill by PV or grid charging) than grid import now, by at least the minimum margin for price arbitrage. Visible in the day plan as hold battery with reasoning. Try it in dry run first for comparison."
+                    "caption": "Residual value of battery (beta)"
                 },
+                { "type": "Label", "name": "PLAN_Restwert_AktivHint", "caption": "Residual value of the battery energy (beta): the battery is spared and the house runs from the grid if the stored energy will earn more later (until the next refill by PV or grid charging) than grid import now, by at least the minimum margin for price arbitrage. Visible in the day plan as hold battery with reasoning. Try it in dry run first for comparison." },
                 {
                     "type": "CheckBox",
                     "name": "PLAN_Optimizer",
-                    "caption": "Battery optimizer: plans charging, holding and discharging together over the whole price horizon (today and tomorrow) and compares every quarter-hour with the price at which the energy would otherwise have to be bought later. No fixed price threshold decides about buying. Replaces night window, demand safeguard and rank simulation; manual entries, pre-discharge and §14a keep priority. Off = previous threshold logic."
+                    "caption": "Battery optimizer"
                 },
+                { "type": "Label", "name": "PLAN_OptimizerHint", "caption": "Battery optimizer: plans charging, holding and discharging together over the whole price horizon (today and tomorrow) and compares every quarter-hour with the price at which the energy would otherwise have to be bought later. No fixed price threshold decides about buying. Replaces night window, demand safeguard and rank simulation; manual entries, pre-discharge and §14a keep priority. Off = previous threshold logic." },
                 {
                     "type": "CheckBox",
                     "name": "PLAN_Bedarf_Aktiv",
-                    "caption": "Demand safeguard: simulates the SOC with the conservative PV forecast (p10) and the load forecast (includes the heat pump via heating degrees and outdoor temperature) until PV takes over the next day. If the energy would not suffice (reserve plus safety margin from the battery panel), the plan buys exactly the missing amount in the cheapest quarter-hours before the shortfall, provided that pays off against the expensive price after conversion losses, cycle costs and minimum margin. At runtime nothing is bought if the real SOC is already above the planned value."
+                    "caption": "Demand safeguard"
                 },
+                { "type": "Label", "name": "PLAN_Bedarf_AktivHint", "caption": "Demand safeguard: simulates the SOC with the conservative PV forecast (p10) and the load forecast (includes the heat pump via heating degrees and outdoor temperature) until PV takes over the next day. If the energy would not suffice (reserve plus safety margin from the battery panel), the plan buys exactly the missing amount in the cheapest quarter-hours before the shortfall, provided that pays off against the expensive price after conversion losses, cycle costs and minimum margin. At runtime nothing is bought if the real SOC is already above the planned value." },
                 {
                     "type": "NumberSpinner",
                     "name": "PLAN_Abend_MinSoc",
-                    "caption": "Optional lower limit at the evening hour (0 = off): additionally, the SOC at the evening hour should be at least this high, even if the calculated demand is lower",
+                    "caption": "Minimum SOC at evening hour",
                     "minimum": 0,
                     "maximum": 100,
                     "suffix": " %"
                 },
+                { "type": "Label", "name": "PLAN_Abend_MinSocHint", "caption": "Optional lower limit at the evening hour (0 = off): additionally, the SOC at the evening hour should be at least this high, even if the calculated demand is lower" },
                 {
                     "type": "NumberSpinner",
                     "name": "PLAN_Abend_Hour",
@@ -1970,17 +2057,19 @@
                 {
                     "type": "CheckBox",
                     "name": "PLAN_PreDischarge_Active",
-                    "caption": "Pre-discharge: empty the battery via the grid before a significantly cheaper night charging window (feed-in from the battery, price-weighted). Only together with the night window."
+                    "caption": "Pre-discharge"
                 },
+                { "type": "Label", "name": "PLAN_PreDischarge_ActiveHint", "caption": "Pre-discharge: empty the battery via the grid before a significantly cheaper night charging window (feed-in from the battery, price-weighted). Only together with the night window." },
                 {
                     "type": "NumberSpinner",
                     "name": "PLAN_PreDischarge_MinGain_ct",
-                    "caption": "Pre-discharge: minimum profit per kWh after conversion losses (ct, also covers cycle wear)",
+                    "caption": "Pre-discharge: minimum gain",
                     "digits": 1,
                     "minimum": 0,
                     "maximum": 50,
                     "suffix": " ct"
                 },
+                { "type": "Label", "name": "PLAN_PreDischarge_MinGain_ctHint", "caption": "Pre-discharge: minimum profit per kWh after conversion losses (ct, also covers cycle wear)" },
                 {
                     "type": "Label",
                     "caption": "Caution: pre-discharge feeds battery energy into the grid. With mixed storage systems with a fixed feed-in tariff and grid charging this can jeopardise the tariff (exclusivity, MiSpeL alternative) — only enable it if this has been clarified for your system."
@@ -2000,11 +2089,12 @@
                 {
                     "type": "NumberSpinner",
                     "name": "NEG_Avg_House_Load_W",
-                    "caption": "Estimated average house consumption (W) — until a real 15-minute load forecast is connected",
+                    "caption": "Estimated house consumption",
                     "minimum": 0,
                     "maximum": 20000,
                     "suffix": " W"
-                }
+                },
+                { "type": "Label", "name": "NEG_Avg_House_Load_WHint", "caption": "Estimated average house consumption (W) — until a real 15-minute load forecast is connected" }
             ]
         },
         {
@@ -2135,19 +2225,21 @@
                 {
                     "type": "NumberSpinner",
                     "name": "OPT_Cooldown_Sec",
-                    "caption": "Global cooldown between decisions (s)",
+                    "caption": "Cooldown between decisions",
                     "minimum": 10,
                     "maximum": 300,
                     "suffix": " s"
                 },
+                { "type": "Label", "name": "OPT_Cooldown_SecHint", "caption": "Global cooldown between decisions (s)" },
                 {
                     "type": "NumberSpinner",
                     "name": "OPT_Planning_Horizon_H",
-                    "caption": "Planning horizon Tibber preview (hours)",
+                    "caption": "Planning horizon",
                     "minimum": 1,
                     "maximum": 48,
                     "suffix": " h"
-                }
+                },
+                { "type": "Label", "name": "OPT_Planning_Horizon_HHint", "caption": "Planning horizon Tibber preview (hours)" }
             ]
         }
     ],

@@ -967,8 +967,9 @@ prop('EMS_Risk_Acknowledged', false);
 $fLock = json_decode($ems->GetConfigurationForm(), true);
 $vis = []; foreach ($fLock['elements'] as $e) { if (($e['type'] ?? '') === 'ExpansionPanel' && ($e['visible'] ?? true) !== false) { $vis[] = $e['name'] ?? '?'; } }
 $gen = null; foreach ($fLock['elements'] as $e) { if (($e['name'] ?? '') === 'PanelGeneral') { $gen = $e; } }
-check('Risiko-Sperre ueber name: nur Doku/Verbund/Neu/Benachrichtigungen/Allgemein sichtbar, Allgemein nur 2 Eintraege',
-    count(array_diff($vis, ['PanelDoc', 'PanelFederation', 'NewsPanel', 'PanelNotify', 'PanelGeneral'])) === 0 && in_array('PanelGeneral', $vis, true) && $gen !== null && count($gen['items']) === 2, json_encode($vis));
+check('Risiko-Sperre ueber name: nur Doku/Verbund/Neu/Benachrichtigungen/Allgemein sichtbar, Allgemein nur Warnung, Checkbox und ihre Erklaerung (0.106.6)',
+    count(array_diff($vis, ['PanelDoc', 'PanelFederation', 'NewsPanel', 'PanelNotify', 'PanelGeneral'])) === 0 && in_array('PanelGeneral', $vis, true) && $gen !== null && count($gen['items']) === 3
+    && ($gen['items'][1]['name'] ?? '') === 'EMS_Risk_Acknowledged' && ($gen['items'][2]['name'] ?? '') === 'EMS_Risk_AcknowledgedHint', json_encode([$vis, array_column($gen['items'] ?? [], 'name')]));
 $txt = json_encode($fEn, JSON_UNESCAPED_UNICODE);
 check('Pauschal-Hinweise (Netzmesspunkte/WR) weiter ueber name entfernt', strpos($txt, 'Look at the very top in the panel') === false && strpos($txt, 'Only needed if no partner module (InverterHub)') === false);
 $memo->setValue(null, []);
@@ -2050,6 +2051,7 @@ $fj = json_decode(emsFormDe($ems->GetConfigurationForm()), true);
 $find = function ($fj, $name) { foreach ($fj['elements'] as $e) { foreach (($e['items'] ?? []) as $it) { if (($it['name'] ?? '') === $name) { return $it; } } } return null; };
 check('Formular: leeres VAR_WB1_Power ausgeblendet, weil ChargerHub die Leistung liefert', ($find($fj, 'VAR_WB1_Power')['visible'] ?? true) === false);
 check('Formular: leeres VAR_WB1_Error ausgeblendet (errorCodeID vorhanden)', ($find($fj, 'VAR_WB1_Error')['visible'] ?? true) === false);
+check('Formular: mit dem Feld wird auch seine Erklaerung ausgeblendet (0.106.6)', ($find($fj, 'VAR_WB1_PowerHint')['visible'] ?? true) === false && ($find($fj, 'VAR_WB1_ErrorHint')['visible'] ?? true) === false);
 check('Formular: Phasen-Variable (nie ausgewertet) leer -> ausgeblendet', ($find($fj, 'VAR_WB1_Phases')['visible'] ?? true) === false);
 check('Formular: Quellzeilen unter der Instanz-Auswahl, Beschriftung "Fahrzeug angesteckt" statt "Kabel-Leistungsfaehigkeit"', $find($fj, 'WB1LinkLeistung') !== null && $find($fj, 'WB1LinkInstanz') !== null && strpos($find($fj, 'VAR_WB1_Cable')['caption'], 'Fahrzeug angesteckt') !== false);
 prop('VAR_WB1_Power', $manPw);
@@ -4427,6 +4429,36 @@ check('Wechselrichter-Art: GoodWe / Solis / nur lesbar / keine Instanz',
 check('ctl_ems_mode ohne -power/-enable gilt als nur lesbar (wie bisher in setGoodweMode)', call($ems, 'inverterKind', [433]) === 'readonly');
 obj(434, 1, 'Beides', 0); vari('m', 434, 'ctl_ems_mode', 1, 1); vari('f', 434, 'ctl_force_mode', 0, 1); vari('w', 434, 'ctl_force_w', 0, 1);
 check('Zwangsmodus-Punkte UND ctl_ems_mode: kein Solis (GoodWe-Weg bleibt unberuehrt)', call($ems, 'inverterKind', [434]) !== 'solis');
+
+echo "\n8at) 0.106.6: kurze Beschriftungen, Erklaerung als Label (Rueckmeldung Hannes, SUITE.md Formular-Regel)\n";
+$ems = freshEms();
+$fj = json_decode(file_get_contents(__DIR__ . '/../EMS/form.json'), true);
+$loc = json_decode(file_get_contents(__DIR__ . '/../EMS/locale.json'), true)['translations']['de'];
+$long = []; $noHint = [];
+$walk = function ($o, $sib = []) use (&$walk, &$long, &$noHint, $loc) {
+    if (!is_array($o)) { return; }
+    if (isset($o['items']) && is_array($o['items'])) {
+        $names = array_column(array_filter($o['items'], 'is_array'), 'name');
+        foreach ($o['items'] as $it) { $walk($it, $names); }
+    }
+    foreach ($o as $k => $v) { if ($k !== 'items' && is_array($v)) { $walk($v); } }
+    $inputs = ['NumberSpinner', 'ValidationTextBox', 'Select', 'SelectVariable', 'SelectInstance', 'CheckBox', 'PasswordTextBox', 'SelectTime'];
+    if (in_array($o['type'] ?? '', $inputs, true) && isset($o['caption'])) {
+        $de = $loc[$o['caption']] ?? $o['caption'];
+        if (mb_strlen($de) > 40) { $long[] = $o['name'] ?? $o['caption']; }
+    }
+};
+$walk($fj);
+check('Keine Eingabefeld-Beschriftung ueber 40 Zeichen (deutsch)', $long === [], json_encode($long, JSON_UNESCAPED_UNICODE));
+$hints = 0; $orph = []; $txt = file_get_contents(__DIR__ . '/../EMS/form.json');
+preg_match_all('/"name": "(\w+)Hint"/', $txt, $m);
+foreach ($m[1] as $base) { $hints++; if (strpos($txt, '"name": "' . $base . '"') === false) { $orph[] = $base; } }
+check('92 neue Erklaerungs-Labels mit Feld (dazu die zwei alten Hinweise GridOverviewHint/InverterFallbackHint ohne Feld)', $hints - count($orph) === 92 && $orph === ['GridOverview', 'InverterFallback'], json_encode([$hints, $orph]));
+$h = call($ems, 'hideHintsOfHiddenFields', [[['type' => 'ExpansionPanel', 'items' => [
+    ['type' => 'SelectVariable', 'name' => 'VAR_WB1_Power', 'visible' => false], ['type' => 'Label', 'name' => 'VAR_WB1_PowerHint'],
+    ['type' => 'SelectVariable', 'name' => 'VAR_WB1_Cable'], ['type' => 'Label', 'name' => 'VAR_WB1_CableHint']]]]]);
+check('Ausgeblendetes Feld: seine Erklaerung wird mit ausgeblendet, sichtbare bleiben',
+    ($h[0]['items'][1]['visible'] ?? true) === false && !isset($h[0]['items'][3]['visible']), json_encode($h));
 
 // ===========================================================================
 if (getenv('EMS_DUMP')) { file_put_contents(getenv('EMS_DUMP'), implode("\n", $GLOBALS['DUMP'] ?? []) . "\n"); }
