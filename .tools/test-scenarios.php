@@ -4333,6 +4333,19 @@ $r = call($ems, 'carFromGridSetting', [7400.0, array_merge($sC, ['bat_soc' => 96
 check('Auto aus dem Netz: Akku fast voll mit PV-Ueberschuss = Modus 2 und 10 min Haltezeit',
     $r['gw_mode'] === GW_MODE_CHARGE_PV && $ems->ReadAttributeInteger('SmartFullHoldUntil') > time() + 500, json_encode($r));
 
+echo "\n8ap) Umbau 1: nachgelagerte Schritte als feste Liste mit Vorrang (vorher Einzelaufrufe in Update())\n";
+$ems = freshEms();
+check('Reihenfolge der Schritte unveraendert gegenueber 0.105.3 (spaeter = hoeherer Vorrang, Sicherheit zuletzt)',
+    array_column(call($ems, 'decisionSteps'), 0) === ['smart_charging_grid_buy', 'grid_service_b1', 'negative_price_note', 'plausibility', 'charge_no_effect', 'export_overlap']);
+check('Jeder Schritt verweist auf eine vorhandene Methode', count(array_filter(call($ems, 'decisionSteps'), fn($x) => method_exists('EMS', $x[2]))) === 6);
+$dP = ['op_mode' => EMS_OP_AUTO, 'gw_mode' => GW_MODE_AUTO, 'gw_power_w' => 0, 'gw_enable' => false, 'wb1_enable' => false, 'wb2_enable' => false, 'reason' => 'Tagesplan: Automatik', 'source' => 'tagesplan'];
+$r = call($ems, 'runDecisionSteps', [$dP, state(['bat_soc' => 70.0, 'pv_total_w' => 0.0, 'bat_pow_w' => 400.0, 'grid_total_w' => -20.0])]);
+check('Unauffaelliger Zustand: Entscheidung bleibt, kein Schritt protokolliert', $r === $dP && $ems->ReadAttributeString('LastDecisionSteps') === '[]', json_encode([$r, $ems->ReadAttributeString('LastDecisionSteps')]));
+attr('PlausiSince', time() - 400);
+$r = call($ems, 'runDecisionSteps', [$dP, state(['bat_soc' => 70.0, 'pv_total_w' => 0.0, 'bat_pow_w' => -12.0, 'grid_total_w' => -420.0])]);
+check('Plausibilitaetswaechter greift: Rueckfall in WR-Eigenregelung, Schritt "plausibility" protokolliert',
+    isNativeAuto($r) && !empty($r['force']) && in_array('plausibility', json_decode($ems->ReadAttributeString('LastDecisionSteps'), true), true), json_encode([$r['reason'] ?? '', $ems->ReadAttributeString('LastDecisionSteps')]));
+
 // ===========================================================================
 if (getenv('EMS_DUMP')) { file_put_contents(getenv('EMS_DUMP'), implode("\n", $GLOBALS['DUMP'] ?? []) . "\n"); }
 echo "\n" . ($fails === 0 ? "ALLE SZENARIEN BESTANDEN" : "$fails SZENARIO(S) VERLETZT") . "\n\n";

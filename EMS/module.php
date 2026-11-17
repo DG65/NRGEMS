@@ -703,6 +703,7 @@ class EMS extends IPSModule
         $this->RegisterAttributeInteger('ChargeNoEffectSince', 0);
         // 0.105.0: Schreib-Ueberwachung (Vorfall Paul 15.11.2026) und Zyklus-Luecken-Protokoll
         $this->RegisterAttributeString('WriteStallState', '{}');
+        $this->RegisterAttributeString('LastDecisionSteps', '[]');
         $this->RegisterAttributeInteger('LastCycleTs', 0);
         $this->RegisterAttributeInteger('ChargeNoEffectHoldUntil', 0);
         $this->RegisterAttributeString('DryRunLast', '');
@@ -1618,15 +1619,7 @@ class EMS extends IPSModule
             $this->updateStatusVars($state);
             $this->refreshForecastCache();
             $decision = $this->optimize($state);
-            $decision = $this->applySmartChargingGridBuy($decision, $state);
-            $decision = $this->applyGridServiceB1($decision, $state);
-            $neg = $this->negativePriceStatus();
-            if ($neg['active']) {
-                $decision['reason'] = ($decision['reason'] ?? '') . sprintf($this->t(' | ⚡ Negative exchange price %.2f ct/kWh: feed-in limited to 0 W (§ 51 EEG)'), $neg['price']);
-            }
-            $decision = $this->applyPlausibilityGuard($decision, $state);
-            $decision = $this->applyChargeNoEffectGuard($decision, $state);
-            $decision = $this->applyExportOverlapGuard($decision, $state);
+            $decision = $this->runDecisionSteps($decision, $state);
             $this->applyDecision($decision, $state);
             try { $this->checkWriteStalls(); } catch (Throwable $e) { $this->emsLog(EMS_LOG_VERBOSE, 'Schreib-Ueberwachung: ' . $e->getMessage()); }
             // WP-Zusatzlauf: rein additive Stellgroesse nach der Batterie-/WR-Entscheidung, beeinflusst sie nie
@@ -1653,6 +1646,52 @@ class EMS extends IPSModule
                 $this->applyFallback();
             }
         }
+    }
+
+    /**
+     * Nachgelagerte Schritte nach optimize() in fester Reihenfolge (Umbau 1, 17.11.2026; vorher als Einzelaufrufe in Update()).
+     * Spaeter = hoeherer Vorrang: jeder Schritt darf die Entscheidung der vorherigen ueberschreiben. Deshalb stehen die
+     * Sicherheitspruefungen am Ende. Netzbetreiber-Vorgaben (§14a, Einspeisereduktion) wirken schon in optimize() bzw.
+     * applySteuerboxFeedInLimit() und sind hier nicht noetig.
+     * @return array<int, array{0: string, 1: string, 2: string}> [Schluessel, Stufe, Methode]
+     */
+    private function decisionSteps(): array
+    {
+        return array(
+            array('smart_charging_grid_buy', 'Komfort/Vermarkter', 'applySmartChargingGridBuy'),
+            array('grid_service_b1',         'Netzdienlich',       'applyGridServiceB1'),
+            array('negative_price_note',     'Hinweis',            'noteNegativePrice'),
+            array('plausibility',            'Sicherheit',         'applyPlausibilityGuard'),
+            array('charge_no_effect',        'Sicherheit',         'applyChargeNoEffectGuard'),
+            array('export_overlap',          'Sicherheit',         'applyExportOverlapGuard'),
+        );
+    }
+
+    /** Fuehrt decisionSteps() aus und merkt, welcher Schritt die Stellgroessen geaendert hat (Attribut LastDecisionSteps, Debug). */
+    private function runDecisionSteps(array $decision, array $state): array
+    {
+        $keys = array('op_mode', 'gw_mode', 'gw_power_w', 'gw_enable', 'svc', 'wb1_enable', 'wb2_enable', 'force');
+        $pick = function (array $d) use ($keys): array { $o = array(); foreach ($keys as $k) { $o[$k] = $d[$k] ?? null; } return $o; };
+        $trail = array();
+        foreach ($this->decisionSteps() as $step) {
+            $before = $pick($decision);
+            $decision = $this->{$step[2]}($decision, $state);
+            if ($pick($decision) !== $before) { $trail[] = $step[0]; }
+        }
+        $json = json_encode($trail);
+        if ($this->ReadAttributeString('LastDecisionSteps') !== $json) { $this->WriteAttributeString('LastDecisionSteps', $json); }
+        if (!empty($trail)) { $this->SendDebug('Schritte', implode(' > ', $trail), 0); }
+        return $decision;
+    }
+
+    /** Negativer Boersenpreis: nur ein Hinweis in der Begruendung, die Einspeisegrenze setzt applyDecision() (§ 51 EEG). */
+    private function noteNegativePrice(array $decision, array $state): array
+    {
+        $neg = $this->negativePriceStatus();
+        if ($neg['active']) {
+            $decision['reason'] = ($decision['reason'] ?? '') . sprintf($this->t(' | ⚡ Negative exchange price %.2f ct/kWh: feed-in limited to 0 W (§ 51 EEG)'), $neg['price']);
+        }
+        return $decision;
     }
 
     // ----------------------------------------------------------------
