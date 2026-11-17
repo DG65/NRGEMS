@@ -4293,6 +4293,46 @@ check('10 min Luecke ohne Neustart: "nein"', is_string($g) && strpos($g, 'Neusta
 unset($GLOBALS['INSTMOD'][990], $GLOBALS['INSTMOD'][991], $GLOBALS['KERNEL_START']);
 }
 
+echo "\n8ao) Umbau-Absicherung: GoodWe-Totmann und Auto aus dem Netz (Verhalten von 0.105.3 festgehalten)\n";
+$ems = freshEms();
+obj(410, 1, 'GoodWe-Totmann-Test', 0);
+$vDm = vari('EMS Modus', 410, 'ctl_ems_mode', 1, 1);
+attr('PartnerCache', json_encode(['inverterhub' => [['instanceID' => 410, 'controlAuthority' => 'ems', 'controllable' => true]]]));
+prop('WATCHDOG_Deadman_Reaction', 1);
+$dmActs = function () { return array_map(fn($a) => $a[1] . '=' . json_encode($a[2]), array_filter($GLOBALS['ACTIONS'], fn($a) => $a[0] === 410)); };
+$GLOBALS['ACTIONS'] = []; call($ems, 'handleGoodweDeadman');
+check('Totmann: Modus 1 am Geraet = keine Reaktion', $dmActs() === [], json_encode($dmActs()));
+$GLOBALS['VAL'][$vDm] = 255; $GLOBALS['ACTIONS'] = []; call($ems, 'handleGoodweDeadman');
+check('Totmann: Wechsel auf 255, Reaktion 1 = enable=false, Modus 1, Leistung 0 in dieser Reihenfolge',
+    array_values($dmActs()) === ['ctl_ems_enable=false', 'ctl_ems_mode=1', 'ctl_ems_power=0'], json_encode($dmActs()));
+$GLOBALS['ACTIONS'] = []; call($ems, 'handleGoodweDeadman');
+check('Totmann: bleibt 255 = keine erneute Reaktion (nur die Flanke zaehlt)', $dmActs() === [], json_encode($dmActs()));
+prop('WATCHDOG_Deadman_Reaction', 0); $GLOBALS['VAL'][$vDm] = 1; call($ems, 'handleGoodweDeadman');
+$GLOBALS['VAL'][$vDm] = 255; $GLOBALS['ACTIONS'] = []; call($ems, 'handleGoodweDeadman');
+check('Totmann: Reaktion 0 (Sicherheits-Stopp respektieren) = nichts schreiben', $dmActs() === [], json_encode($dmActs()));
+prop('WATCHDOG_Deadman_Reaction', 1); attr('DeadmanTriggerLog', json_encode([time() - 100, time() - 200, time() - 300])); attr('DeadmanBrakeTripped', false);
+$GLOBALS['VAL'][$vDm] = 1; call($ems, 'handleGoodweDeadman'); $GLOBALS['VAL'][$vDm] = 255; $GLOBALS['ACTIONS'] = []; call($ems, 'handleGoodweDeadman');
+check('Totmann: vierte Ausloesung in einer Stunde = Pendel-Bremse, keine Schreibbefehle mehr',
+    $dmActs() === [] && $ems->ReadAttributeBoolean('DeadmanBrakeTripped') === true, json_encode([$dmActs(), $ems->ReadAttributeBoolean('DeadmanBrakeTripped')]));
+attr('PartnerCache', '');
+
+$ems = freshEms();
+prop('WB_Smart_HouseFromBattery', true); prop('BAT_SOC_Min', 10); prop('BAT_SOC_Reserve_Backup', 0);
+$sC = ['bat_soc' => 60.0, 'pv_total_w' => 0.0, 'house_pow_w' => 500.0, 'grid_total_w' => -7900.0, 'bat_pow_w' => 500.0];
+$r = call($ems, 'carFromGridSetting', [7400.0, $sC]);
+check('Auto aus dem Netz: Normalfall = Modus 9 mit Auto-Leistung minus 200 W', $r['gw_mode'] === GW_MODE_BUY && $r['gw_power_w'] === 7200 && $r['gw_enable'] === true, json_encode($r));
+prop('WB_Smart_HouseFromBattery', false);
+$r = call($ems, 'carFromGridSetting', [7400.0, $sC]);
+check('Auto aus dem Netz: Schalter "Haus aus dem Akku" aus = Modus 2 ohne Leistung', $r['gw_mode'] === GW_MODE_CHARGE_PV && $r['gw_power_w'] === 0, json_encode($r));
+prop('WB_Smart_HouseFromBattery', true);
+$r = call($ems, 'carFromGridSetting', [400.0, $sC]);
+check('Auto aus dem Netz: Auto unter 500 W (Sollwert < 300 W) = Modus 2', $r['gw_mode'] === GW_MODE_CHARGE_PV, json_encode($r));
+$r = call($ems, 'carFromGridSetting', [7400.0, array_merge($sC, ['bat_soc' => 11.0])]);
+check('Auto aus dem Netz: Akku an der Reserve = Modus 2', $r['gw_mode'] === GW_MODE_CHARGE_PV, json_encode($r));
+$r = call($ems, 'carFromGridSetting', [7400.0, array_merge($sC, ['bat_soc' => 96.0, 'pv_total_w' => 3000.0])]);
+check('Auto aus dem Netz: Akku fast voll mit PV-Ueberschuss = Modus 2 und 10 min Haltezeit',
+    $r['gw_mode'] === GW_MODE_CHARGE_PV && $ems->ReadAttributeInteger('SmartFullHoldUntil') > time() + 500, json_encode($r));
+
 // ===========================================================================
 if (getenv('EMS_DUMP')) { file_put_contents(getenv('EMS_DUMP'), implode("\n", $GLOBALS['DUMP'] ?? []) . "\n"); }
 echo "\n" . ($fails === 0 ? "ALLE SZENARIEN BESTANDEN" : "$fails SZENARIO(S) VERLETZT") . "\n\n";
