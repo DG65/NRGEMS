@@ -2,6 +2,10 @@
 
 Ältere Versionen: [CHANGELOG-Archiv.md](CHANGELOG-Archiv.md)
 
+## 0.106.2 (2026-11-17)
+- **Umbau Schritt 2c (erster Teil), Verhalten unverändert:** Der Planungskern liegt jetzt in einer eigenen Klasse `EMS_Planner` (`EMS/Planner.php`, 154 Zeilen) ohne einen einzigen Symcon-Aufruf. Darin stehen die Akku-Physik einer Viertelstunde, der Optimierer, die Ladekurve und die Ausrichtung der Preisschätzung. Die Wirkungsgrade kommen von außen. Das Modul ruft den Kern über gleichnamige Weiterleitungen, Aufrufer und Prüfungen bleiben unverändert.
+- **Neuer Prüfstand** `.tools/test-planner.php`: Er lädt nur die Planungsklasse, ohne Symcon-Nachbildung, und prüft Physik, Ladekurve, Optimierer und Preisschätzung (14 Prüfungen). Er läuft auch in der GitHub-Prüfung mit. Alle 1.185 bisherigen Prüfungen und der Referenzlauf (36 Optimierer-Läufe, 1.440 Planzeilen) sind Stelle für Stelle gleich.
+
 ## 0.106.1 (2026-11-17)
 - **Umbau Schritt 2b, Verhalten unverändert:** Die Art des Wechselrichters (GoodWe, Solis, nur lesbar, keiner) stellt jetzt eine einzige Funktion `inverterKind()` fest. Vorher fragten sechs Stellen jeweils selbst nach den Steuerpunkten, teils doppelt. Was „Auto aus dem Netz“ am jeweiligen Wechselrichter bewirkt, beschreibt `carFromGridText()`. Damit ist die Solis-Weiche in `carFromGridSetting()` aus 0.105.5 wieder entfernt.
 - **Fix:** Der Hinweis „Mittagsspitze nicht aktiv: …“ erscheint in der Statuszeile nur noch, solange die PV erzeugt. Nachts stand dort sonst „spätester Freigabezeitpunkt 16:00 erreicht“.

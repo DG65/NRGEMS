@@ -21,3 +21,6 @@ jobs:
       # landet (Beta wird ohne Puffer sofort installiert).
       - name: Szenario-Pruefstand (Entscheidungslogik)
         run: php .tools/test-scenarios.php
+      # Planungskern ohne Symcon (Umbau 2c): laedt nur EMS/Planner.php
+      - name: Pruefstand Planungskern
+        run: php .tools/test-planner.php
