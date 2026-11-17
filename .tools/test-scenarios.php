@@ -104,6 +104,8 @@ function GetValueInteger($id)     { return (int)($GLOBALS['VAL'][$id] ?? 0); }
 function emsDump(string $kind, $v): void { if (getenv('EMS_DUMP') && empty($GLOBALS['EMS_LANG_EN']) && (is_string($v) || is_array($v))) { $GLOBALS['DUMP'][] = $kind . ': ' . (is_string($v) ? $v : json_encode($v, JSON_UNESCAPED_UNICODE)); } }
 function SetValue($id, $v)        { emsDump('SetValue', $v); $GLOBALS['VAL'][$id] = $v; return true; }
 function WFC_PushNotification($id, $title, $text, $sound, $target) { emsDump('Push', $title . ' | ' . $text); $GLOBALS['PUSH'][] = [$title, $text]; return true; }
+function VISU_PostNotificationEx($id, $title, $text, $icon, $sound, $target) { emsDump('Push', $title . ' | ' . $text); $GLOBALS['PUSH'][] = [$title, $text, 'visu']; return true; }
+function IPS_GetKernelStartTime() { return $GLOBALS['KERNEL_START'] ?? 0; }
 function RequestAction($id, $v)   { $GLOBALS['VARACTIONS'][] = [$id, $v]; $GLOBALS['VAL'][$id] = $v; return true; }
 function AC_SetLoggingStatus($a, $b, $c) { $GLOBALS['LOGGED'][$b] = $c; $GLOBALS['LOGSET'][] = $b; return true; }
 function AC_GetLoggingStatus($a, $b) { return !empty($GLOBALS['LOGGED'][$b]); }
@@ -4222,6 +4224,43 @@ check('vehicleFresh: 10 min alt = frisch, 2 h alt bei 1 h Grenze = alt', call($e
 check('vehicleFresh: alter Tessie-Stand (legacy) gilt als frisch', call($ems, 'vehicleFresh', [['legacy' => true], 3600]) === true);
 unset($GLOBALS['MODULES'], $GLOBALS['VEHDATA'], $GLOBALS['TESSIE_STATE']);
 foreach ([71001, 71002, 71003, 71004, 71005, 71006] as $i) { unset($GLOBALS['INSTMOD'][$i], $GLOBALS['INSTSTATUS'][$i]); }
+}
+
+echo "\n8an) Schreib-Ueberwachung, Zyklus-Luecke, Push bei Netzladen ohne Wirkung (0.105.0, Vorfall Paul 15.11.2026)\n";
+if (method_exists('EMS', 'checkInverterWriteStall')) {
+$ems = freshEms();
+attr('PartnerCache', json_encode(['inverterhub' => [['instanceID' => IHUB_IID, 'controlAuthority' => 'ems', 'controllable' => true]]]));
+$GLOBALS['INSTMOD'][990] = GUID_WEBFRONT; prop('NOTIFY_Visualization_ID', 990);
+$fT = vari('fail_time', IHUB_IID, 'ctl_write_fail_time', 0, 1);
+$oT = vari('ok_time', IHUB_IID, 'ctl_write_ok_time', 0, 1);
+vari('fail_text', IHUB_IID, 'ctl_write_fail_text', 'keine Verbindung (110)', 3);
+$now = 1795000000; $GLOBALS['PUSH'] = [];
+$GLOBALS['VAL'][$oT] = $now - 30; $GLOBALS['VAL'][$fT] = $now - 600;
+check('Erfolg nach dem letzten Fehler = kein Alarm', call($ems, 'checkInverterWriteStall', [$now]) === null && empty($GLOBALS['PUSH']));
+$GLOBALS['VAL'][$oT] = $now - 300; $GLOBALS['VAL'][$fT] = $now - 120;
+check('Fehler juenger als Erfolg, erst seit 2 min = noch kein Alarm', call($ems, 'checkInverterWriteStall', [$now]) === null && empty($GLOBALS['PUSH']));
+check('Nach 3 min ununterbrochen = Alarm mit Push und Fehlergrund', call($ems, 'checkInverterWriteStall', [$now + 70]) === 'alarm' && count($GLOBALS['PUSH']) === 1 && strpos($GLOBALS['PUSH'][0][1], '110') !== false, json_encode($GLOBALS['PUSH']));
+check('Alarm kommt nur einmal', call($ems, 'checkInverterWriteStall', [$now + 400]) === null && count($GLOBALS['PUSH']) === 1);
+$GLOBALS['VAL'][$oT] = $now + 410;
+check('Erholung wird einmal gemeldet', call($ems, 'checkInverterWriteStall', [$now + 420]) === 'recovered' && count($GLOBALS['PUSH']) === 2 && call($ems, 'checkInverterWriteStall', [$now + 450]) === null && count($GLOBALS['PUSH']) === 2);
+$GLOBALS['INSTMOD'][991] = '{B5B875BB-9B76-45FD-4E67-2607E45B3AC4}'; prop('NOTIFY_Visualization_ID', 991);
+$GLOBALS['VAL'][$fT] = $now + 500; call($ems, 'checkInverterWriteStall', [$now + 500]);
+check('Kachel-Visualisierung bekommt den Push ueber VISU_PostNotificationEx', call($ems, 'checkInverterWriteStall', [$now + 700]) === 'alarm' && (end($GLOBALS['PUSH'])[2] ?? '') === 'visu', json_encode(end($GLOBALS['PUSH'])));
+prop('NOTIFY_Visualization_ID', 0); $n = count($GLOBALS['PUSH']);
+call($ems, 'notifyUser', ['x', 'y']);
+check('Ohne eingestellte Visualisierung kein Push', count($GLOBALS['PUSH']) === $n);
+$ems = freshEms();
+attr('PartnerCache', json_encode(['inverterhub' => [['instanceID' => 401, 'controlAuthority' => 'ems', 'controllable' => true]]]));
+check('InverterHub ohne ctl_write_*-Variablen (vor 0.86.0) = still', call($ems, 'checkInverterWriteStall', [$now]) === null);
+check('Erster Durchlauf ohne Vorgaenger = keine Luecke', call($ems, 'checkCycleGap', [$now]) === null);
+check('60 s Abstand = keine Luecke', call($ems, 'checkCycleGap', [$now + 60]) === null);
+$GLOBALS['KERNEL_START'] = $now + 3000;
+$g = call($ems, 'checkCycleGap', [$now + 60 + 72 * 60]);
+check('72 min Luecke mit Symcon-Neustart darin wird protokolliert', is_string($g) && strpos($g, '72 min') !== false && strpos($g, 'Neustart: ja') !== false, (string)$g);
+$GLOBALS['KERNEL_START'] = $now - 99999;
+$g = call($ems, 'checkCycleGap', [$now + 60 + 72 * 60 + 600]);
+check('10 min Luecke ohne Neustart: "nein"', is_string($g) && strpos($g, 'Neustart: nein') !== false, (string)$g);
+unset($GLOBALS['INSTMOD'][990], $GLOBALS['INSTMOD'][991], $GLOBALS['KERNEL_START']);
 }
 
 // ===========================================================================

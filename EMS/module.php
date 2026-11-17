@@ -700,6 +700,10 @@ class EMS extends IPSModule
         $this->RegisterAttributeString('ChargeLimitCurve', '{}'); // gelernte BMS-Ladegrenze je SOC-Stufe {stufe: [kW, Zeitstempel]}
         $this->RegisterAttributeString('NoControlReason', ''); // leer = EMS kann schreiben; sonst Grund, warum es nur beobachtet
         $this->RegisterAttributeInteger('ChargeNoEffectSince', 0);
+        // 0.105.0: Schreib-Ueberwachung (Vorfall Paul 15.11.2026) und Zyklus-Luecken-Protokoll
+        $this->RegisterAttributeInteger('WriteStallSince', 0);
+        $this->RegisterAttributeBoolean('WriteStallAlarm', false);
+        $this->RegisterAttributeInteger('LastCycleTs', 0);
         $this->RegisterAttributeInteger('ChargeNoEffectHoldUntil', 0);
         $this->RegisterAttributeString('DryRunLast', '');
         $this->RegisterAttributeInteger('LastGoodweWriteAt', 0);
@@ -1470,6 +1474,7 @@ class EMS extends IPSModule
 
     public function Update()
     {
+        try { $this->checkCycleGap(); } catch (Throwable $e) {}
         // Verbund-Gesundheitscheck + Ausfall-Meldung laeuft IMMER, auch wenn
         // EMS_Active=false (z.B. waehrend einer Notabschaltung) -- ein reiner
         // Diagnose-/Melde-Vorgang, keine Steuerentscheidung, siehe
@@ -1623,6 +1628,7 @@ class EMS extends IPSModule
             $decision = $this->applyChargeNoEffectGuard($decision, $state);
             $decision = $this->applyExportOverlapGuard($decision, $state);
             $this->applyDecision($decision, $state);
+            try { $this->checkInverterWriteStall(); } catch (Throwable $e) { $this->emsLog(EMS_LOG_VERBOSE, 'Schreib-Ueberwachung: ' . $e->getMessage()); }
             // WP-Zusatzlauf: rein additive Stellgroesse nach der Batterie-/WR-Entscheidung, beeinflusst sie nie
             try { $this->applyHeatpumpOptionalRun($state); } catch (Throwable $e) { $this->emsLog(EMS_LOG_BASIC, 'WP-Zusatzlauf-Fehler: ' . $e->getMessage()); }
             $this->trackSpecialEvents($state);
@@ -2124,6 +2130,100 @@ class EMS extends IPSModule
             );
         }
         return $out;
+    }
+
+    /**
+     * Push an die eingestellte Visualisierung, klassisches WebFront ODER Kachel-Visualisierung
+     * (SUITE.md Stolperstein 22: Kachel braucht VISU_PostNotificationEx). Still, wenn nichts eingestellt ist.
+     */
+    private function notifyUser(string $title, string $text, string $type = 'alert'): void
+    {
+        $visID = $this->ReadPropertyInteger('NOTIFY_Visualization_ID');
+        if ($visID <= 0 || !IPS_InstanceExists($visID)) {
+            return;
+        }
+        $title = mb_strcut($title, 0, 32, 'UTF-8');
+        $text  = mb_strcut($text, 0, 256, 'UTF-8');
+        $moduleID = IPS_GetInstance($visID)['ModuleInfo']['ModuleID'];
+        if ($moduleID === GUID_WEBFRONT && function_exists('WFC_PushNotification')) {
+            @WFC_PushNotification($visID, $title, $text, $type === 'alert' ? 'alarm' : '', $this->InstanceID);
+        } elseif (function_exists('VISU_PostNotificationEx')) {
+            @VISU_PostNotificationEx($visID, $title, $text, 'Warning', $type === 'alert' ? 'alarm' : '', $visID);
+        }
+    }
+
+    /**
+     * Zyklus-Luecke (Vorfall Paul 15.11.2026: 72 min ohne jeden Logeintrag, Ursache nicht mehr klaerbar):
+     * Fehlt der eigene Durchlauf laenger als 5 min (bzw. 3 Timer-Intervalle), schreibt EMS das beim
+     * naechsten Durchlauf ins Log, mit dem Hinweis, ob der Symcon-Dienst in der Luecke neu gestartet ist.
+     */
+    private function checkCycleGap(?int $now = null): ?string
+    {
+        $now  = $now ?? time();
+        $last = $this->ReadAttributeInteger('LastCycleTs');
+        $this->WriteAttributeInteger('LastCycleTs', $now);
+        $limit = max(300, 3 * max(1, $this->ReadPropertyInteger('EMS_Interval')));
+        if ($last <= 0 || ($now - $last) <= $limit) {
+            return null;
+        }
+        $restart = $this->t('unknown');
+        if (function_exists('IPS_GetKernelStartTime')) {
+            $ks = (int)IPS_GetKernelStartTime();
+            $restart = ($ks > $last) ? sprintf($this->t('yes, %s'), date('d.m. H:i', $ks)) : $this->t('no');
+        }
+        $msg = sprintf('Zyklus fehlte %d min (%s bis %s), Symcon-Neustart: %s', (int)round(($now - $last) / 60), date('d.m. H:i', $last), date('H:i', $now), $restart);
+        $this->emsLog(EMS_LOG_BASIC, $msg);
+        return $msg;
+    }
+
+    /**
+     * Schreib-Ueberwachung (Vorfall Paul 15.11.2026: 30 Schreibfehler am Solis, das EMS hielt den Plan fuer
+     * ausgefuehrt). Liest die InverterHub-Variablen ctl_write_fail_time/ctl_write_ok_time (ab InverterHub
+     * 0.86.0). Haengt das Schreiben laenger als 3 min (Solis vergisst einen Befehl nach 182 s), steht es im
+     * Log und kommt als Push; die Erholung wird einmal gemeldet. Ohne diese Variablen: nichts.
+     */
+    private function checkInverterWriteStall(?int $now = null): ?string
+    {
+        $now = $now ?? time();
+        $inv = $this->getInverterEntry();
+        $iid = (int)($inv['instanceID'] ?? 0);
+        if ($iid <= 0) {
+            return null;
+        }
+        $failVar = $this->findChildVariableIdByIdent($iid, 'ctl_write_fail_time');
+        $okVar   = $this->findChildVariableIdByIdent($iid, 'ctl_write_ok_time');
+        if ($failVar <= 0 || $okVar <= 0) {
+            return null;
+        }
+        $fail = (int)GetValue($failVar);
+        $ok   = (int)GetValue($okVar);
+        $alarmed = $this->ReadAttributeBoolean('WriteStallAlarm');
+        if ($fail <= $ok) {
+            if ($this->ReadAttributeInteger('WriteStallSince') > 0) {
+                $this->WriteAttributeInteger('WriteStallSince', 0);
+            }
+            if ($alarmed) {
+                $this->WriteAttributeBoolean('WriteStallAlarm', false);
+                $this->emsLog(EMS_LOG_BASIC, 'Schreiben an den Wechselrichter klappt wieder');
+                $this->notifyUser($this->t('EMS: inverter OK again'), $this->t('Commands reach the inverter again.'), 'info');
+                return 'recovered';
+            }
+            return null;
+        }
+        $since = $this->ReadAttributeInteger('WriteStallSince');
+        if ($since <= 0) {
+            $since = max($ok, $fail);
+            $this->WriteAttributeInteger('WriteStallSince', $since);
+        }
+        if ($alarmed || ($now - $since) < 180) {
+            return null;
+        }
+        $textVar = $this->findChildVariableIdByIdent($iid, 'ctl_write_fail_text');
+        $why = $textVar > 0 ? (string)GetValue($textVar) : '';
+        $this->WriteAttributeBoolean('WriteStallAlarm', true);
+        $this->emsLog(EMS_LOG_BASIC, sprintf('Schreiben an den Wechselrichter haengt seit %d min: %s', (int)round(($now - $since) / 60), $why));
+        $this->notifyUser($this->t('EMS: inverter not reachable'), sprintf($this->t('Commands have not reached the inverter for %d min. %s'), (int)round(($now - $since) / 60), $why), 'alert');
+        return 'alarm';
     }
 
     /**
@@ -9930,6 +10030,7 @@ class EMS extends IPSModule
         $this->WriteAttributeInteger('ChargeNoEffectSince', 0);
         $this->WriteAttributeInteger('ChargeNoEffectHoldUntil', $now + 1200);
         $this->emsLog(EMS_LOG_BASIC, sprintf('Netzladen ohne Wirkung: Batterie laedt nur %.0f W bei Sollwert %.0f W (SOC %.0f%%) -- WR-Automatik fuer 20 min', $chargeW, $wantW, (float)$s['bat_soc']));
+        $this->notifyUser($this->t('EMS: grid charging failed'), sprintf($this->t('The battery charges only %.0f W at setpoint %.0f W (SOC %.0f %%). Inverter self-regulation for 20 min.'), $chargeW, $wantW, (float)$s['bat_soc']), 'alert');
         return $this->chargeNoEffectFallback($d, sprintf($this->t('battery charges only %.0f W at setpoint %.0f W'), $chargeW, $wantW));
     }
 

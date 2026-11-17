@@ -2,6 +2,13 @@
 
 Ältere Versionen: [CHANGELOG-Archiv.md](CHANGELOG-Archiv.md)
 
+## 0.105.0 (2026-11-17)
+- **Schreib-Überwachung des Wechselrichters (Vorfall Paul 15.11.2026):** Von 08:36 bis 13:35 kamen 30 Ladebefehle nicht am Solis an, und das EMS hielt den Plan für ausgeführt. Das EMS liest jetzt die InverterHub-Variablen `ctl_write_fail_time` und `ctl_write_ok_time` (ab InverterHub 0.86.0). Kommt länger als 3 min kein Befehl durch, schreibt es das mit dem Fehlergrund ins Log und schickt eine Push-Nachricht. Ein Solis vergisst einen Befehl nach 182 s. Die Erholung wird einmal gemeldet. Ältere InverterHub-Stände ohne diese Variablen bleiben still.
+- **Push bei Netzladen ohne Wirkung:** Die bestehende Prüfung (Batterie lädt trotz Sollwert nicht, Wechselrichter regelt 20 min selbst) stand bisher nur im Log und meldet sich jetzt auch per Push.
+- **Zyklus-Lücken-Protokoll:** Fehlt der eigene Durchlauf länger als 5 min (mindestens drei Intervalle), schreibt das EMS beim nächsten Durchlauf die Dauer ins Log und vermerkt, ob Symcon in der Lücke neu gestartet ist. Anlass: Bei Paul fehlten am 15.11. von 11:34 bis 12:46 alle Einträge, und die Ursache ließ sich nicht mehr klären.
+- Push-Nachrichten gehen jetzt an beide Oberflächen: klassisches WebFront (`WFC_PushNotification`) und Kachel-Visualisierung (`VISU_PostNotificationEx`, SUITE.md Stolperstein 22).
+- 12 neue Prüfungen (Abschnitt 8an). Die Mutationsprobe an Frist und Lückengrenze schlägt wie erwartet an.
+
 ## 0.104.2 (2026-11-15)
 - **Fahrzeugreserve: Auto schon zuhause (Tessie-Befund Privat 15.11.2026):** Kohlekasten stand zuhause (`atHome` true, 0 km), meldete aber `headingHome` true mit einer erwarteten Ankunft bei 55 %, vermutlich ein altes Navigationsziel „Zuhause“ im Auto. Das EMS hätte dafür Akku-Energie für die Heimkehr zurückgehalten. `atHome` wird jetzt vor `headingHome` ausgewertet. Drei neue Prüfungen, darunter Heimweg ohne `lastSeenAt` = 0. Die Mutationsprobe schlägt wie erwartet an.
 
