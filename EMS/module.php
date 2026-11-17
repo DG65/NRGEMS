@@ -8670,7 +8670,7 @@ class EMS extends IPSModule
             $throttled[] = 'WB' . $num;
         }
         if (!empty($throttled)) {
-            $d['reason'] .= sprintf(
+            $d['reason'] = ($d['reason'] ?? '') . sprintf(
                 $this->t(' | Load distribution: %s throttled (grid connection budget %.0fW, projected %.0fW)'),
                 implode('+', $throttled), $limit, $projected
             );

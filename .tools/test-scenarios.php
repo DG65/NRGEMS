@@ -64,12 +64,13 @@ function IPS_SetIdent($id, $i)    { $GLOBALS['OBJ'][$id]['ObjectIdent'] = $i; }
 function IPS_SetPosition($id, $p) {}
 function IPS_GetChildrenIDs($id) {
     $out = [];
-    foreach ($GLOBALS['OBJ'] as $k => $o) { if ($o['ParentID'] == $id) { $out[] = $k; } }
+    // Nur echte Objekte: Testabschnitte setzen gelegentlich einzelne Schluessel (z. B. HasChildren) an noch nicht angelegten IDs
+    foreach ($GLOBALS['OBJ'] as $k => $o) { if (is_array($o) && array_key_exists('ParentID', $o) && $o['ParentID'] == $id) { $out[] = $k; } }
     return $out;
 }
 function IPS_GetObjectIDByIdent($ident, $parent) {
     foreach (IPS_GetChildrenIDs($parent) as $c) {
-        if ($GLOBALS['OBJ'][$c]['ObjectIdent'] === $ident) { return $c; }
+        if (($GLOBALS['OBJ'][$c]['ObjectIdent'] ?? null) === $ident) { return $c; }
     }
     return false;
 }
