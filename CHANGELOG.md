@@ -2,6 +2,10 @@
 
 Ältere Versionen: [CHANGELOG-Archiv.md](CHANGELOG-Archiv.md)
 
+## 0.106.9 (2026-11-18)
+- **Fix Solis: Akku blieb nach dem Netzladen gesperrt (Befund Paul 18.11.2026).** Ablauf in der Nacht: Um 00:00 setzte das EMS „Akku halten“ (Speicherbetrieb 17). Um 02:30 begann das Netzladen, und die Netzlade-Erlaubnis merkte sich den Speicherbetrieb, der gerade am Gerät stand. Das war der Haltewert 17, nicht der Nutzerwert 1. Um 05:00 endete das Laden und stellte 17 wieder her. Der Akku blieb bis 08:40 gesperrt, und das Haus lief zu rund 35 ct aus dem Netz, obwohl der Akku bei 80 % stand. Jetzt merkt sich die Netzlade-Erlaubnis den Nutzerwert (`solisUserStorageFor()`: der vor dem Halten gemerkte Wert, sonst der vom InverterHub gemerkte `svc_prev_storage`) und stellt nie den Haltewert wieder her, auch nicht bei einem alten, gemerkten 17.
+- Drei neue Prüfungen für die Abfolge „Halten, dann Netzladen“. Die Mutationsprobe schlägt an: Ohne den Fix werden alle drei rot.
+
 ## 0.106.8 (2026-11-18)
 - **Fix Formular-Aufbau nach dem Umbau 0.106.7 (Befund Pauls Anlage):** Wer früher unter „Formular: Aufbau“ auf „Auf Standard zurücksetzen“ und „Übernehmen“ geklickt hatte, hatte die alte Standard-Reihenfolge mit festen Positionen gespeichert. Sie hielt die neue Gliederung fest: Netzmesspunkte und Wechselrichter blieben oben, die neuen Bereiche standen mittendrin. Jetzt gilt eine gespeicherte Zeile ohne Haken, deren Position genau der alten Standardposition entspricht, als Standard. Bewusst geänderte Positionen und Zeilen mit Haken bleiben wirksam.
 - Drei neue Prüfungen (alte Standard-Reihenfolge, bewusst geänderte Position, Zeile mit Haken). Mutationsprobe: Ohne die neue Regel schlagen zwei davon an.

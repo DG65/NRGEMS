@@ -56,6 +56,21 @@ trait EMSInverterSolis
     }
 
     /**
+     * Speicherbetrieb, den der Nutzer eingestellt hat (fuer das Wiederherstellen nach Netzladen). Steht am Geraet der eigene
+     * Haltewert 17 ("Akku halten", Entladesperre), gilt der vor dem Halten gemerkte Wert: SolisUserStorage, sonst der vom
+     * InverterHub gemerkte svc_prev_storage. Ohne beides bleibt $cur.
+     */
+    private function solisUserStorageFor(int $iid, int $cur): int
+    {
+        if ($cur !== 17) { return $cur; }
+        $user = $this->ReadAttributeInteger('SolisUserStorage');
+        if ($user > 0 && $user !== 17) { return $user; }
+        $prevId = $this->findChildVariableIdByIdent($iid, 'svc_prev_storage');
+        $prev = ($prevId > 0) ? (int)GetValue($prevId) : 0;
+        return ($prev > 0 && $prev !== 17) ? $prev : $cur;
+    }
+
+    /**
      * Nach dem Freigeben der Entladesperre: erwarteten Speicherbetrieb zuruecklesen und bei Abweichung hoechstens dreimal
      * (im Abstand von 60 s) ausdruecklich neu schreiben. Das Schreiben von Register 43110 kam am Solis nur bei 2 von 4
      * Versuchen an (gemessen 20.10.2026), deshalb nie blind vertrauen.
@@ -96,6 +111,7 @@ trait EMSInverterSolis
         if (!$wantCharge) {
             if (!$active) { return; }
             $saved = $this->ReadAttributeInteger('SolisGcSaved');
+            if ($saved === 17) { $saved = $this->solisUserStorageFor($iid, 17); } // Altbestand aus der Zeit vor 0.106.9: nie den Haltewert zurueckschreiben
             $this->WriteAttributeBoolean('SolisGcActive', false);
             $this->WriteAttributeInteger('SolisGcTries', 0);
             if ($saved > 0) {
@@ -112,7 +128,10 @@ trait EMSInverterSolis
         if ($cur <= 0) { return; }
         if (!$active) {
             if (($cur & 32) !== 0) { return; } // Netzladen ist schon erlaubt
-            $this->WriteAttributeInteger('SolisGcSaved', $cur);
+            // Befund Paul 18.11.2026: Folgt das Netzladen direkt auf "Akku halten", steht am Geraet noch der Haltewert 17. Wurde
+            // der gemerkt, stellte das Laden-Ende um 05:00 wieder 17 her: Akku blieb gesperrt, Haus lief stundenlang aus dem Netz.
+            // Gemerkt wird deshalb der Nutzerwert, nie der eigene Haltewert.
+            $this->WriteAttributeInteger('SolisGcSaved', $this->solisUserStorageFor($iid, $cur));
             $this->WriteAttributeBoolean('SolisGcActive', true);
             $this->WriteAttributeInteger('SolisGcTries', 1);
             $this->WriteAttributeInteger('SolisGcTryAt', $now);

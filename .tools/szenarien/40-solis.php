@@ -250,6 +250,19 @@ check('Regelzyklus bleibt aus: KeepAlive stellt den Speicherbetrieb 3 wieder her
 foreach (['SolisGcActive' => false, 'SolisGcSaved' => -1, 'SolisGcTries' => 0, 'SolisGcTryAt' => 0, 'SolisRestoreTarget' => -1, 'SolisLastMode' => 0] as $k => $v) { attr($k, $v); }
 $GLOBALS['VAL'][$vSt] = 33;
 
+// Befund Paul 18.11.2026 (0.106.9): Halten (17) direkt vor dem Netzladen -- gemerkt wird der Nutzerwert 1, nicht 17
+foreach (['SolisGcActive' => false, 'SolisGcSaved' => -1, 'SolisGcTries' => 0, 'SolisGcTryAt' => 0, 'SolisRestoreTarget' => -1, 'SolisLastMode' => 0] as $k => $v) { attr($k, $v); }
+attr('SolisHoldActive', true); attr('SolisUserStorage', 1); $GLOBALS['VAL'][$vDev] = 0; $GLOBALS['VAL'][$vSt] = 17; $GLOBALS['ACTIONS'] = [];
+call($ems, 'solisGridChargeEnsure', [IHUB_IID, true, time()]);
+check('Halten (17) direkt vor dem Netzladen: Nutzerwert 1 gemerkt, nicht der Haltewert (Befund Paul 18.11.2026)', $ems->ReadAttributeInteger('SolisGcSaved') === 1 && in_array('ctl_storage_mode=33', $acts(), true), json_encode([$ems->ReadAttributeInteger('SolisGcSaved'), $acts()]));
+$GLOBALS['ACTIONS'] = [];
+call($ems, 'solisGridChargeEnsure', [IHUB_IID, false, time()]);
+check('Laden endet nach vorherigem Halten: Speicherbetrieb 1 wiederhergestellt, nie 17', in_array('ctl_storage_mode=1', $acts(), true) && !in_array('ctl_storage_mode=17', $acts(), true), json_encode($acts()));
+attr('SolisGcActive', true); attr('SolisGcSaved', 17); attr('SolisUserStorage', 1); $GLOBALS['ACTIONS'] = [];
+call($ems, 'solisGridChargeEnsure', [IHUB_IID, false, time()]);
+check('Altbestand mit gemerkter 17 (vor 0.106.9): beim Laden-Ende trotzdem 1', in_array('ctl_storage_mode=1', $acts(), true) && !in_array('ctl_storage_mode=17', $acts(), true), json_encode($acts()));
+attr('SolisHoldActive', false); attr('SolisRestoreTarget', -1); attr('SolisGcActive', false);
+
 echo "\n8k8) Solis: Entladen auf Vorgabe (Zwangsentladen ins Haus, Einspeisewache)\n";
 $vDisMax = vari('Max. Entladeleistung', IHUB_IID, 'bat_discharge_max_w', 16900.0, 2);
 foreach (['SolisHoldActive' => false, 'SolisHoldBlockedUntil' => 0, 'SolisRestoreTarget' => -1, 'SolisLastMode' => 0, 'SolisLastPowerW' => 0, 'SolisLastWriteAt' => 0, 'SolisReleaseTries' => 0] as $k => $v) { attr($k, $v); }
