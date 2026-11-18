@@ -211,7 +211,16 @@
                             }
                         }
                     ]
-                }
+                },
+                {"type": "Label", "caption": "── 🛡️ Phase monitor: protect the main fuse per phase (optional) ─"},
+                {"type": "NumberSpinner", "name": "SITE_Fuse_A", "caption": "Main fuse per phase", "minimum": 0, "maximum": 250, "suffix": " A"},
+                {"type": "Label", "name": "SITE_Fuse_AHint", "caption": "Rated current of the main circuit breaker (SLS) per phase, e.g. 35, 50 or 63 A. 0 = phase monitor off. If the most heavily loaded phase exceeds the limit, the EMS first throttles grid charging of the battery, then switches off the wallboxes."},
+                {"type": "NumberSpinner", "name": "SITE_Fuse_Margin_Pct", "caption": "Use of the fuse up to", "minimum": 50, "maximum": 100, "suffix": " %"},
+                {"type": "Label", "name": "SITE_Fuse_Margin_PctHint", "caption": "Safety margin: the EMS intervenes above this share of the rated current (90 % of 50 A = 45 A). Main circuit breakers trip with a delay at around 115 % and above."},
+                {"type": "SelectVariable", "name": "VAR_Phase_L1_Current", "caption": "Grid current L1 (A)"},
+                {"type": "SelectVariable", "name": "VAR_Phase_L2_Current", "caption": "Grid current L2 (A)"},
+                {"type": "SelectVariable", "name": "VAR_Phase_L3_Current", "caption": "Grid current L3 (A)"},
+                {"type": "Label", "name": "VAR_Phase_L3_CurrentHint", "caption": "Only needed if no partner module (MeterHub grid meter, InverterHub) supplies the currents per phase at the grid connection point. Currents in A at the grid connection point, not at the inverter output."}
             ]
         },
         {

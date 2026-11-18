@@ -2,6 +2,12 @@
 
 Ältere Versionen: [CHANGELOG-Archiv.md](CHANGELOG-Archiv.md)
 
+## 0.107.0 (2026-11-18)
+
+- **Neu: Phasenwächter.** Schützt die Hauptsicherung (SLS) je Phase. Unter „Meine Anlage“ den Nennstrom eintragen (`SITE_Fuse_A`, 0 = aus) und die Auslastung, ab der das EMS eingreift (`SITE_Fuse_Margin_Pct`, Standard 90 %). Liegt die am stärksten belastete Phase darüber, drosselt das EMS zuerst das Netzladen des Akkus um Überstrom × 3 × 230 W und schaltet danach die Wallboxen ab, wenn das nicht reicht. Die Grenze hält mindestens 10 Minuten und wird danach in 1-kW-Schritten gelockert, sobald 3 A Abstand bestehen. Beim ersten Eingriff kommt eine Push-Nachricht. Veraltete Messwerte (über 2 Minuten) lösen nichts aus.
+- Phasenströme kommen aus dem neuen Vertragsfeld `phaseCurrentIDs` (MeterHub-Netzzähler oder InverterHub), sonst aus drei manuell zugeordneten Variablen.
+- Anlass: Ausfall bei Paul am 15.11.2026, L1 lag bei 57,7 A an einem 50-A-SLS (Netzladen und Auto gleichzeitig plus einphasige Last).
+
 ## 0.106.9 (2026-11-18)
 - **Fix Solis: Akku blieb nach dem Netzladen gesperrt (Befund Paul 18.11.2026).** Ablauf in der Nacht: Um 00:00 setzte das EMS „Akku halten“ (Speicherbetrieb 17). Um 02:30 begann das Netzladen, und die Netzlade-Erlaubnis merkte sich den Speicherbetrieb, der gerade am Gerät stand. Das war der Haltewert 17, nicht der Nutzerwert 1. Um 05:00 endete das Laden und stellte 17 wieder her. Der Akku blieb bis 08:40 gesperrt, und das Haus lief zu rund 35 ct aus dem Netz, obwohl der Akku bei 80 % stand. Jetzt merkt sich die Netzlade-Erlaubnis den Nutzerwert (`solisUserStorageFor()`: der vor dem Halten gemerkte Wert, sonst der vom InverterHub gemerkte `svc_prev_storage`) und stellt nie den Haltewert wieder her, auch nicht bei einem alten, gemerkten 17.
 - Drei neue Prüfungen für die Abfolge „Halten, dann Netzladen“. Die Mutationsprobe schlägt an: Ohne den Fix werden alle drei rot.

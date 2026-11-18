@@ -504,6 +504,12 @@ class EMS extends IPSModule
         $this->RegisterPropertyInteger('WB_Min_Charge_Min',    5);
         $this->RegisterPropertyInteger('BOOST_Duration_Min',   30);
         $this->RegisterPropertyInteger('SITE_Max_Grid_Import_W', 0);
+        // Phasenwaechter (0.107.0, Ausfall Paul 15.11.2026: L1 57,7 A an 50-A-SLS): 0 = aus
+        $this->RegisterPropertyInteger('SITE_Fuse_A', 0);
+        $this->RegisterPropertyInteger('SITE_Fuse_Margin_Pct', 90);
+        $this->RegisterPropertyInteger('VAR_Phase_L1_Current', 0);
+        $this->RegisterPropertyInteger('VAR_Phase_L2_Current', 0);
+        $this->RegisterPropertyInteger('VAR_Phase_L3_Current', 0);
 
         for ($i = 1; $i <= 2; $i++) {
             $this->RegisterPropertyInteger('WB' . $i . '_Instance',   0);
@@ -673,6 +679,10 @@ class EMS extends IPSModule
         $this->RegisterAttributeInteger('SmartNoTrackHoldUntil', 0);  // ... und Haltezeit in Modus 2   // Haltezeit Modus 2 bei vollem Akku (Drosselschutz Modus 9)
         $this->RegisterAttributeBoolean('LastGoodweEnable',  true);
         $this->RegisterAttributeInteger('LastGoodwePowerW',  0);
+        $this->RegisterAttributeInteger('PhaseCapW', -1);        // Phasenwaechter: Obergrenze Netzladen in W, -1 = keine
+        $this->RegisterAttributeInteger('PhaseCapUntil', 0);     // vor diesem Zeitpunkt wird die Grenze nicht gelockert
+        $this->RegisterAttributeInteger('PhaseWbOffUntil', 0);   // bis dahin bleiben die Wallboxen aus
+        $this->RegisterAttributeInteger('PhaseGuardSince', 0);   // erster Eingriff der laufenden Episode (Push nur einmal)
         $this->RegisterAttributeInteger('NoControlLoggedAt', 0);
         $this->RegisterAttributeBoolean('EverActive', false);       // war EMS auf dieser Instanz schon einmal aktiv?
         $this->RegisterAttributeBoolean('DryRunAuto', false);       // Einfuehrungs-Trockenlauf nach der ersten Aktivierung (bis "Jetzt live schalten")
@@ -1726,6 +1736,7 @@ class EMS extends IPSModule
             array('plausibility',            'Sicherheit',         'applyPlausibilityGuard'),
             array('charge_no_effect',        'Sicherheit',         'applyChargeNoEffectGuard'),
             array('export_overlap',          'Sicherheit',         'applyExportOverlapGuard'),
+            array('phase_guard',             'Sicherheit',         'applyPhaseGuard'),
         );
     }
 
@@ -1736,6 +1747,7 @@ class EMS extends IPSModule
             'smart_charging_grid_buy' => $this->t('Smart Charging grid purchase'), 'grid_service_b1' => $this->t('midday peak (grid-friendly)'),
             'negative_price_note' => $this->t('negative exchange price'), 'plausibility' => $this->t('plausibility monitor'),
             'charge_no_effect' => $this->t('grid charging without effect'), 'export_overlap' => $this->t('feed-in monitor'),
+            'phase_guard' => $this->t('phase monitor'),
         );
         $trail = json_decode($this->ReadAttributeString('LastDecisionSteps'), true);
         if (!is_array($trail) || empty($trail)) { return $this->t('Last decision: taken over unchanged from the plan (no correction step intervened)'); }
@@ -9595,6 +9607,91 @@ class EMS extends IPSModule
      * 20 min lang die WR-Automatik. Gilt nicht fuer Netzbetreiber-Vorgaben und Grid Rewards (dort ist der Zweck ein
      * anderer als das Laden der Hausbatterie).
      */
+    /**
+     * Phasenstroeme am Netzanschluss in A (Betrag), [L1, L2, L3], oder null, wenn keine Quelle oder Daten aelter als 120 s.
+     * Quelle: Vertragsfeld phaseCurrentIDs eines MeterHub- oder InverterHub-Eintrags, sonst VAR_Phase_L{n}_Current.
+     */
+    private function readPhaseCurrents(): ?array
+    {
+        $ids = array();
+        $partners = $this->GetPartners();
+        foreach (array('meterhub', 'inverterhub') as $kind) {
+            foreach ((array)($partners[$kind] ?? array()) as $e) {
+                $c = $e['phaseCurrentIDs'] ?? null;
+                if (is_array($c) && count($c) === 3 && min(array_map('intval', $c)) > 0) { $ids = array_map('intval', array_values($c)); break 2; }
+            }
+        }
+        if (empty($ids)) {
+            for ($n = 1; $n <= 3; $n++) { $ids[] = (int)$this->ReadPropertyInteger('VAR_Phase_L' . $n . '_Current'); }
+        }
+        $out = array();
+        foreach ($ids as $id) {
+            if ($id <= 0 || !IPS_VariableExists($id)) { return null; }
+            $v = IPS_GetVariable($id);
+            if (time() - (int)($v['VariableUpdated'] ?? 0) > 120) { return null; }
+            $out[] = abs((float)GetValue($id));
+        }
+        return $out;
+    }
+
+    /**
+     * Phasenwaechter (0.107.0): haelt den Strom der am staerksten belasteten Phase unter SITE_Fuse_A x Margin.
+     * Stufe 1 drosselt das Netzladen des Akkus (symmetrisch, je Phase gleich viel: Ueberstrom x 3 x 230 W),
+     * Stufe 2 schaltet die Wallboxen ab, wenn Drosseln nicht reicht oder gar nicht netzgeladen wird.
+     * Die Grenze haelt mindestens 10 min und wird danach nur bei >= 3 A Abstand um 1 kW je Zyklus gelockert.
+     */
+    private function applyPhaseGuard($d, $s)
+    {
+        $fuse = (int)$this->ReadPropertyInteger('SITE_Fuse_A');
+        if ($fuse <= 0) { return $d; }
+        $cur = $this->readPhaseCurrents();
+        if ($cur === null) { return $d; } // keine oder veraltete Messung: nicht auf Verdacht eingreifen
+        $limit = $fuse * max(50, min(100, (int)$this->ReadPropertyInteger('SITE_Fuse_Margin_Pct'))) / 100.0;
+        $imax = max($cur); $ph = (int)array_search($imax, $cur) + 1;
+        $now = time();
+        $grid = in_array((int)($d['gw_mode'] ?? 0), array(GW_MODE_BUY, GW_MODE_AC_IMPORT), true) && (int)($d['gw_power_w'] ?? 0) > 0;
+        $cap = $this->ReadAttributeInteger('PhaseCapW');
+        $wbOff = $this->ReadAttributeInteger('PhaseWbOffUntil') > $now;
+
+        if ($imax > $limit) {
+            $excessW = (int)ceil(round(($imax - $limit) * 3 * 230, 3));
+            $base = $grid ? (int)$d['gw_power_w'] : 0;
+            if ($cap >= 0) { $base = min($base, $cap); }
+            $newCap = max(0, $base - $excessW);
+            $first = $this->ReadAttributeInteger('PhaseGuardSince') === 0;
+            if ($first) { $this->WriteAttributeInteger('PhaseGuardSince', $now); }
+            if ($grid) {
+                $this->WriteAttributeInteger('PhaseCapW', $newCap);
+                $this->WriteAttributeInteger('PhaseCapUntil', $now + 600);
+                $cap = $newCap;
+            }
+            if (!$grid || $excessW > $base) {
+                $this->WriteAttributeInteger('PhaseWbOffUntil', $now + 600);
+                $wbOff = true;
+            }
+            $this->emsLog(EMS_LOG_BASIC, sprintf('Phasenwaechter: L%d %.1f A > %.1f A, Netzladen-Grenze %d W%s', $ph, $imax, $limit, $grid ? $cap : -1, $wbOff ? ', Wallboxen aus' : ''));
+            if ($first) {
+                $this->notifyUser($this->t('EMS: main fuse at risk'), sprintf($this->t('Phase L%d at %.1f A (limit %.1f A of %d A). %s'), $ph, $imax, $limit, $fuse,
+                    $wbOff ? $this->t('Wallboxes are switched off.') : $this->t('Grid charging is throttled.')));
+            }
+        } elseif ($cap >= 0 && $now >= $this->ReadAttributeInteger('PhaseCapUntil') && $imax <= $limit - 3) {
+            $cap += 1000; // langsam lockern
+            if (!$grid || $cap >= (int)$d['gw_power_w']) { $cap = -1; }
+            $this->WriteAttributeInteger('PhaseCapW', $cap);
+        }
+        if ($cap < 0 && !$wbOff && $this->ReadAttributeInteger('PhaseGuardSince') !== 0) { $this->WriteAttributeInteger('PhaseGuardSince', 0); }
+
+        if ($grid && $cap >= 0 && $cap < (int)$d['gw_power_w']) {
+            $d['gw_power_w'] = $cap;
+            $d['reason'] = ($d['reason'] ?? '') . sprintf($this->t(' | 🛡️ Phase monitor: grid charging limited to %.1f kW (L%d was over the limit)'), $cap / 1000, $ph);
+        }
+        if ($wbOff && (!empty($d['wb1_enable']) || !empty($d['wb2_enable']))) {
+            $d['wb1_enable'] = false; $d['wb2_enable'] = false;
+            $d['reason'] = ($d['reason'] ?? '') . sprintf($this->t(' | 🛡️ Phase monitor: L%d at %.1f A (limit %.1f A), wallboxes switched off'), $ph, $imax, $limit);
+        }
+        return $d;
+    }
+
     private function applyChargeNoEffectGuard($d, $s)
     {
         $now = time();

@@ -1148,7 +1148,23 @@
             "Grace period before reporting": "Gnadenfrist vor Meldung",
             "Question": "Frage",
             "Model": "Modell",
-            "CHANGED: The configuration form follows the order in which you set things up: ▶️ Operation, 🏠 My system, 🔋 Battery storage, 💰 Electricity price, 📅 Planning, 🚗 Wallboxes, 🌡️ Heat pump, ⚡ Grid & law, 🛡️ Safety & monitoring, 🔔 Notifications. The manual assignment of meters and inverter variables (only needed without partner modules) is at the very bottom. No setting was changed or lost, only the place where it appears. A saved order in \"Form: layout\" stays valid; the new sections start with their default.": "GEÄNDERT: Das Konfigurationsformular folgt der Reihenfolge, in der man einrichtet: ▶️ Betrieb, 🏠 Meine Anlage, 🔋 Batteriespeicher, 💰 Strompreis, 📅 Planung, 🚗 Wallboxen, 🌡️ Wärmepumpe, ⚡ Netz & Gesetz, 🛡️ Sicherheit & Überwachung, 🔔 Benachrichtigungen. Die manuelle Zuordnung von Zählern und Wechselrichter-Variablen (nur ohne Partnermodule nötig) steht ganz unten. Keine Einstellung wurde geändert oder ist verloren, nur ihr Platz. Eine gespeicherte Reihenfolge unter „Formular: Aufbau“ bleibt gültig, die neuen Bereiche starten mit ihrem Standard."
+            "CHANGED: The configuration form follows the order in which you set things up: ▶️ Operation, 🏠 My system, 🔋 Battery storage, 💰 Electricity price, 📅 Planning, 🚗 Wallboxes, 🌡️ Heat pump, ⚡ Grid & law, 🛡️ Safety & monitoring, 🔔 Notifications. The manual assignment of meters and inverter variables (only needed without partner modules) is at the very bottom. No setting was changed or lost, only the place where it appears. A saved order in \"Form: layout\" stays valid; the new sections start with their default.": "GEÄNDERT: Das Konfigurationsformular folgt der Reihenfolge, in der man einrichtet: ▶️ Betrieb, 🏠 Meine Anlage, 🔋 Batteriespeicher, 💰 Strompreis, 📅 Planung, 🚗 Wallboxen, 🌡️ Wärmepumpe, ⚡ Netz & Gesetz, 🛡️ Sicherheit & Überwachung, 🔔 Benachrichtigungen. Die manuelle Zuordnung von Zählern und Wechselrichter-Variablen (nur ohne Partnermodule nötig) steht ganz unten. Keine Einstellung wurde geändert oder ist verloren, nur ihr Platz. Eine gespeicherte Reihenfolge unter „Formular: Aufbau“ bleibt gültig, die neuen Bereiche starten mit ihrem Standard.",
+            "── 🛡️ Phase monitor: protect the main fuse per phase (optional) ─": "── 🛡️ Phasenwächter: Hauptsicherung je Phase schützen (optional) ─",
+            "Main fuse per phase": "Hauptsicherung je Phase",
+            "Rated current of the main circuit breaker (SLS) per phase, e.g. 35, 50 or 63 A. 0 = phase monitor off. If the most heavily loaded phase exceeds the limit, the EMS first throttles grid charging of the battery, then switches off the wallboxes.": "Nennstrom des Hauptschalters (SLS) je Phase, z. B. 35, 50 oder 63 A. 0 = Phasenwächter aus. Überschreitet die am stärksten belastete Phase die Grenze, drosselt das EMS zuerst das Netzladen des Akkus und schaltet danach die Wallboxen ab.",
+            "Use of the fuse up to": "Auslastung der Sicherung bis",
+            "Safety margin: the EMS intervenes above this share of the rated current (90 % of 50 A = 45 A). Main circuit breakers trip with a delay at around 115 % and above.": "Sicherheitsabstand: Das EMS greift ab diesem Anteil des Nennstroms ein (90 % von 50 A = 45 A). Hauptschalter lösen ab etwa 115 % verzögert aus.",
+            "Grid current L1 (A)": "Netzstrom L1 (A)",
+            "Grid current L2 (A)": "Netzstrom L2 (A)",
+            "Grid current L3 (A)": "Netzstrom L3 (A)",
+            "Only needed if no partner module (MeterHub grid meter, InverterHub) supplies the currents per phase at the grid connection point. Currents in A at the grid connection point, not at the inverter output.": "Nur nötig, wenn kein Partnermodul (MeterHub-Netzzähler, InverterHub) die Ströme je Phase am Netzanschluss liefert. Ströme in A am Netzanschlusspunkt, nicht am Wechselrichter-Ausgang.",
+            "phase monitor": "Phasenwächter",
+            " | 🛡️ Phase monitor: L%d at %.1f A (limit %.1f A), wallboxes switched off": " | 🛡️ Phasenwächter: L%d bei %.1f A (Grenze %.1f A), Wallboxen abgeschaltet",
+            " | 🛡️ Phase monitor: grid charging limited to %.1f kW (L%d was over the limit)": " | 🛡️ Phasenwächter: Netzladen auf %.1f kW begrenzt (L%d lag über der Grenze)",
+            "EMS: main fuse at risk": "EMS: Hauptsicherung in Gefahr",
+            "Phase L%d at %.1f A (limit %.1f A of %d A). %s": "Phase L%d bei %.1f A (Grenze %.1f A von %d A). %s",
+            "Grid charging is throttled.": "Netzladen wird gedrosselt.",
+            "Wallboxes are switched off.": "Wallboxen werden abgeschaltet."
         }
     }
 }

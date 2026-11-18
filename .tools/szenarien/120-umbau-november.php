@@ -148,8 +148,8 @@ check('Auto aus dem Netz: Akku fast voll mit PV-Ueberschuss = Modus 2 und 10 min
 echo "\n8ap) Umbau 1: nachgelagerte Schritte als feste Liste mit Vorrang (vorher Einzelaufrufe in Update())\n";
 $ems = freshEms();
 check('Reihenfolge der Schritte unveraendert gegenueber 0.105.3 (spaeter = hoeherer Vorrang, Sicherheit zuletzt)',
-    array_column(call($ems, 'decisionSteps'), 0) === ['smart_charging_grid_buy', 'grid_service_b1', 'negative_price_note', 'plausibility', 'charge_no_effect', 'export_overlap']);
-check('Jeder Schritt verweist auf eine vorhandene Methode', count(array_filter(call($ems, 'decisionSteps'), fn($x) => method_exists('EMS', $x[2]))) === 6);
+    array_column(call($ems, 'decisionSteps'), 0) === ['smart_charging_grid_buy', 'grid_service_b1', 'negative_price_note', 'plausibility', 'charge_no_effect', 'export_overlap', 'phase_guard']);
+check('Jeder Schritt verweist auf eine vorhandene Methode', count(array_filter(call($ems, 'decisionSteps'), fn($x) => method_exists('EMS', $x[2]))) === 7);
 $dP = ['op_mode' => EMS_OP_AUTO, 'gw_mode' => GW_MODE_AUTO, 'gw_power_w' => 0, 'gw_enable' => false, 'wb1_enable' => false, 'wb2_enable' => false, 'reason' => 'Tagesplan: Automatik', 'source' => 'tagesplan'];
 $r = call($ems, 'runDecisionSteps', [$dP, state(['bat_soc' => 70.0, 'pv_total_w' => 0.0, 'bat_pow_w' => 400.0, 'grid_total_w' => -20.0])]);
 check('Unauffaelliger Zustand: Entscheidung bleibt, kein Schritt protokolliert', $r === $dP && $ems->ReadAttributeString('LastDecisionSteps') === '[]', json_encode([$r, $ems->ReadAttributeString('LastDecisionSteps')]));
@@ -261,7 +261,7 @@ check('Keine Eingabefeld-Beschriftung ueber 40 Zeichen (deutsch)', $long === [],
 $hints = 0; $orph = []; $txt = file_get_contents(EMS_TOOLS_DIR . '/../EMS/form.json');
 preg_match_all('/"name": "(\w+)Hint"/', $txt, $m);
 foreach ($m[1] as $base) { $hints++; if (strpos($txt, '"name": "' . $base . '"') === false) { $orph[] = $base; } }
-check('98 Erklaerungs-Labels mit Feld in form.json (92 aus 0.106.6 + 6 aus 0.106.7; dazu die zwei alten Hinweise GridOverviewHint/InverterFallbackHint ohne Feld)', $hints - count($orph) === 98 && $orph === ['GridOverview', 'InverterFallback'], json_encode([$hints, $orph]));
+check('101 Erklaerungs-Labels mit Feld in form.json (92 aus 0.106.6 + 6 aus 0.106.7 + 3 aus 0.107.0; dazu die zwei alten Hinweise GridOverviewHint/InverterFallbackHint ohne Feld)', $hints - count($orph) === 101 && $orph === ['GridOverview', 'InverterFallback'], json_encode([$hints, $orph]));
 $h = call($ems, 'hideHintsOfHiddenFields', [[['type' => 'ExpansionPanel', 'items' => [
     ['type' => 'SelectVariable', 'name' => 'VAR_WB1_Power', 'visible' => false], ['type' => 'Label', 'name' => 'VAR_WB1_PowerHint'],
     ['type' => 'SelectVariable', 'name' => 'VAR_WB1_Cable'], ['type' => 'Label', 'name' => 'VAR_WB1_CableHint']]]]]);
