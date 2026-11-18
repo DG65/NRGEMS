@@ -9617,8 +9617,14 @@ class EMS extends IPSModule
         $partners = $this->GetPartners();
         foreach (array('meterhub', 'inverterhub') as $kind) {
             foreach ((array)($partners[$kind] ?? array()) as $e) {
-                $c = $e['phaseCurrentIDs'] ?? null;
-                if (is_array($c) && count($c) === 3 && min(array_map('intval', $c)) > 0) { $ids = array_map('intval', array_values($c)); break 2; }
+                // InverterHub: Feld am Eintrag; MeterHub (1.5): Feld an der Zuordnung function=grid in assignments[]
+                $cands = array($e['phaseCurrentIDs'] ?? null);
+                foreach ((array)($e['assignments'] ?? array()) as $a) {
+                    if (is_array($a) && ($a['function'] ?? '') === 'grid') { $cands[] = $a['phaseCurrentIDs'] ?? null; }
+                }
+                foreach ($cands as $c) {
+                    if (is_array($c) && count($c) === 3 && min(array_map('intval', $c)) > 0) { $ids = array_map('intval', array_values($c)); break 3; }
+                }
             }
         }
         if (empty($ids)) {

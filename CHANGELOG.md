@@ -2,6 +2,10 @@
 
 Ältere Versionen: [CHANGELOG-Archiv.md](CHANGELOG-Archiv.md)
 
+## 0.107.1 (2026-11-18)
+
+- Fix Phasenwächter: Phasenströme vom MeterHub (Vertrag 1.5) werden jetzt gefunden. MeterHub liefert `phaseCurrentIDs` an der Netzanschluss-Zuordnung in `assignments[]`, 0.107.0 suchte nur auf oberster Ebene (wie beim InverterHub). Ohne diesen Fix blieb der Wächter mit MeterHub 0.39.0 still blind.
+
 ## 0.107.0 (2026-11-18)
 
 - **Neu: Phasenwächter.** Schützt die Hauptsicherung (SLS) je Phase. Unter „Meine Anlage“ den Nennstrom eintragen (`SITE_Fuse_A`, 0 = aus) und die Auslastung, ab der das EMS eingreift (`SITE_Fuse_Margin_Pct`, Standard 90 %). Liegt die am stärksten belastete Phase darüber, drosselt das EMS zuerst das Netzladen des Akkus um Überstrom × 3 × 230 W und schaltet danach die Wallboxen ab, wenn das nicht reicht. Die Grenze hält mindestens 10 Minuten und wird danach in 1-kW-Schritten gelockert, sobald 3 A Abstand bestehen. Beim ersten Eingriff kommt eine Push-Nachricht. Veraltete Messwerte (über 2 Minuten) lösen nichts aus.

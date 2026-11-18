@@ -62,6 +62,13 @@ $setI([-57.7, 10.0, 10.0]);
 check('negatives Vorzeichen (Einspeisung) zaehlt als Betrag', call($ems, 'applyPhaseGuard', [$laden, state()])['gw_power_w'] < 24000);
 $ems = freshEms(); prop('SITE_Fuse_A', 50);
 check('keine Stromquelle zugeordnet: kein Eingriff', call($ems, 'applyPhaseGuard', [$laden, state()]) === $laden);
-attr('PartnerCache', json_encode(['meterhub' => [['instanceID' => 700, 'phaseCurrentIDs' => $ph]]]));
+attr('PartnerCache', json_encode(['meterhub' => [['instanceID' => 700, 'contractVersion' => '1.5', 'assignments' => [
+    ['function' => 'house', 'slot' => 'total', 'phaseCurrentIDs' => [1, 2, 3]],
+    ['function' => 'grid', 'slot' => 'total', 'phaseCurrentIDs' => $ph]]]]]));
 $setI([57.7, 40.2, 39.7]);
 $dbg = call($ems, 'readPhaseCurrents'); check('Vertragsfeld phaseCurrentIDs (MeterHub) wird ohne manuelle Zuordnung genutzt', call($ems, 'applyPhaseGuard', [$laden, state()])['gw_power_w'] === 15237, json_encode($dbg));
+$ems = freshEms(); prop('SITE_Fuse_A', 50);
+attr('PartnerCache', json_encode(['inverterhub' => [['instanceID' => 701, 'contractVersion' => '1.7', 'phaseCurrentIDs' => $ph]]]));
+check('Vertragsfeld phaseCurrentIDs (InverterHub 1.7, am Eintrag) wird genutzt', call($ems, 'applyPhaseGuard', [$laden, state()])['gw_power_w'] === 15237);
+attr('PartnerCache', json_encode(['inverterhub' => [['instanceID' => 701, 'contractVersion' => '1.7', 'phaseCurrentIDs' => []]]]));
+check('leeres phaseCurrentIDs (InverterHub ohne Zaehlerstroeme): kein Eingriff', call($ems, 'applyPhaseGuard', [$laden, state()]) === $laden);
