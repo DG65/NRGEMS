@@ -145,11 +145,33 @@ call($ems, 'setGoodweMode', [GW_MODE_AC_EXPORT, 0, true]);
 check('Speicherbetrieb blieb 33 (Befehl verschluckt): nach 61 s einmal neu geschrieben', $acts() === ['svc_discharge_inhibit=true'] && $ems->ReadAttributeInteger('SolisHoldTries') === 1, json_encode($acts()));
 attr('SolisHoldTries', 3); attr('SolisHoldTryAt', time() - 61); $GLOBALS['ACTIONS'] = [];
 call($ems, 'setGoodweMode', [GW_MODE_AC_EXPORT, 0, true]);
-check('nach drei Fehlversuchen: keine weiteren Schreibzugriffe, Halten pausiert 10 min, Automatik', count($acts()) === 0 && $ems->ReadAttributeBoolean('SolisHoldActive') === false && $ems->ReadAttributeInteger('SolisHoldBlockedUntil') > time() + 500, json_encode($acts()));
+check('nach drei Fehlversuchen: Sperre aktiv zurueckgenommen (svc_discharge_inhibit=false), Halten pausiert 10 min, Automatik (0.107.2, Paul 19.11.2026)', $acts() === ['svc_discharge_inhibit=false'] && $ems->ReadAttributeBoolean('SolisHoldActive') === false && $ems->ReadAttributeInteger('SolisHoldBlockedUntil') > time() + 500, json_encode($acts()));
 $GLOBALS['ACTIONS'] = [];
 call($ems, 'setGoodweMode', [GW_MODE_AC_EXPORT, 0, true]);
 check('waehrend der Pause wird nicht erneut versucht, Statuszeile nennt das Pausieren', count($acts()) === 0 && strpos(call($ems, 'statusText', ['x']), 'pausiert') !== false, json_encode($acts()) . call($ems, 'statusText', ['x']));
 attr('SolisHoldBlockedUntil', 0);
+// 0.107.2: Rueckmeldung aelter als das letzte Schreiben zaehlt nicht als Fehlversuch (Lesezyklus 5 min, Paul 19.11.2026)
+attr('SolisHoldActive', true); attr('SolisHoldTries', 2); attr('SolisHoldTryAt', time() - 61); $GLOBALS['VAL'][$vSt] = 1;
+$GLOBALS['VAR'][$vSt]['VariableUpdated'] = time() - 120; $GLOBALS['ACTIONS'] = [];
+call($ems, 'setGoodweMode', [GW_MODE_AC_EXPORT, 0, true]);
+check('Speicherbetrieb noch nicht neu gelesen (Wert aelter als der Schreibbefehl): kein Neuschreiben, kein Fehlversuch gezaehlt', count($acts()) === 0 && $ems->ReadAttributeInteger('SolisHoldTries') === 2 && $ems->ReadAttributeBoolean('SolisHoldActive') === true, json_encode($acts()));
+attr('SolisHoldTries', 3); $GLOBALS['ACTIONS'] = [];
+call($ems, 'setGoodweMode', [GW_MODE_AC_EXPORT, 0, true]);
+check('auch beim dritten Versuch: veralteter Wert fuehrt nicht zum Aufgeben', count($acts()) === 0 && $ems->ReadAttributeBoolean('SolisHoldActive') === true, json_encode($acts()));
+$GLOBALS['VAR'][$vSt]['VariableUpdated'] = time();
+// 0.107.2 Selbstheilung: EMS kennt die Sperre nicht mehr, sie steht aber noch (eigener Schreibzeitpunkt) -> freigeben
+$own = time() - 3600;
+attr('SolisHoldActive', false); attr('SolisHoldTries', 0); attr('SolisHoldChangedAt', $own); $GLOBALS['VAL'][$vInh] = true; $GLOBALS['VAL'][$vSt] = 17;
+$GLOBALS['VAR'][$vInh]['VariableChanged'] = $own + 1; $GLOBALS['ACTIONS'] = [];
+call($ems, 'setGoodweMode', [GW_MODE_AUTO, 0, false]);
+check('Altfall: eigene Sperre steht noch, EMS kennt sie nicht -> Automatik gibt sie frei (svc_discharge_inhibit=false)', in_array('svc_discharge_inhibit=false', $acts(), true), json_encode($acts()));
+$GLOBALS['ACTIONS'] = [];
+call($ems, 'setGoodweMode', [GW_MODE_AUTO, 0, false]);
+check('Selbstheilung nur einmal, kein Dauerschreiben', !in_array('svc_discharge_inhibit=false', $acts(), true), json_encode($acts()));
+attr('SolisHoldChangedAt', $own); $GLOBALS['VAR'][$vInh]['VariableChanged'] = $own + 900; $GLOBALS['ACTIONS'] = [];
+call($ems, 'setGoodweMode', [GW_MODE_AUTO, 0, false]);
+check('fremd gesetzte Sperre (Aenderungszeit passt nicht zu EMS): bleibt stehen', !in_array('svc_discharge_inhibit=false', $acts(), true), json_encode($acts()));
+$GLOBALS['VAL'][$vInh] = false; unset($GLOBALS['VAR'][$vInh]['VariableChanged']); attr('SolisHoldChangedAt', 0); $GLOBALS['VAL'][$vSt] = 33;
 // PV-Ueberschuss: nicht halten
 $GLOBALS['VAL'][$vSt] = 33; $ems->SetValue('EMS_PVPower', 4000.0); $ems->SetValue('EMS_HousePower', 800.0); $GLOBALS['ACTIONS'] = [];
 call($ems, 'setGoodweMode', [GW_MODE_AC_EXPORT, 0, true]);

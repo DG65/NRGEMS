@@ -167,11 +167,19 @@ trait EMSInverterSolis
         if ($want) {
             if ($active) {
                 // Rücklesen: kam der Befehl an? Sonst hoechstens dreimal im Abstand von 60 s neu, danach 10 min Pause
-                if ($cur > 0 && $cur !== 17 && $now - $this->ReadAttributeInteger('SolisHoldTryAt') >= 60) {
+                // Nur eine Rueckmeldung zaehlt, die NACH dem letzten Schreiben gelesen wurde: der InverterHub liest den
+                // Speicherbetrieb nur alle paar Minuten (Solis 5 min). Paul 19.11.2026 04:32-04:37: drei "Fehlversuche" gegen
+                // einen veralteten Wert, der Befehl war aber angekommen.
+                $fresh = ($stId > 0 && (int)(IPS_GetVariable($stId)['VariableUpdated'] ?? 0) > $this->ReadAttributeInteger('SolisHoldTryAt'));
+                if ($cur > 0 && $cur !== 17 && $fresh && $now - $this->ReadAttributeInteger('SolisHoldTryAt') >= 60) {
                     if ($this->ReadAttributeInteger('SolisHoldTries') >= 3) {
-                        $this->emsLog(EMS_LOG_BASIC, 'Solis: Entladesperre kam nach drei Versuchen nicht an (Speicherbetrieb ' . $cur . ') -- Pause 10 min, Wechselrichter in Automatik');
+                        $this->emsLog(EMS_LOG_BASIC, 'Solis: Entladesperre kam nach drei Versuchen nicht an (Speicherbetrieb ' . $cur . ') -- Sperre wird zurueckgenommen, Pause 10 min, Wechselrichter in Automatik');
+                        // Aufgeben heisst immer auch: aktiv freigeben. Sonst bleibt eine spaet angekommene Sperre am Geraet stehen,
+                        // ohne dass EMS sie noch kennt (Paul 19.11.2026: Akku ab 04:37 gesperrt, Haus aus dem Netz bei 49 ct).
+                        $this->ipsWrite($iid, 'svc_discharge_inhibit', false);
                         $this->WriteAttributeBoolean('SolisHoldActive', false);
                         $this->WriteAttributeInteger('SolisHoldBlockedUntil', $now + 600);
+                        $this->WriteAttributeInteger('SolisHoldChangedAt', $now);
                         $this->WriteAttributeInteger('SolisHoldTries', 0);
                         return;
                     }
@@ -193,7 +201,22 @@ trait EMSInverterSolis
             $this->WriteAttributeInteger('SolisHoldTryAt', $now);
             return;
         }
-        if (!$active) { return; }
+        if (!$active) {
+            // Selbstheilung: Steht die Entladesperre noch, und hat EMS sie selbst gesetzt (Aenderungszeit = eigener Schreibzeitpunkt),
+            // kennt EMS sie aber nicht mehr (Altfall vor 0.107.2), wird sie freigegeben. Eine von anderen gesetzte Sperre bleibt.
+            $inhId = $this->findChildVariableIdByIdent($iid, 'svc_discharge_inhibit');
+            $own = $this->ReadAttributeInteger('SolisHoldChangedAt');
+            if ($inhId > 0 && $own > 0 && GetValue($inhId) === true && $now - $own >= 60) {
+                $vi = IPS_GetVariable($inhId);
+                $chg = (int)($vi['VariableChanged'] ?? ($vi['VariableUpdated'] ?? 0));
+                if (abs($chg - $own) <= 5) {
+                    $this->emsLog(EMS_LOG_BASIC, 'Solis: eigene Entladesperre stand noch am Geraet, EMS kannte sie nicht mehr -- wird freigegeben');
+                    $this->ipsWrite($iid, 'svc_discharge_inhibit', false);
+                    $this->WriteAttributeInteger('SolisHoldChangedAt', $now);
+                }
+            }
+            return;
+        }
         $saved = $this->ReadAttributeInteger('SolisUserStorage');
         $prevId = $this->findChildVariableIdByIdent($iid, 'svc_prev_storage');
         $prev = ($prevId > 0) ? (int)GetValue($prevId) : 0;

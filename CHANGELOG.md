@@ -2,6 +2,12 @@
 
 Ältere Versionen: [CHANGELOG-Archiv.md](CHANGELOG-Archiv.md)
 
+## 0.107.2 (2026-11-19)
+
+- **Fix Solis: Entladesperre blieb nach dem Aufgeben am Gerät stehen (Befund Paul 19.11.2026).** Ablauf: Um 04:32 setzte das EMS „Akku halten“ (Speicherbetrieb 17). Es prüfte jede Minute, ob der Befehl angekommen ist. Der InverterHub liest den Speicherbetrieb aber nur alle 5 Minuten, das EMS sah also dreimal den alten Wert 1 und gab um 04:36 auf („kam nach drei Versuchen nicht an“). Dabei vergaß es die Sperre, ohne sie am Gerät zurückzunehmen. Um 04:37 meldete der Solis 17: Der Befehl war angekommen. Weil das EMS die Sperre nicht mehr kannte, gab es sie nie frei. Der Akku hielt bei 79 % unter dem Reserve-SOC von 80 %, das Haus lief bis zum Morgen mit rund 2,3 kW aus dem Netz, zuletzt zu 49 ct/kWh.
+- Drei Änderungen: (1) Als Fehlversuch zählt nur noch eine Rückmeldung, die nach dem letzten Schreiben gelesen wurde. (2) Gibt das EMS auf, nimmt es die Sperre immer aktiv zurück (`svc_discharge_inhibit = false`). (3) Selbstheilung für den Altfall: Steht noch eine Sperre am Gerät, die das EMS selbst gesetzt hat (Änderungszeit gleich dem eigenen Schreibzeitpunkt), die es aber nicht mehr kennt, gibt es sie einmal frei. Eine von anderen gesetzte Sperre bleibt stehen.
+- Sechs Prüfungen neu oder angepasst. Fünf Mutationsproben (Aufgeben ohne Freigabe, Frische ignoriert, fremde Sperre freigegeben, Selbstheilung ohne Zeitstempel, keine Selbstheilung) schlagen jeweils an.
+
 ## 0.107.1 (2026-11-18)
 
 - Fix Phasenwächter: Phasenströme vom MeterHub (Vertrag 1.5) werden jetzt gefunden. MeterHub liefert `phaseCurrentIDs` an der Netzanschluss-Zuordnung in `assignments[]`, 0.107.0 suchte nur auf oberster Ebene (wie beim InverterHub). Ohne diesen Fix blieb der Wächter mit MeterHub 0.39.0 still blind.
