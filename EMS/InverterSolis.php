@@ -282,7 +282,7 @@ trait EMSInverterSolis
     /**
      * EMS-Entscheidung auf Remote Dispatch abbilden (Solis Smart Control V1.0, SUITE.md "Vertragsfeld dispatch"):
      * Netzladen -> Modus 2 mit +W und Netzladen erlaubt; Entladen/Export -> Modus 2 mit -W; Auto aus dem Netz -> Modus 3 mit
-     * Netzbezug = Vorgabe (0.108.1); Halten (auch Laden aus PV) -> Modus 1 Standby, ausser bei PV-Ueberschuss (Standby wuerde PV nicht in den Akku lassen); sonst aus.
+     * Netzbezug = Vorgabe (0.108.1); Einspeisen mit Vorgabe -> Modus 3 mit +W, Netzbezug mit Vorgabe -> Modus 3 mit -W (0.108.2); Halten (auch Laden aus PV) -> Modus 1 Standby, ausser bei PV-Ueberschuss (Standby wuerde PV nicht in den Akku lassen); sonst aus.
      * Unabhaengig vom Reserved SOC des Geraets. Der Totmann liegt beim Geraet (SOLIS_DISPATCH_FAILSAFE_MIN).
      */
     private function solisDispatchApply(int $iid, int $mode, int $powerW, int $w, bool $wantCharge, int $now): void
@@ -297,6 +297,13 @@ trait EMSInverterSolis
             // Vorgabe (Ladeleistung Auto - 200 W, carFromGridSetting()); der Akku versorgt das Haus, nie das Auto. Live Paul
             // 19.11.2026: Vorgabe -2100 W -> Zaehler -2080/-2096 W. Vorzeichen Doku: - Bezug.
             $dmode = 3; $dw = -(int)(round(min((float)$powerW, 40000.0) / 10.0) * 10);
+        } elseif (($mode === GW_MODE_AC_EXPORT || $mode === GW_MODE_SELL) && $powerW > 0) {
+            // 0.108.2 Einspeisen mit Vorgabe (Vorentladen vor billigen Stunden, Export): Modus 3 regelt die Einspeisung am
+            // Netzanschluss auf +W, wie GoodWe-Modus 5 (Xset = Einspeisung am Zaehler). Der Akku liefert, was Haus und PV nicht decken.
+            $dmode = 3; $dw = (int)(round(min((float)$powerW, 40000.0) / 10.0) * 10);
+        } elseif ($mode === GW_MODE_AC_IMPORT && $powerW > 0) {
+            // GoodWe-Modus 4 (Netzbezug am Zaehler = Vorgabe, Rest laedt den Akku): Modus 3 mit -W und Netzladen erlaubt
+            $dmode = 3; $dw = -(int)(round(min((float)$powerW, 40000.0) / 10.0) * 10);
         } elseif ($isHold) {
             if ($this->solisHoldAllowed(0)) { $dmode = 1; }
             else { $why = $this->t('Solis: hold battery paused (PV surplus or waiting time), the inverter stays in automatic mode'); }
@@ -310,7 +317,7 @@ trait EMSInverterSolis
             }
         }
         if ($this->ReadAttributeString('NoControlReason') !== $why) { $this->WriteAttributeString('NoControlReason', $why); }
-        $this->solisDispatchSend($iid, $dmode, $dw, $now);
+        $this->solisDispatchSend($iid, $dmode, $dw, $now, $mode === GW_MODE_AC_IMPORT);
     }
 
     /**
@@ -318,7 +325,7 @@ trait EMSInverterSolis
      * Aenderung und spaetestens alle SOLIS_DISPATCH_REWRITE_SEC neu (Arbeitsspeicher, kein Verschleiss), damit der Totmann nie
      * ablaeuft, solange EMS laeuft. "Aus" nur einmal beim Wechsel.
      */
-    private function solisDispatchSend(int $iid, int $dmode, int $dw, int $now): void
+    private function solisDispatchSend(int $iid, int $dmode, int $dw, int $now, bool $mode3Charge = false): void
     {
         $last = $this->ReadAttributeInteger('SolisDispLast');
         $lastW = $this->ReadAttributeInteger('SolisDispLastW');
@@ -331,7 +338,7 @@ trait EMSInverterSolis
             if (!$need) { return; }
             $this->ipsWrite($iid, 'ctl_dispatch_failsafe_min', SOLIS_DISPATCH_FAILSAFE_MIN);
             $this->ipsWrite($iid, 'ctl_dispatch_w', ($dmode === 2 || $dmode === 3) ? $dw : 0); // Vorzeichen Solis-Doku: Modus 2 + Laden/- Entladen, Modus 3 - Bezug
-            $this->ipsWrite($iid, 'ctl_dispatch_grid_charge', ($dmode === 2 && $dw > 0) ? 1 : 0);
+            $this->ipsWrite($iid, 'ctl_dispatch_grid_charge', (($dmode === 2 && $dw > 0) || ($dmode === 3 && $mode3Charge)) ? 1 : 0);
             $this->ipsWrite($iid, 'ctl_dispatch_mode', $dmode);
         }
         $this->WriteAttributeInteger('SolisDispLast', $dmode);

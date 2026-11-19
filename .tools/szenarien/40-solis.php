@@ -264,6 +264,15 @@ check('Auto aus dem Netz, Vorgabe 3,6 kW: neu mit -3600 W', in_array('ctl_dispat
 attr('SolisDispAt', time() - 61); $GLOBALS['ACTIONS'] = [];
 call($ems, 'setGoodweMode', [GW_MODE_BUY, 0, true]);
 check('Modus 9 ohne Leistung: Halten (Standby) statt Modus 3', in_array('ctl_dispatch_mode=1', $acts(), true), json_encode($acts()));
+attr('SolisDispAt', time() - 61); $GLOBALS['ACTIONS'] = [];
+call($ems, 'setGoodweMode', [GW_MODE_AC_EXPORT, 6400, true]);
+check('Einspeisen 6,4 kW (Modus 5, Vorentladen): Dispatch Modus 3 mit +6400 W (Doku: + Einspeisung), kein Netzladen (0.108.2)', $acts() === ['ctl_dispatch_failsafe_min=5', 'ctl_dispatch_w=6400', 'ctl_dispatch_grid_charge=0', 'ctl_dispatch_mode=3'], json_encode($acts()));
+attr('SolisDispAt', time() - 61); $GLOBALS['ACTIONS'] = [];
+call($ems, 'setGoodweMode', [GW_MODE_SELL, 3000, true]);
+check('Verkaufen 3 kW (Modus 10): Dispatch Modus 3 mit +3000 W', in_array('ctl_dispatch_w=3000', $acts(), true) && end($GLOBALS['ACTIONS'])[2] === 3, json_encode($acts()));
+attr('SolisDispAt', time() - 61); $GLOBALS['ACTIONS'] = [];
+call($ems, 'setGoodweMode', [GW_MODE_AC_IMPORT, 9000, true]);
+check('Netzbezug 9 kW (Modus 4): Dispatch Modus 3 mit -9000 W und Netzladen erlaubt', $acts() === ['ctl_dispatch_failsafe_min=5', 'ctl_dispatch_w=-9000', 'ctl_dispatch_grid_charge=1', 'ctl_dispatch_mode=3'], json_encode($acts()));
 $ems->SetValue('EMS_BatSOC', 50.0); attr('SolisDispAt', time() - 61); attr('SolisHoldChangedAt', 0); $GLOBALS['ACTIONS'] = [];
 call($ems, 'setGoodweMode', [GW_MODE_AC_EXPORT, 0, true]);
 check('Halten per Dispatch UNTER dem Reserved SOC (50 %): nur Dispatch, nie zusaetzlich Speicherbetrieb 17 (ein Regler pro Stellgroesse)', in_array('ctl_dispatch_mode=1', $acts(), true) && !in_array('svc_discharge_inhibit=true', $acts(), true), json_encode($acts()));

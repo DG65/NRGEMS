@@ -5,8 +5,9 @@
 ## 0.108.1 (2026-11-19)
 
 - **Solis „Auto aus dem Netz“ über Dispatch-Modus 3.** Bei Grid Rewards/Smart Charging (EMS-Modus 9) regelt der Solis jetzt den Netzbezug am Hausanschluss auf die Vorgabe (Ladeleistung des Autos minus 200 W). Das Auto lädt aus dem Netz, der Akku versorgt weiter das Haus und nie das Auto. Bisher hielt das EMS den Akku ganz an, und das Haus lief zusätzlich aus dem Netz. Gleiche Sicherungen wie beim GoodWe-Modus 9 (Hauslast aus dem Akku nur mit Schalter, Reserve, voller Akku bei PV-Überschuss, Messabgleich Netz gegen Vorgabe).
+- **Solis Einspeisen und Netzbezug mit Vorgabe ebenfalls über Dispatch-Modus 3:** Einspeisen (Vorentladen vor billigen Stunden, EMS-Modi 5 und 10) regelt die Einspeisung am Netzanschluss auf +W, wie GoodWe-Modus 5. Netzbezug mit Vorgabe (Modus 4) regelt den Bezug auf −W und erlaubt dabei Netzladen. Bisher lief Einspeisen beim Solis gar nicht („nicht unterstützt“).
 - Live bei Paul vorab gemessen (19.11.2026): Vorgabe 2.100 W Bezug → Zähler 2.080/2.096 W, Akku lieferte den Rest. Der Solis meldet bei Modus 3 den Dispatch-Status 1 statt 2; das ist kein Fehler.
-- Geprüft: 4 neue Prüfungen, alle Szenarien grün. Vier Mutationsproben (Vorzeichen, Leistung nicht gesendet, wieder Halten, Modus 3 ohne Leistung) werden erkannt.
+- Geprüft: 7 neue Prüfungen, alle Szenarien grün. Neun Mutationsproben (Vorzeichen Bezug und Einspeisung, Leistung nicht gesendet, wieder Halten, Modus 3 ohne Leistung, Einspeisen bzw. Verkaufen bzw. Netzbezug nicht abgebildet, Netzbezug ohne Netzlade-Erlaubnis) werden erkannt. Einspeisen und Netzbezug über Modus 3 sind am Gerät noch nicht gemessen.
 
 ## 0.108.0 (2026-11-19)
 
