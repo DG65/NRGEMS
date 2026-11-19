@@ -760,6 +760,7 @@
             "Solis: mode %d is not supported, the inverter stays in automatic mode": "Solis: Modus %d wird nicht unterstützt, der Wechselrichter bleibt in Automatik",
             "Solis: discharging on demand paused (no demand beyond PV and reserve), the inverter stays in automatic mode": "Solis: Entladen auf Vorgabe pausiert (kein Bedarf über PV und Reserve), der Wechselrichter bleibt in Automatik",
             "Solis: hold battery paused (PV surplus, state of charge above the device's reserve SOC, or waiting time), the inverter stays in automatic mode": "Solis: Akku halten pausiert (PV-Überschuss, Ladestand über dem Reserve-SOC des Geräts oder Wartezeit), der Wechselrichter bleibt in Automatik",
+            "Solis: hold battery paused (PV surplus or waiting time), the inverter stays in automatic mode": "Solis: Akku halten pausiert (PV-Überschuss oder Wartezeit), der Wechselrichter bleibt in Automatik",
             "inverter without EMS actuators": "Wechselrichter ohne EMS-Stellglieder",
             "control authority is not with the EMS": "Steuerhoheit liegt nicht beim EMS",
             "no inverter with actuators found or linked": "kein Wechselrichter mit Stellgliedern gefunden oder verknuepft",

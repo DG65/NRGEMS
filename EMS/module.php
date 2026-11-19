@@ -8,6 +8,8 @@
 // ============================================================
 
 // Goodwe EMS Leistungsmodi (Register 47511)
+define('SOLIS_DISPATCH_FAILSAFE_MIN', 5);   // Totmann am Solis (Remote Dispatch, 44101): ohne neuen Befehl zurueck in die Eigenlogik
+define('SOLIS_DISPATCH_REWRITE_SEC', 60);   // aktive Dispatch-Befehle spaetestens so oft neu senden (weit unter dem Totmann)
 define('GW_MODE_STOP',        0);
 define('GW_MODE_AUTO',        1);
 define('GW_MODE_CHARGE_PV',   2);
@@ -720,6 +722,9 @@ class EMS extends IPSModule
         $this->RegisterAttributeInteger('SolisHoldTryAt', 0);
         $this->RegisterAttributeInteger('SolisHoldBlockedUntil', 0);
         $this->RegisterAttributeBoolean('SolisGcActive', false);      // Netzlade-Erlaubnis (Bit 5 im Speicherbetrieb) von EMS gesetzt
+        $this->RegisterAttributeInteger('SolisDispLast', 0);          // zuletzt gesendeter Remote-Dispatch-Modus (0 aus, 1 Halten, 2 Akku +-W)
+        $this->RegisterAttributeInteger('SolisDispLastW', 0);
+        $this->RegisterAttributeInteger('SolisDispAt', 0);
         $this->RegisterAttributeInteger('SolisGcSaved', -1);          // Speicherbetrieb vor dem Setzen von Bit 5
         $this->RegisterAttributeInteger('SolisGcTries', 0);
         $this->RegisterAttributeInteger('SolisGcTryAt', 0);
@@ -9969,7 +9974,7 @@ class EMS extends IPSModule
         // Nur, wenn der Zyklus in letzter Zeit lief (kein Halten eines veralteten Sollwerts nach Ausfall)
         if (time() - $this->ReadAttributeInteger('LastGoodweWriteAt') > 3 * max(30, (int)$this->ReadPropertyInteger('EMS_Interval')) + 60) {
             // Solis: eine gesetzte Entladesperre (hat keinen Totmann) bei ausbleibendem Zyklus freigeben
-            if (($this->ReadAttributeBoolean('SolisHoldActive') || $this->ReadAttributeBoolean('SolisGcActive')) && $this->inverterKind((int)$inv['instanceID']) === 'solis') {
+            if (($this->ReadAttributeBoolean('SolisHoldActive') || $this->ReadAttributeBoolean('SolisGcActive') || $this->ReadAttributeInteger('SolisDispLast') > 0) && $this->inverterKind((int)$inv['instanceID']) === 'solis') {
                 $this->emsLog(EMS_LOG_BASIC, 'Solis: Regelzyklus bleibt aus -- Entladesperre/Netzlade-Erlaubnis wird freigegeben');
                 $this->setSolisMode((int)$inv['instanceID'], GW_MODE_AUTO, 0);
             }

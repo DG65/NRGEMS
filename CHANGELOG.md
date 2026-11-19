@@ -2,6 +2,14 @@
 
 Ältere Versionen: [CHANGELOG-Archiv.md](CHANGELOG-Archiv.md)
 
+## 0.108.0 (2026-11-19)
+
+- **Neu: Solis über Remote Dispatch (herstellerseitiger Fernsteuer-Modus mit Totmann).** Meldet der InverterHub (ab 0.91.0, Vertrag `IHUB_GetFunctions` 1.8), dass der Solis „Remote Dispatch“ kann (Register 34502 = 0xAA55, offizielle Solis-Doku „Smart Control V1.0“), steuert das EMS den Akku nur noch darüber: Netzladen = Modus 2 mit +W und Netzladen erlaubt, Entladen auf Vorgabe = Modus 2 mit −W, Akku halten (auch „Laden aus PV“ und „Auto aus dem Netz“) = Modus 1 Standby, Automatik = Dispatch aus. Halten wirkt damit unabhängig vom Reserved SOC des Geräts, ohne Nachladen aus PV am Netz vorbei, und nichts wird fest im Gerät gespeichert. Aktive Befehle gehen bei jeder Änderung und spätestens alle 60 s neu raus. Der Totmann im Solis steht auf 5 min: Fällt das EMS aus, kehrt der Solis von selbst in seine Eigenlogik zurück. Zusätzlich schaltet KeepAlive den Dispatch aus, wenn der Regelzyklus ausbleibt.
+- Beim Halten mit PV-Überschuss bleibt der Dispatch aus (Standby würde PV nicht in den Akku lassen), der Grund steht in der Statuszeile.
+- Umstieg: Hatte das EMS noch Speicherbetrieb 17, Netzlade-Bit oder Zwangsmodus gesetzt, werden sie freigegeben. Geräte ohne Dispatch behalten den bisherigen Weg unverändert. Fällt die Dispatch-Fähigkeit weg, schaltet das EMS einen eigenen Dispatch aus.
+- Live bei Paul am 19.11.2026 vorab gemessen: Dispatch Standby angenommen, Rückfall nach Ablauf des Totmanns ohne Nachschreiben bestätigt. Die Haltewirkung unter voller Last und das Netzladen über Dispatch sind am Gerät noch nicht gemessen, daher nur Beta.
+- Geprüft: 12 neue Prüfungen (Kapitel 8k6b), alle 1.247 Szenarien grün, Planungskern und Übersetzungen grün. Zehn Mutationsproben (Modus nie gesendet, Vorzeichen gedreht, Modus nicht zuletzt, kein Nachschreiben, Halten trotz PV-Überschuss, Altwege nicht freigegeben, „aus“ dauernd geschrieben, Fähigkeit ignoriert, KeepAlive ohne Dispatch-Freigabe, Netzladen nicht erlaubt) werden alle erkannt.
+
 ## 0.107.2 (2026-11-19)
 
 - **Fix Solis: Entladesperre blieb nach dem Aufgeben am Gerät stehen (Befund Paul 19.11.2026).** Ablauf: Um 04:32 setzte das EMS „Akku halten“ (Speicherbetrieb 17). Es prüfte jede Minute, ob der Befehl angekommen ist. Der InverterHub liest den Speicherbetrieb aber nur alle 5 Minuten, das EMS sah also dreimal den alten Wert 1 und gab um 04:36 auf („kam nach drei Versuchen nicht an“). Dabei vergaß es die Sperre, ohne sie am Gerät zurückzunehmen. Um 04:37 meldete der Solis 17: Der Befehl war angekommen. Weil das EMS die Sperre nicht mehr kannte, gab es sie nie frei. Der Akku hielt bei 79 % unter dem Reserve-SOC von 80 %, das Haus lief bis zum Morgen mit rund 2,3 kW aus dem Netz, zuletzt zu 49 ct/kWh.

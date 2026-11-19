@@ -271,6 +271,69 @@ trait EMSInverterSolis
         return ($w < 100.0) ? 0 : (int)(round($w / 10.0) * 10);
     }
 
+    /** Remote Dispatch nutzbar: InverterHub meldet dispatch_available (34502 = 0xAA55) und bietet ctl_dispatch_mode an. */
+    private function solisDispatchUsable(int $iid): bool
+    {
+        $av = $this->findChildVariableIdByIdent($iid, 'dispatch_available');
+        if ($av <= 0 || $this->findChildVariableIdByIdent($iid, 'ctl_dispatch_mode') <= 0 || $this->findChildVariableIdByIdent($iid, 'ctl_dispatch_w') <= 0) { return false; }
+        return (bool)GetValue($av);
+    }
+
+    /**
+     * EMS-Entscheidung auf Remote Dispatch abbilden (Solis Smart Control V1.0, SUITE.md "Vertragsfeld dispatch"):
+     * Netzladen -> Modus 2 mit +W und Netzladen erlaubt; Entladen/Export -> Modus 2 mit -W; Halten (auch Laden aus PV und
+     * Auto aus dem Netz) -> Modus 1 Standby, ausser bei PV-Ueberschuss (Standby wuerde PV nicht in den Akku lassen); sonst aus.
+     * Unabhaengig vom Reserved SOC des Geraets. Der Totmann liegt beim Geraet (SOLIS_DISPATCH_FAILSAFE_MIN).
+     */
+    private function solisDispatchApply(int $iid, int $mode, int $powerW, int $w, bool $wantCharge, int $now): void
+    {
+        $isHold = ((($mode === GW_MODE_AC_EXPORT || $mode === GW_MODE_STANDBY) && $powerW <= 0)
+            || $mode === GW_MODE_CHARGE_PV || $mode === GW_MODE_BUY);
+        $dmode = 0; $dw = 0; $why = '';
+        if ($wantCharge) {
+            $dmode = 2; $dw = $w;
+        } elseif ($isHold) {
+            if ($this->solisHoldAllowed(0)) { $dmode = 1; }
+            else { $why = $this->t('Solis: hold battery paused (PV surplus or waiting time), the inverter stays in automatic mode'); }
+        } else {
+            $disch = $this->solisDischargeW($iid, $mode, $powerW);
+            if ($disch > 0) { $dmode = 2; $dw = -$disch; }
+            elseif ($mode !== GW_MODE_AUTO && $mode !== GW_MODE_STOP) {
+                $why = ($mode === GW_MODE_DISCHARGE || $mode === GW_MODE_BAT_DISCH)
+                    ? $this->t('Solis: discharging on demand paused (no demand beyond PV and reserve), the inverter stays in automatic mode')
+                    : sprintf($this->t('Solis: mode %d is not supported, the inverter stays in automatic mode'), $mode);
+            }
+        }
+        if ($this->ReadAttributeString('NoControlReason') !== $why) { $this->WriteAttributeString('NoControlReason', $why); }
+        $this->solisDispatchSend($iid, $dmode, $dw, $now);
+    }
+
+    /**
+     * Senden: erst Vorgaben, zuletzt ctl_dispatch_mode (nur das Schreiben des Modus geht ans Geraet). Aktive Modi bei jeder
+     * Aenderung und spaetestens alle SOLIS_DISPATCH_REWRITE_SEC neu (Arbeitsspeicher, kein Verschleiss), damit der Totmann nie
+     * ablaeuft, solange EMS laeuft. "Aus" nur einmal beim Wechsel.
+     */
+    private function solisDispatchSend(int $iid, int $dmode, int $dw, int $now): void
+    {
+        $last = $this->ReadAttributeInteger('SolisDispLast');
+        $lastW = $this->ReadAttributeInteger('SolisDispLastW');
+        $at = $this->ReadAttributeInteger('SolisDispAt');
+        if ($dmode === 0) {
+            if ($last === 0) { return; }
+            $this->ipsWrite($iid, 'ctl_dispatch_mode', 0);
+        } else {
+            $need = ($dmode !== $last) || (abs($dw - $lastW) >= 100) || ($now - $at >= SOLIS_DISPATCH_REWRITE_SEC);
+            if (!$need) { return; }
+            $this->ipsWrite($iid, 'ctl_dispatch_failsafe_min', SOLIS_DISPATCH_FAILSAFE_MIN);
+            $this->ipsWrite($iid, 'ctl_dispatch_w', $dmode === 2 ? $dw : 0);       // Vorzeichen Solis-Doku: + Laden, - Entladen
+            $this->ipsWrite($iid, 'ctl_dispatch_grid_charge', ($dmode === 2 && $dw > 0) ? 1 : 0);
+            $this->ipsWrite($iid, 'ctl_dispatch_mode', $dmode);
+        }
+        $this->WriteAttributeInteger('SolisDispLast', $dmode);
+        $this->WriteAttributeInteger('SolisDispLastW', $dw);
+        $this->WriteAttributeInteger('SolisDispAt', $now);
+    }
+
     /**
      * Solis (minimale Steuerung, Dietmar 20.10.2026): EMS-Entscheidung auf Zwangsladen/Automatik abbilden. Reine Weitergabe im
      * InverterHub, Dauerhalten und Rueckfall liegen hier: Netzladen (Modus 11 mit Leistung) setzt ctl_force_w und
@@ -286,6 +349,15 @@ trait EMSInverterSolis
         if ($cap <= 0.0) { $cap = 30000.0; }
         $w = (int)(round(max(0.0, min((float)$powerW, $cap, 30000.0)) / 10.0) * 10);
         $wantCharge = ($mode === GW_MODE_BAT_CHARGE && $w > 0);
+        // 0.108.0: Kann der Solis Remote Dispatch (InverterHub 0.91.0, Vertrag 1.8), laeuft die ganze Steuerung darueber. Die
+        // alten Stellglieder (Zwangsmodus, Speicherbetrieb 17, Netzlade-Bit) werden dann nur noch freigegeben, falls EMS sie gesetzt hat.
+        $viaDispatch = $this->solisDispatchUsable($iid);
+        if ($viaDispatch) {
+            $this->solisDispatchApply($iid, $mode, $powerW, $w, $wantCharge, $now);
+            $mode = GW_MODE_AUTO; $powerW = 0; $w = 0; $wantCharge = false;
+        } elseif ($this->ReadAttributeInteger('SolisDispLast') > 0) {
+            $this->solisDispatchSend($iid, 0, 0, $now); // Dispatch verschwunden (z. B. InverterHub-Rueckstand): aus
+        }
         // Akku halten (Plan/manuell: Modus 5 mit 0 W): Entladesperre ueber den Speicherbetrieb, nur wenn der InverterHub sie anbietet
         // und kein PV-Ueberschuss da ist (ob PV bei gesperrtem Entladen weiter laedt, ist am Solis noch nicht gemessen)
         $holdCapable = ($this->findChildVariableIdByIdent($iid, 'svc_discharge_inhibit') > 0 && $this->findChildVariableIdByIdent($iid, 'cfg_storage_mode') > 0);
@@ -308,7 +380,7 @@ trait EMSInverterSolis
         if ($unsupported && $isHold && $holdCapable) {
             $why = $this->t('Solis: hold battery paused (PV surplus, state of charge above the device\'s reserve SOC, or waiting time), the inverter stays in automatic mode');
         }
-        if ($this->ReadAttributeString('NoControlReason') !== $why) { $this->WriteAttributeString('NoControlReason', $why); }
+        if (!$viaDispatch && $this->ReadAttributeString('NoControlReason') !== $why) { $this->WriteAttributeString('NoControlReason', $why); } // bei Dispatch setzt solisDispatchApply() den Grund
 
         $devId = $this->findChildVariableIdByIdent($iid, 'cfg_force_mode');
         $dev = ($devId > 0) ? (int)GetValue($devId) : -1; // vom Geraet zurueckgelesen, -1 = unbekannt
