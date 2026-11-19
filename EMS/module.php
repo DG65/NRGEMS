@@ -45,6 +45,7 @@ define('EMS_LOG_VERBOSE',     2);
 define('EMS_COLOR_AUTO', 0x2E8B3D); // Gruen: Wert wurde automatisch uebernommen (🔗-Zeilen im Formular)
 // Quelltexte englisch, deutsche Fassung in locale.json; newsBanner() uebersetzt je Zeile.
 define('EMS_NEWS_VERSIONS', array(
+    '0.109.0' => array('NEW: Remote control for further inverters (FoxESS, Deye) via the InverterHub remote control with the manufacturer\'s dead-man timer (InverterHub 0.92.0). Not yet tested on a real device, therefore only used after you allow it under "My system" ("Allow untested remote control"). Solis keeps working as before.'),
     '0.106.7' => array('CHANGED: The configuration form follows the order in which you set things up: ▶️ Operation, 🏠 My system, 🔋 Battery storage, 💰 Electricity price, 📅 Planning, 🚗 Wallboxes, 🌡️ Heat pump, ⚡ Grid & law, 🛡️ Safety & monitoring, 🔔 Notifications. The manual assignment of meters and inverter variables (only needed without partner modules) is at the very bottom. No setting was changed or lost, only the place where it appears. A saved order in "Form: layout" stays valid; the new sections start with their default.'),
     '0.101.0' => array('CHANGED (Symcon Store rules): Charging mode, charging target, deadline and weekly deadlines of the wallboxes and the manual day plan entries changed in the WebFront, in the panel "🚗 Operate wallboxes" or by other modules are now kept separately and no longer overwrite your settings. A value you change and apply in the settings replaces them; all existing values are kept. Removed: the button "Force apply". Switching a foreign variable without an action is no longer possible (it only changed the display); the log names such variables. The wallbox charging target slider in the WebFront now goes up to 200 kWh.'),
     '0.100.0' => array('CHANGED: Realistic battery losses for every system. Two new settings in the panel Battery storage: round-trip efficiency PV → battery → house (default 91 %) and grid → battery → house (default 82 %), measured values of common home storage systems. They replace the old "efficiency per conversion" (95 % = 90 % round trip), which now only applies if both new fields are set to 0. As a result EMS charges from the grid and holds the battery less often. NEW: Grid charging and holding only when it pays off after losses and a new safety factor (default 90 %); the reason names the limit when grid charging is skipped. The EMS balance charges the automatic mode with the same losses; press "Recalculate the last 30 days" once. The PV forecast correction is used only after 7 learned days.'),
@@ -188,6 +189,7 @@ require_once __DIR__ . '/Planner.php';
 require_once __DIR__ . '/Inverter.php';
 require_once __DIR__ . '/InverterGoodwe.php';
 require_once __DIR__ . '/InverterSolis.php';
+require_once __DIR__ . '/InverterRemote.php';
 require_once __DIR__ . '/Wallbox.php';
 require_once __DIR__ . '/WallboxSources.php';
 require_once __DIR__ . '/Vehicle.php';
@@ -198,6 +200,7 @@ class EMS extends IPSModule
     use EMSInverterKind;
     use EMSInverterGoodwe;
     use EMSInverterSolis;
+    use EMSInverterRemote;
     use EMSWallbox;
     use EMSWallboxSources;
     use EMSVehicle;
@@ -498,6 +501,7 @@ class EMS extends IPSModule
         $this->RegisterPropertyInteger('WB1_Mode',            0);   // Wallbox-Modus: 0 automatisch, 1 Smart Charging (Tibber hat die Hoheit), 2 EMS steuert, 3 nur beobachten
         $this->RegisterPropertyInteger('WB2_Mode',            0);
         $this->RegisterPropertyBoolean('PLAN_Optimizer', true); // 0.102.0: Akku-Optimierer statt Schwellen (Nachtfenster/Absicherung/Rang)
+        $this->RegisterPropertyBoolean('INV_Remote_AllowUntested', false); // 0.109.0: ungetestete Fernsteuer-Adapter (InverterHub rc_tested = false, z. B. FoxESS, Deye) nur mit Freigabe
         $this->RegisterPropertyBoolean('WB_Smart_HouseFromBattery', true); // Smart Charging/Grid Reward excess: Netzbezug auf die Auto-Leistung regeln (Modus 9), Haus aus PV und Batterie; aus = Modus 2 (Haus aus dem Netz)
         $this->RegisterPropertyBoolean('WB_Smart_GridBuy',    true); // Smart-Charging-Auto aus dem Netz laden, Batterie bleibt geschont (Modus 2, Xmax=0)
         $this->RegisterPropertyString('WB1_TibberVehicle',    ''); // Tibber-deviceId des Fahrzeugs an dieser Wallbox (vom Nutzer bestaetigt, nie per Namensabgleich geraten)
@@ -1671,7 +1675,9 @@ class EMS extends IPSModule
                 try {
                     $inv = $this->getInverterEntry();
                     if ($inv !== null && ($inv['instanceID'] ?? 0) > 0) {
-                        if ($this->inverterKind((int)$inv['instanceID']) === 'solis') {
+                        if ($this->inverterKind((int)$inv['instanceID']) === 'remote') {
+                            $this->remoteSendOff((int)$inv['instanceID'], time());   // eigene Fernsteuerung aus, falls aktiv
+                        } elseif ($this->inverterKind((int)$inv['instanceID']) === 'solis') {
                             $this->setSolisMode((int)$inv['instanceID'], GW_MODE_AUTO, 0); // Zwangsmodus freigeben, falls aktiv
                         } else {
                             $this->ipsWrite($inv['instanceID'], 'ctl_ems_enable', false);
@@ -4983,6 +4989,12 @@ class EMS extends IPSModule
                     return $this->t('ℹ️ No InverterHub instance found — the fields below are needed for control.');
                 }
                 $authority = $inv['controlAuthority'] ?? 'none';
+                if ($authority === 'ems' && ($inv['controllable'] ?? false) && $this->inverterKind((int)$inv['instanceID']) === 'remote') {
+                    return $this->connectedLine(sprintf(
+                        $this->t('EMS controls InverterHub #%d via its remote control (manufacturer path with dead-man timer; fields below are ignored).'),
+                        $inv['instanceID']
+                    ), 'none');
+                }
                 if ($authority === 'ems' && ($inv['controllable'] ?? false) && $this->inverterKind((int)$inv['instanceID']) === 'solis') {
                     return $this->connectedLine(sprintf(
                         $this->t('EMS controls the Solis via InverterHub #%d (grid charging via forced charging, otherwise automatic mode; fields below are ignored).'),
@@ -9977,12 +9989,19 @@ class EMS extends IPSModule
             if (($this->ReadAttributeBoolean('SolisHoldActive') || $this->ReadAttributeBoolean('SolisGcActive') || $this->ReadAttributeInteger('SolisDispLast') > 0) && $this->inverterKind((int)$inv['instanceID']) === 'solis') {
                 $this->emsLog(EMS_LOG_BASIC, 'Solis: Regelzyklus bleibt aus -- Entladesperre/Netzlade-Erlaubnis wird freigegeben');
                 $this->setSolisMode((int)$inv['instanceID'], GW_MODE_AUTO, 0);
+            } elseif ($this->ReadAttributeInteger('SolisDispLast') > 0 && $this->inverterKind((int)$inv['instanceID']) === 'remote') {
+                $this->emsLog(EMS_LOG_BASIC, 'Fernsteuerung: Regelzyklus bleibt aus -- Fernsteuerung wird ausgeschaltet');
+                $this->remoteSendOff((int)$inv['instanceID'], time());
             }
             return;
         }
         $iid = $inv['instanceID'];
         if ($this->inverterKind((int)$iid) === 'solis') {
             $this->setSolisMode((int)$iid, (int)$mode, $this->ReadAttributeInteger('LastGoodwePowerW')); // gedrosselt auf das Wiederholintervall
+            return;
+        }
+        if ($this->inverterKind((int)$iid) === 'remote') {
+            $this->setRemoteMode((int)$iid, (int)$mode, $this->ReadAttributeInteger('LastGoodwePowerW')); // gedrosselt (Nachschreiben spaetestens alle 60 s)
             return;
         }
         $this->ipsWrite($iid, 'ctl_ems_mode', $mode);

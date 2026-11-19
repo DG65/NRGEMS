@@ -2,6 +2,14 @@
 
 Ältere Versionen: [CHANGELOG-Archiv.md](CHANGELOG-Archiv.md)
 
+## 0.109.0 (2026-11-19)
+
+- **Neu: gemeinsame Fernsteuerung für alle Hersteller (InverterHub-Vertrag 1.9 `remoteControl`, InverterHub 0.92.0).** Eine Abbildung statt je Hersteller eigener Zweige (neuer Baustein `InverterRemote.php`). Wechselrichter, die nur die neuen Steuerpunkte `ctl_rc_*` haben (heute FoxESS, Deye), steuert das EMS darüber; Solis nutzt `ctl_rc_*`, sobald der InverterHub sie anbietet, sonst weiter `ctl_dispatch_*` (Vertrag 1.8). GoodWe unverändert.
+- **Was ein Hersteller nicht kann, weicht sauber aus:** Ohne Netzpunkt-Regelung (Deye) versorgt der Akku bei „Auto aus dem Netz“ nur das Hausdefizit (Modus 2 mit −Hauslast+PV), beim Einspeisen liefert er Einspeisung plus Hausdefizit. Ohne „Halten“ (FoxESS) bleibt der Wechselrichter in Automatik, der Grund steht in der Statuszeile.
+- **Ungetestete Adapter nur mit Freigabe:** Neues Feld „Ungetestete Fernsteuerung erlauben“ unter „🏠 Meine Anlage“ (Standard aus). Ohne Freigabe schreibt das EMS nichts; wird die Freigabe entzogen, schaltet es eine laufende Fernsteuerung aus.
+- Totmann im Gerät 5 min (Vertrag 1.9 in Sekunden, 300 s), Nachschreiben spätestens alle 60 s, KeepAlive schaltet bei ausbleibendem Regelzyklus aus. Netzladen-Erlaubnis und SOC-Fenster nur, wo der Adapter sie anbietet (heute Solis).
+- Geprüft: neues Kapitel 14 mit 20 Prüfungen (FoxESS- und Deye-artige Geräte, Solis über `ctl_rc_*`, Freigabe, Ausweichen, KeepAlive), alle 1.277 Szenarien grün, Planungskern und Übersetzungen grün. Zehn Mutationsproben (Freigabe ignoriert, Modus 3 ohne Angebot, kein Ausweichen, Einspeise-Ersatz ohne Hauslast, Halten ohne Angebot, Totmann in Minuten, Netzladen-Feld bei FoxESS, Entzug ohne Ausschalten, rc_available ignoriert, Modus nie gesendet) werden alle erkannt. An FoxESS/Deye-Geräten nicht getestet.
+
 ## 0.108.1 (2026-11-19)
 
 - **Solis „Auto aus dem Netz“ über Dispatch-Modus 3.** Bei Grid Rewards/Smart Charging (EMS-Modus 9) regelt der Solis jetzt den Netzbezug am Hausanschluss auf die Vorgabe (Ladeleistung des Autos minus 200 W). Das Auto lädt aus dem Netz, der Akku versorgt weiter das Haus und nie das Auto. Bisher hielt das EMS den Akku ganz an, und das Haus lief zusätzlich aus dem Netz. Gleiche Sicherungen wie beim GoodWe-Modus 9 (Hauslast aus dem Akku nur mit Schalter, Reserve, voller Akku bei PV-Überschuss, Messabgleich Netz gegen Vorgabe).

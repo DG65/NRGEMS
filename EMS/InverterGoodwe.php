@@ -147,6 +147,11 @@ trait EMSInverterGoodwe
                     $this->setSolisMode((int)$iid, (int)$mode, (int)$powerW);
                     return;
                 }
+                // Andere Hersteller mit gemeinsamer Fernsteuerung (FoxESS, Deye, ...): eigener, einheitlicher Zweig (0.109.0)
+                if ($this->inverterKind((int)$iid) === 'remote') {
+                    $this->setRemoteMode((int)$iid, (int)$mode, (int)$powerW);
+                    return;
+                }
                 $hasKids = count(IPS_GetChildrenIDs($iid)) > 0;
                 if ($hasKids && ($modeVarId <= 0 || $this->findChildVariableIdByIdent($iid, 'ctl_ems_power') <= 0 || $this->findChildVariableIdByIdent($iid, 'ctl_ems_enable') <= 0)) {
                     $this->WriteAttributeString('NoControlReason', $this->t('inverter without EMS actuators'));

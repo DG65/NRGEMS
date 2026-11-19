@@ -23,7 +23,9 @@ trait EMSInverterKind
         if ($iid <= 0) { return 'none'; }
         if ($this->isSolisDriver($iid)) { return 'solis'; }
         $has = function (string $ident) use ($iid): bool { return $this->findChildVariableIdByIdent($iid, $ident) > 0; };
-        return ($has('ctl_ems_mode') && $has('ctl_ems_power') && $has('ctl_ems_enable')) ? 'goodwe' : 'readonly';
+        if ($has('ctl_ems_mode') && $has('ctl_ems_power') && $has('ctl_ems_enable')) { return 'goodwe'; }
+        // 0.109.0: andere Hersteller ueber die gemeinsame Fernsteuerung (InverterHub-Vertrag 1.9, ctl_rc_*)
+        return $has('ctl_rc_mode') ? 'remote' : 'readonly';
     }
 
     private function batteryInverterKind(): string
@@ -39,7 +41,15 @@ trait EMSInverterKind
      */
     private function carFromGridText(float $carW, int $xsetW): string
     {
-        if ($this->batteryInverterKind() === 'solis') {
+        $inv = $this->getInverterEntry();
+        $iid = (int)($inv['instanceID'] ?? 0);
+        $kind = $this->batteryInverterKind();
+        if (($kind === 'solis' || $kind === 'remote') && $this->remoteUsable($iid)) {
+            $ch = $this->remoteChannel($iid);
+            if (!in_array(3, $this->remoteModes($iid, $ch), true)) {
+                return sprintf($this->t('car charging at %.1f kW from the grid, battery supplies only the house (inverter has no grid import control)'), $carW / 1000.0);
+            }
+        } elseif ($kind === 'solis') {
             return sprintf($this->t('car charging at %.1f kW from the grid, battery is held (Solis has no grid import control), house also from the grid'), $carW / 1000.0);
         }
         return sprintf($this->t('car charging at %.1f kW, grid import controlled to %.1f kW (car from the grid), house from PV and battery'), $carW / 1000.0, $xsetW / 1000.0);

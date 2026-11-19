@@ -261,7 +261,7 @@ check('Keine Eingabefeld-Beschriftung ueber 40 Zeichen (deutsch)', $long === [],
 $hints = 0; $orph = []; $txt = file_get_contents(EMS_TOOLS_DIR . '/../EMS/form.json');
 preg_match_all('/"name": "(\w+)Hint"/', $txt, $m);
 foreach ($m[1] as $base) { $hints++; if (strpos($txt, '"name": "' . $base . '"') === false) { $orph[] = $base; } }
-check('101 Erklaerungs-Labels mit Feld in form.json (92 aus 0.106.6 + 6 aus 0.106.7 + 3 aus 0.107.0; dazu die zwei alten Hinweise GridOverviewHint/InverterFallbackHint ohne Feld)', $hints - count($orph) === 101 && $orph === ['GridOverview', 'InverterFallback'], json_encode([$hints, $orph]));
+check('102 Erklaerungs-Labels mit Feld in form.json (92 aus 0.106.6 + 6 aus 0.106.7 + 3 aus 0.107.0 + 1 aus 0.109.0; dazu die zwei alten Hinweise GridOverviewHint/InverterFallbackHint ohne Feld)', $hints - count($orph) === 102 && $orph === ['GridOverview', 'InverterFallback'], json_encode([$hints, $orph]));
 $h = call($ems, 'hideHintsOfHiddenFields', [[['type' => 'ExpansionPanel', 'items' => [
     ['type' => 'SelectVariable', 'name' => 'VAR_WB1_Power', 'visible' => false], ['type' => 'Label', 'name' => 'VAR_WB1_PowerHint'],
     ['type' => 'SelectVariable', 'name' => 'VAR_WB1_Cable'], ['type' => 'Label', 'name' => 'VAR_WB1_CableHint']]]]]);

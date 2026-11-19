@@ -318,7 +318,7 @@ function fmt(array $d) {
 define('EMS_TOOLS_DIR', __DIR__);
 foreach (['10-steuerung', '20-formular-sprache', '30-konstellationen-preise', '40-solis', '50-wallbox', '60-preise-planung',
           '70-regressionen-netzdienlich', '80-anlage-abrechnung', '90-simulation-waermepumpe', '100-formularstatus-bilanz',
-          '110-planung-verbund', '120-umbau-november', '130-phasenwaechter'] as $emsKapitel) {
+          '110-planung-verbund', '120-umbau-november', '130-phasenwaechter', '140-fernsteuerung'] as $emsKapitel) {
     require __DIR__ . '/szenarien/' . $emsKapitel . '.php';
 }
 

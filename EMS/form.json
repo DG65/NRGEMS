@@ -212,6 +212,8 @@
                         }
                     ]
                 },
+                {"type": "CheckBox", "name": "INV_Remote_AllowUntested", "caption": "Allow untested remote control"},
+                {"type": "Label", "name": "INV_Remote_AllowUntestedHint", "caption": "Some inverters (e.g. FoxESS, Deye) are controlled via the manufacturer's remote control with dead-man timer, which has not yet been tested on a real device. Only switch this on if you watch the first operation; the status line names the reason if the EMS does not control."},
                 {"type": "Label", "caption": "── 🛡️ Phase monitor: protect the main fuse per phase (optional) ─"},
                 {"type": "NumberSpinner", "name": "SITE_Fuse_A", "caption": "Main fuse per phase", "minimum": 0, "maximum": 250, "suffix": " A"},
                 {"type": "Label", "name": "SITE_Fuse_AHint", "caption": "Rated current of the main circuit breaker (SLS) per phase, e.g. 35, 50 or 63 A. 0 = phase monitor off. If the most heavily loaded phase exceeds the limit, the EMS first throttles grid charging of the battery, then switches off the wallboxes."},
