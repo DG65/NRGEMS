@@ -337,6 +337,13 @@ trait EMSInverterSolis
             $need = ($dmode !== $last) || (abs($dw - $lastW) >= 100) || ($now - $at >= SOLIS_DISPATCH_REWRITE_SEC);
             if (!$need) { return; }
             $this->ipsWrite($iid, 'ctl_dispatch_failsafe_min', SOLIS_DISPATCH_FAILSAFE_MIN);
+            // 0.108.1: SOC-Fenster (44109/44110). Wo der Akku Leistung abgibt (Modus 2 entladen, Modus 3 Bezug oder Einspeisung),
+            // gilt die EMS-Untergrenze (BAT_SOC_Min + Notstromreserve) auch im Geraet -- nicht auf die Tiefentladegrenze des Solis verlassen.
+            if ($this->findChildVariableIdByIdent($iid, 'ctl_dispatch_soc_min') > 0) {
+                $floor = (int)min(95, max(0, $this->ReadPropertyInteger('BAT_SOC_Min') + $this->ReadPropertyInteger('BAT_SOC_Reserve_Backup')));
+                $this->ipsWrite($iid, 'ctl_dispatch_soc_min', (($dmode === 2 && $dw < 0) || $dmode === 3) ? $floor : 0);
+                if ($this->findChildVariableIdByIdent($iid, 'ctl_dispatch_soc_max') > 0) { $this->ipsWrite($iid, 'ctl_dispatch_soc_max', 100); }
+            }
             $this->ipsWrite($iid, 'ctl_dispatch_w', ($dmode === 2 || $dmode === 3) ? $dw : 0); // Vorzeichen Solis-Doku: Modus 2 + Laden/- Entladen, Modus 3 - Bezug
             $this->ipsWrite($iid, 'ctl_dispatch_grid_charge', (($dmode === 2 && $dw > 0) || ($dmode === 3 && $mode3Charge)) ? 1 : 0);
             $this->ipsWrite($iid, 'ctl_dispatch_mode', $dmode);

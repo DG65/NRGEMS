@@ -273,6 +273,19 @@ check('Verkaufen 3 kW (Modus 10): Dispatch Modus 3 mit +3000 W', in_array('ctl_d
 attr('SolisDispAt', time() - 61); $GLOBALS['ACTIONS'] = [];
 call($ems, 'setGoodweMode', [GW_MODE_AC_IMPORT, 9000, true]);
 check('Netzbezug 9 kW (Modus 4): Dispatch Modus 3 mit -9000 W und Netzladen erlaubt', $acts() === ['ctl_dispatch_failsafe_min=5', 'ctl_dispatch_w=-9000', 'ctl_dispatch_grid_charge=1', 'ctl_dispatch_mode=3'], json_encode($acts()));
+// SOC-Fenster im Geraet (InverterHub mit ctl_dispatch_soc_min/_max)
+$dSocMin = vari('Dispatch SOC min', IHUB_IID, 'ctl_dispatch_soc_min', 0, 1); $dSocMax = vari('Dispatch SOC max', IHUB_IID, 'ctl_dispatch_soc_max', 100, 1);
+$floorExp = $ems->ReadPropertyInteger('BAT_SOC_Min') + $ems->ReadPropertyInteger('BAT_SOC_Reserve_Backup');
+attr('SolisDispAt', time() - 61); $GLOBALS['ACTIONS'] = [];
+call($ems, 'setGoodweMode', [GW_MODE_AC_EXPORT, 6400, true]);
+check('Einspeisen: EMS-Untergrenze (' . $floorExp . ' %) als SOC-Untergrenze ins Geraet, Obergrenze 100', in_array('ctl_dispatch_soc_min=' . $floorExp, $acts(), true) && in_array('ctl_dispatch_soc_max=100', $acts(), true) && end($GLOBALS['ACTIONS'])[1] === 'ctl_dispatch_mode', json_encode($acts()));
+attr('SolisDispAt', time() - 61); $GLOBALS['ACTIONS'] = [];
+call($ems, 'setGoodweMode', [GW_MODE_BUY, 7800, true]);
+check('Auto aus dem Netz (Akku versorgt das Haus): ebenfalls SOC-Untergrenze ' . $floorExp . ' %', in_array('ctl_dispatch_soc_min=' . $floorExp, $acts(), true), json_encode($acts()));
+attr('SolisDispAt', time() - 61); $GLOBALS['ACTIONS'] = [];
+call($ems, 'setGoodweMode', [GW_MODE_BAT_CHARGE, 5000, true]);
+check('Netzladen: keine Untergrenze (0), Obergrenze 100', in_array('ctl_dispatch_soc_min=0', $acts(), true) && in_array('ctl_dispatch_soc_max=100', $acts(), true), json_encode($acts()));
+$GLOBALS['OBJ'][$dSocMin]['ObjectIdent'] = 'x_ctl_dispatch_soc_min'; $GLOBALS['OBJ'][$dSocMax]['ObjectIdent'] = 'x_ctl_dispatch_soc_max';
 $ems->SetValue('EMS_BatSOC', 50.0); attr('SolisDispAt', time() - 61); attr('SolisHoldChangedAt', 0); $GLOBALS['ACTIONS'] = [];
 call($ems, 'setGoodweMode', [GW_MODE_AC_EXPORT, 0, true]);
 check('Halten per Dispatch UNTER dem Reserved SOC (50 %): nur Dispatch, nie zusaetzlich Speicherbetrieb 17 (ein Regler pro Stellgroesse)', in_array('ctl_dispatch_mode=1', $acts(), true) && !in_array('svc_discharge_inhibit=true', $acts(), true), json_encode($acts()));
