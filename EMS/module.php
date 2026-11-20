@@ -1835,7 +1835,7 @@ class EMS extends IPSModule
         $partners['extmeter']    = $this->discoverForeign('GetFunctions', 'meter', $ownPrefixes);
         $partners['extheatpump'] = $this->discoverForeign('GetFunctions', 'heatpump', $ownPrefixes);
         // 0.112.0: rein lesende Fremdquellen; genutzt nur, wenn das eigene Modul fehlt (PVF/LFC, TIBBERGR/SPOT, SGW)
-        $partners['extforecast']   = $this->discoverForeignReadSources('GetForecast', 'forecast', array('PVF', 'LFC'), array(0), array('kind'));
+        $partners['extforecast']   = $this->discoverForeignReadSources('GetForecast', 'forecast', array('PVF', 'LFC', 'SGW'), array(0), array('kind'));
         $partners['extprice']      = $this->discoverForeignReadSources('GetPriceCurve', 'price', array('TIBBERGR', 'SPOT'), array(), array('basis', 'netzentgelt'));
         $partners['extgridsignal'] = $this->discoverForeignReadSources('GetState', 'gridsignal', array('SGW', 'SBH', 'SBHE'), array(), array('region'));
         foreach ($partners['chargereebushub'] as $i => $e) { $partners['chargereebushub'][$i]['source'] = 'chargereebushub'; }

@@ -61,7 +61,9 @@ trait EMSInverterRemote
         // InverterHub 1.10: rc_failsafe_decl_sec = Totmann, den der Adapter ins Geraet schreibt; 0 = keiner bekannt (z. B. Kostal)
         // -> nie steuern (SUITE.md Fremdanbindung 5). Fehlt die Variable (InverterHub < 0.96.0), gilt das bisherige Verhalten.
         $fsId = $this->findChildVariableIdByIdent($iid, 'rc_failsafe_decl_sec');
-        if ($ch === 'rc' && $fsId > 0 && (int)GetValue($fsId) <= 0) { return false; }
+        // Nie beschrieben (VariableUpdated 0, z. B. neu angelegt und noch kein langsamer Zyklus) = unbekannt, nicht "kein Totmann"
+        // (0.112.1, Befund Paul 20.11.: InverterHub 0.96.1 legte die Variable an, beschrieb sie aber nicht -> Solis stand still).
+        if ($ch === 'rc' && $fsId > 0 && (int)(IPS_GetVariable($fsId)['VariableUpdated'] ?? 0) > 0 && (int)GetValue($fsId) <= 0) { return false; }
         return $this->remoteTested($iid, $ch) || $this->ReadPropertyBoolean('INV_Remote_AllowUntested');
     }
 

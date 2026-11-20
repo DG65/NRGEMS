@@ -78,6 +78,10 @@ check('InverterHub 1.10 meldet keinen Totmann (rc_failsafe_decl_sec 0, z. B. Kos
 $GLOBALS['VAL'][$rcFs] = 300; attr('SolisDispAt', 0); $GLOBALS['ACTIONS'] = [];
 call($ems, 'setGoodweMode', [GW_MODE_BAT_CHARGE, 5000, true]);
 check('mit deklariertem Totmann (300 s): wieder gesteuert', end($GLOBALS['ACTIONS'])[2] === 2, json_encode($acts()));
+$GLOBALS['VAL'][$rcFs] = 0; $GLOBALS['VAR'][$rcFs]['VariableUpdated'] = 0; attr('SolisDispAt', 0); $GLOBALS['ACTIONS'] = [];
+call($ems, 'setGoodweMode', [GW_MODE_BAT_CHARGE, 5000, true]);
+check('rc_failsafe_decl_sec nie beschrieben (VariableUpdated 0, Befund Paul 20.11.): gilt als unbekannt, weiter gesteuert', end($GLOBALS['ACTIONS'])[2] === 2, json_encode($acts()));
+$GLOBALS['VAR'][$rcFs]['VariableUpdated'] = time(); $GLOBALS['VAL'][$rcFs] = 300;
 
 // KeepAlive: Regelzyklus bleibt aus -> aus
 prop('EMS_Active', true); prop('EMS_DryRun', false); attr('LastGoodweEnable', true); attr('LastGoodweMode', GW_MODE_BAT_CHARGE); attr('LastGoodweWriteAt', time() - 3000); $GLOBALS['ACTIONS'] = [];

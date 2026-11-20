@@ -2,6 +2,12 @@
 
 Ältere Versionen: [CHANGELOG-Archiv.md](CHANGELOG-Archiv.md)
 
+## 0.112.1 (2026-11-20)
+
+- **Solis-Fernsteuerung lief seit 0.111.0 nicht mehr (Befund Paul 20.11.):** InverterHub 0.96.1 legt `rc_failsafe_decl_sec` an, beschreibt die Variable bei Solis aber nicht (Ursache bei InverterHub gemeldet). Das EMS las den Anfangswert 0 als „kein Totmann“ und sperrte den Remote Dispatch; der Solis blieb in der Automatik, der Plan wurde nur beobachtet. Eine nie beschriebene Variable gilt jetzt als „unbekannt“ (bisheriges Verhalten), gesperrt wird nur bei einem tatsächlich gemeldeten 0.
+- **Fremdsuche:** Eine gleichnamige Funktion mit anderer Signatur (z. B. `SGW_GetForecast($id, $von, $bis)` bei der Suche nach Prognosemodulen) ist kein Vertragspartner und kein Fehler mehr; auf Paul stand dazu alle 30 s ein Logeintrag. Fehler werden je Suche getrennt gemerkt und nur einmal geloggt.
+- Geprüft: 3 neue Prüfungen (Kapitel 14 und 15d), alle Szenarien grün; drei Mutationsproben erkannt.
+
 ## 0.112.0 (2026-11-20)
 
 - **Fremdanbindung für Preis, Prognose und Netzsignal (nur lesend).** Das EMS findet Module anderer Autoren mit `<PRÄFIX>_GetForecast` (forecast, kind pv/load), `<PRÄFIX>_GetPriceCurve` (price) und `<PRÄFIX>_GetState` (gridsignal) und nutzt sie, **wenn das eigene Modul fehlt** (PVF/LFC, Tibber Grid Reward, Börsenpreis, StromGedacht). Prognosen nur mit passendem Kalendertag, `generated` höchstens 6 h alt und Major 1; jede Rasterung (24/48/96) wird auf Viertelstunden umgerechnet. Ein Endkundenpreis (`basis` 'endkunde') dient der Planung nur mit `netzentgelt` 'enthalten'; ein Börsenpreis (`basis` 'spot') liefert die Kurve für die Negativpreis-Pflicht (§ 51 EEG) vor dem aus Tibber zurückgerechneten Wert. Die Verbund-Übersicht zeigt die Fremdquellen an.

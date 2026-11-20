@@ -188,3 +188,21 @@ attr('PartnerCache', json_encode(['extprice' => $pr]));
 check('Fremd-Instanz geloescht: keine Preisquelle mehr', call($ems, 'getTibberCombinedCurveJson') === '');
 $GLOBALS['INSTMOD'][EXT_PR_IID] = EXT_FC_GUID;
 attr('PartnerCache', '{}');
+
+echo "\n15d) Fremdsuche robust (0.112.1)\n";
+const EXT_SIG_GUID = '{AAAA0000-1111-2222-3333-4444555566BB}';
+$GLOBALS['MODULES'][EXT_SIG_GUID] = ['ModuleType' => 3, 'Prefix' => 'DREIARG', 'ModuleName' => 'Andere Signatur'];
+$GLOBALS['INSTMOD'][4941] = EXT_SIG_GUID; obj(4941, 1, 'Dreiarg', 0);
+if (!function_exists('DREIARG_GetForecast')) { function DREIARG_GetForecast($id, $von, $bis) { return []; } }
+$ems = freshEms(); $GLOBALS['LOG'] = [];
+$fc = call($ems, 'discoverForeign', ['GetForecast', 'forecast', ['PVF', 'LFC'], [0]]);
+check('gleichnamige Funktion mit anderer Signatur (wie SGW_GetForecast): kein Treffer, kein Fehler', strpos($ems->ReadAttributeString('ExtDiscoveryErrors'), 'DREIARG') === false, $ems->ReadAttributeString('ExtDiscoveryErrors'));
+$GLOBALS['EASEE']['contractVersion'] = '2.0';
+$logCount = function () { return count(array_filter((array)($GLOBALS['LOG'] ?? []), function ($l) { return strpos(json_encode($l), 'Vertragsversion 2.0') !== false; })); };
+$before = $logCount();
+call($ems, 'discoverForeign', ['GetFunctions', 'charger', ['CHUB']]);
+call($ems, 'discoverForeign', ['GetFunctions', 'meter', ['CHUB']]);
+call($ems, 'discoverForeign', ['GetFunctions', 'charger', ['CHUB']]);
+call($ems, 'discoverForeign', ['GetFunctions', 'meter', ['CHUB']]);
+check('gleicher Fehler bei abwechselnden Suchen: nur einmal geloggt', $logCount() - $before === 1, 'Logeintraege: ' . ($logCount() - $before));
+$GLOBALS['EASEE']['contractVersion'] = '1.13';

@@ -32,6 +32,9 @@ trait EMSPartnerDiscovery
                 $status = (int)(IPS_GetInstance($id)['InstanceStatus'] ?? 0);
                 if ($status === 104) { continue; } // vom Nutzer deaktiviert
                 try { $data = call_user_func_array($prefix . '_' . $func, array_merge(array($id), $args)); }
+                // Gleichnamige Funktion mit anderer Signatur (z. B. SGW_GetForecast($id, $von, $bis) bei der Prognose-Suche):
+                // kein Vertragspartner fuer diese Suche, kein Fehler (0.112.1, Befund Paul 20.11.: Logeintrag alle 30 s)
+                catch (\ArgumentCountError $e) { continue 2; }
                 catch (\Throwable $e) { $errors[] = sprintf('%s #%d: %s', $prefix, $id, $e->getMessage()); continue; }
                 if (is_string($data)) { $data = json_decode($data, true); }
                 if (!is_array($data)) { continue; }
@@ -48,9 +51,15 @@ trait EMSPartnerDiscovery
                 }
             }
         }
-        if ($this->ReadAttributeString('ExtDiscoveryErrors') !== json_encode($errors)) {
-            $this->WriteAttributeString('ExtDiscoveryErrors', json_encode($errors));
-            foreach ($errors as $m) { $this->emsLog(EMS_LOG_BASIC, 'Fremdanbindung: ' . $m); }
+        // Je Suche (Funktion/Typ) getrennt merken: sonst ueberschreiben sich die Suchen gegenseitig und jeder Fehler wird
+        // in jedem Zyklus erneut geloggt (0.112.1)
+        $all = json_decode($this->ReadAttributeString('ExtDiscoveryErrors'), true);
+        if (!is_array($all) || array_keys($all) === range(0, count($all) - 1)) { $all = array(); }
+        $key = $func . '/' . $type;
+        if (($all[$key] ?? array()) !== $errors) {
+            foreach (array_diff($errors, $all[$key] ?? array()) as $m) { $this->emsLog(EMS_LOG_BASIC, 'Fremdanbindung: ' . $m); }
+            if ($errors === array()) { unset($all[$key]); } else { $all[$key] = $errors; }
+            $this->WriteAttributeString('ExtDiscoveryErrors', json_encode($all));
         }
         return $out;
     }
