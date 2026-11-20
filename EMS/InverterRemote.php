@@ -58,6 +58,10 @@ trait EMSInverterRemote
     {
         $ch = $this->remoteChannel($iid);
         if ($ch === '' || $this->remoteModes($iid, $ch) === array()) { return false; }
+        // InverterHub 1.10: rc_failsafe_decl_sec = Totmann, den der Adapter ins Geraet schreibt; 0 = keiner bekannt (z. B. Kostal)
+        // -> nie steuern (SUITE.md Fremdanbindung 5). Fehlt die Variable (InverterHub < 0.96.0), gilt das bisherige Verhalten.
+        $fsId = $this->findChildVariableIdByIdent($iid, 'rc_failsafe_decl_sec');
+        if ($ch === 'rc' && $fsId > 0 && (int)GetValue($fsId) <= 0) { return false; }
         return $this->remoteTested($iid, $ch) || $this->ReadPropertyBoolean('INV_Remote_AllowUntested');
     }
 

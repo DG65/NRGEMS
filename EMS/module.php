@@ -45,6 +45,7 @@ define('EMS_LOG_VERBOSE',     2);
 define('EMS_COLOR_AUTO', 0x2E8B3D); // Gruen: Wert wurde automatisch uebernommen (🔗-Zeilen im Formular)
 // Quelltexte englisch, deutsche Fassung in locale.json; newsBanner() uebersetzt je Zeile.
 define('EMS_NEWS_VERSIONS', array(
+    '0.111.0' => array('NEW: External connection now also for heat pumps and meters. Heat pump modules by other authors are found automatically; their additional run is only switched once the instance is in "External modules the EMS may control" and the module reports a fallback time. External meters are read; estimated values are never used for control.'),
     '0.110.0' => array('NEW: Modules by other authors are connected automatically ("external connection", first for wallboxes, e.g. an Easee module): if a module complies with the NRG-Stack charger contract, the EMS finds it by itself and uses its values. It only switches such a wallbox once you add the instance to "External modules the EMS may control" under "My system" and the module reports a fallback time.'),
     '0.109.0' => array('NEW: Remote control for further inverters (FoxESS, Deye) via the InverterHub remote control with the manufacturer\'s dead-man timer (InverterHub 0.92.0). Not yet tested on a real device, therefore only used after you allow it under "My system" ("Allow untested remote control"). Solis keeps working as before.'),
     '0.106.7' => array('CHANGED: The configuration form follows the order in which you set things up: ▶️ Operation, 🏠 My system, 🔋 Battery storage, 💰 Electricity price, 📅 Planning, 🚗 Wallboxes, 🌡️ Heat pump, ⚡ Grid & law, 🛡️ Safety & monitoring, 🔔 Notifications. The manual assignment of meters and inverter variables (only needed without partner modules) is at the very bottom. No setting was changed or lost, only the place where it appears. A saved order in "Form: layout" stays valid; the new sections start with their default.'),
@@ -1828,6 +1829,10 @@ class EMS extends IPSModule
         $partners['chargereebushub'] = $this->discoverContract(GUID_CHARGEREEBUSHUB, 'CHEEB_GetFunctions');
         // 0.110.0 Fremdanbindung: Wallboxen anderer Autoren (charger-Vertrag 1.x, eigenes Praefix), z. B. Easee-Modul
         $partners['extcharger'] = $this->discoverForeign('GetFunctions', 'charger', array('CHUB', 'OHUB', 'CHEEB', 'EMS', 'MHUB', 'IHUB'));
+        // 0.111.0: Zaehler (nur lesen) und Waermepumpen fremder Module
+        $ownPrefixes = array('CHUB', 'OHUB', 'CHEEB', 'EMS', 'MHUB', 'MHUBV', 'MHUBE', 'IHUB', 'HEISHA', 'WPHUB', 'WPMBHUB', 'WPMBGW', 'SAMEHS', 'WPEEB');
+        $partners['extmeter']    = $this->discoverForeign('GetFunctions', 'meter', $ownPrefixes);
+        $partners['extheatpump'] = $this->discoverForeign('GetFunctions', 'heatpump', $ownPrefixes);
         foreach ($partners['chargereebushub'] as $i => $e) { $partners['chargereebushub'][$i]['source'] = 'chargereebushub'; }
         // Fahrzeuge: herstellerneutraler Vertrag `vehicle` 1.0 (<PREFIX>_GetVehicleData, SUITE.md, 15.11.2026).
         // 'vehicles' ist die Quelle fuer alle Konsumenten; 'tessie' bleibt nur fuer die Verbund-Gesundheit
@@ -1932,7 +1937,9 @@ class EMS extends IPSModule
                 count($partners['wphub']), count($partners['wpmodbushub']), count($partners['wpmodbushubgw']), count($partners['samsungehs']));
         }
         // EEBUS-Module ebenso nur nennen, wenn vorhanden
-        if (count((array)($partners['extcharger'] ?? array())) > 0) { $summary .= sprintf(' Fremd-Wallboxen=%d', count($partners['extcharger'])); }
+        foreach (array('extcharger' => 'Fremd-Wallboxen', 'extmeter' => 'Fremd-Zaehler', 'extheatpump' => 'Fremd-WP') as $k => $lbl) {
+            if (count((array)($partners[$k] ?? array())) > 0) { $summary .= sprintf(' %s=%d', $lbl, count($partners[$k])); }
+        }
         if (count($partners['wpeebushub']) + count($partners['chargereebushub']) > 0) {
             $summary .= sprintf(' WPEEBUSHub=%d ChargerEEBUSHub=%d', count($partners['wpeebushub']), count($partners['chargereebushub']));
         }
@@ -9641,8 +9648,9 @@ class EMS extends IPSModule
     {
         $ids = array();
         $partners = $this->GetPartners();
-        foreach (array('meterhub', 'inverterhub') as $kind) {
+        foreach (array('meterhub', 'inverterhub', 'extmeter') as $kind) {
             foreach ((array)($partners[$kind] ?? array()) as $e) {
+                if (($e['measured'] ?? true) === false) { continue; } // geschaetzt: nie regeln (SUITE.md Fremdanbindung 7)
                 // InverterHub: Feld am Eintrag; MeterHub (1.5): Feld an der Zuordnung function=grid in assignments[]
                 $cands = array($e['phaseCurrentIDs'] ?? null);
                 foreach ((array)($e['assignments'] ?? array()) as $a) {
@@ -10310,7 +10318,7 @@ class EMS extends IPSModule
     // ----------------------------------------------------------------
 
     /** Partnerschluessel aller Waermepumpen-Quellen (heatpump-Vertrag). */
-    private const HEATPUMP_KEYS = array('heishamon', 'wphub', 'wpmodbushub', 'wpmodbushubgw', 'samsungehs', 'wpeebushub');
+    private const HEATPUMP_KEYS = array('heishamon', 'wphub', 'wpmodbushub', 'wpmodbushubgw', 'samsungehs', 'wpeebushub', 'extheatpump');
 
     /**
      * Darf EMS den Zusatzlauf dieses Eintrags schalten? Nur mit optionalRunID, controllable=true und Steuerhoheit
@@ -10321,6 +10329,7 @@ class EMS extends IPSModule
         $vid = (int)($hp['optionalRunID'] ?? 0);
         if ($vid <= 0 || (int)($hp['instanceID'] ?? 0) <= 0 || ($hp['controllable'] ?? false) !== true) { return false; }
         if (!in_array((string)($hp['managedBy'] ?? 'none'), array('', 'none', 'ems'), true)) { return false; }
+        if (!$this->extWritable($hp)) { return false; } // Fremdmodul: Freigabe je Instanz + Rueckfall + frisch (0.111.0)
         return IPS_VariableExists($vid);
     }
 
@@ -10445,10 +10454,15 @@ class EMS extends IPSModule
                     $text = (string)($e['text'] ?? $this->t('Additional run on'));
                 }
             }
+            if ($newWant === $want && $want && $this->extKeepAliveDue($hp, (int)($e['kaAt'] ?? ($e['onAt'] ?? 0)))) {
+                // Totmann ('deadman', z. B. WPEEBUSHub 0.6.0): Wunsch vor Ablauf erneuern; 'maxDuration' (HeishaMon) nie
+                $this->hpWriteOptionalRun((int)$vid, true);
+                $e['kaAt'] = $now;
+            }
             if ($newWant !== $want) {
                 $this->hpWriteOptionalRun((int)$vid, $newWant);
                 $e['cond'] = 0;
-                if ($newWant) { $e['onAt'] = $now; }
+                if ($newWant) { $e['onAt'] = $now; $e['kaAt'] = $now; }
                 $this->emsLog(EMS_LOG_BASIC, sprintf('WP-Zusatzlauf %s (#%d): %s', $newWant ? 'an' : 'aus', (int)$vid, $text));
             }
             $e['want'] = $newWant;

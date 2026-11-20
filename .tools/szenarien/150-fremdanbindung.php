@@ -78,3 +78,46 @@ $own = $entry; $own['source'] = 'chargerhub'; unset($own['failsafeSec']); attr('
 call($ems, 'applyWallboxChargePlan', [1, ['entry' => $own, 'currentA' => 10.0, 'enable' => true, 'on' => true, 'text' => 'x']]);
 check('eigenes Modul ohne Totmann, gleicher Strom: nichts geschrieben (wie bisher)', count($GLOBALS['ACTIONS']) === 0, json_encode($GLOBALS['ACTIONS']));
 prop('EXT_Write_Allowed', '[]');
+
+echo "\n15b) Fremdanbindung: Waermepumpen und Zaehler (0.111.0)\n";
+const EXT_HP_GUID = '{BBBB0000-1111-2222-3333-444455556666}';
+const EXT_HP_IID = 4911;
+$GLOBALS['MODULES'][EXT_HP_GUID] = ['ModuleType' => 3, 'Prefix' => 'FREMDWP', 'ModuleName' => 'Fremd-WP'];
+$GLOBALS['INSTMOD'][EXT_HP_IID] = EXT_HP_GUID;
+obj(EXT_HP_IID, 1, 'Fremd-WP', 0);
+$hpRun = vari('Zusatzlauf', EXT_HP_IID, 'run', false, 0);
+$GLOBALS['FREMDWP'] = ['Type' => 'heatpump', 'contractVersion' => '1.18', 'Caption' => 'Fremd-WP', 'optionalRunID' => $hpRun, 'controllable' => true, 'managedBy' => 'none', 'failsafeSec' => 900, 'lastSeenAt' => time()];
+if (!function_exists('FREMDWP_GetFunctions')) { function FREMDWP_GetFunctions($id) { return [$GLOBALS['FREMDWP']]; } }
+$ems = freshEms();
+$hpFound = call($ems, 'discoverForeign', ['GetFunctions', 'heatpump', ['HEISHA']]);
+check('fremde Waermepumpe (Vertrag 1.18, Feld Type) wird gefunden', count($hpFound) === 1 && $hpFound[0]['source'] === 'ext:FREMDWP', json_encode($hpFound));
+check('fremde WP ohne Freigabe: Zusatzlauf nicht schaltbar', call($ems, 'hpOptionalRunEligible', [$hpFound[0]]) === false);
+prop('EXT_Write_Allowed', json_encode([['InstanceID' => EXT_HP_IID]]));
+check('fremde WP mit Freigabe und failsafeSec: schaltbar', call($ems, 'hpOptionalRunEligible', [$hpFound[0]]) === true);
+$hpNoFs = $hpFound[0]; $hpNoFs['failsafeSec'] = 0;
+check('fremde WP mit Freigabe, aber ohne Rueckfall: nicht schaltbar', call($ems, 'hpOptionalRunEligible', [$hpNoFs]) === false);
+prop('EXT_Write_Allowed', '[]');
+// Nachschreiben des Zusatzlauf-Wunschs: eigenes Modul mit Totmann (WPEEBUSHub 0.6.0) ja, maxDuration (HeishaMon) nein
+$own = ['instanceID' => 4912, 'optionalRunID' => $hpRun, 'controllable' => true, 'managedBy' => 'none', 'failsafeSec' => 900, 'Caption' => 'WPEEB'];
+foreach ([['deadman', true], ['maxDuration', false]] as [$mode, $expect]) {
+    $own['failsafeMode'] = $mode;
+    attr('PartnerCache', json_encode(['wpeebushub' => [$own]]));
+    prop('WP_OptionalRun_Active', true);
+    attr('HpOptionalRun', json_encode([$hpRun => ['want' => true, 'onAt' => time() - 1000, 'kaAt' => time() - 500, 'cond' => 0]]));
+    $GLOBALS['VARACTIONS'] = [];
+    call($ems, 'applyHeatpumpOptionalRun', [['grid_total_w' => 0.0, 'bat_pow_w' => 0.0, 'bat_active' => false]]);
+    $wrote = in_array([$hpRun, true], $GLOBALS['VARACTIONS'], true);
+    check('WP-Zusatzlauf laeuft, failsafeMode ' . $mode . ': ' . ($expect ? 'Wunsch nach failsafeSec/2 erneuert' : 'nicht nachgeschrieben (Modul beendet selbst)'), $wrote === $expect, json_encode($GLOBALS['VARACTIONS']));
+    if ($mode === 'deadman') {
+        $GLOBALS['VARACTIONS'] = [];
+        call($ems, 'applyHeatpumpOptionalRun', [['grid_total_w' => 0.0, 'bat_pow_w' => 0.0, 'bat_active' => false]]);
+        check('gleich danach (Zeitstempel gemerkt): kein erneutes Nachschreiben', !in_array([$hpRun, true], $GLOBALS['VARACTIONS'], true), json_encode($GLOBALS['VARACTIONS']));
+    }
+}
+prop('WP_OptionalRun_Active', false);
+// Zaehler: geschaetzte Werte nie fuer Regelung (Phasenstroeme)
+$pc = [vari('L1', 0, 'l1', 60.0, 2), vari('L2', 0, 'l2', 1.0, 2), vari('L3', 0, 'l3', 1.0, 2)];
+attr('PartnerCache', json_encode(['extmeter' => [['source' => 'ext:FREMDZ', 'measured' => false, 'phaseCurrentIDs' => $pc]], 'meterhub' => [], 'inverterhub' => []]));
+check('fremder Zaehler mit measured=false: Phasenstroeme nicht verwendet', call($ems, 'readPhaseCurrents') === null);
+attr('PartnerCache', json_encode(['extmeter' => [['source' => 'ext:FREMDZ', 'phaseCurrentIDs' => $pc]], 'meterhub' => [], 'inverterhub' => []]));
+check('fremder gemessener Zaehler: Phasenstroeme werden verwendet', (call($ems, 'readPhaseCurrents')[0] ?? null) == 60.0, json_encode(call($ems, 'readPhaseCurrents')));

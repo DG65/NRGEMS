@@ -72,6 +72,12 @@ check('Freigabe zurueckgenommen: laufende Fernsteuerung wird ausgeschaltet', $ac
 $GLOBALS['VAL'][$rcTested] = true; attr('SolisDispAt', 0); $GLOBALS['ACTIONS'] = [];
 call($ems, 'setGoodweMode', [GW_MODE_BAT_CHARGE, 5000, true]);
 check('getesteter Adapter (rc_tested): auch ohne Freigabe gesteuert', end($GLOBALS['ACTIONS'])[2] === 2, json_encode($acts()));
+$rcFs = vari('Totmann deklariert', RC_IID, 'rc_failsafe_decl_sec', 0, 1); attr('SolisDispLast', 2); $GLOBALS['ACTIONS'] = [];
+call($ems, 'setGoodweMode', [GW_MODE_BAT_CHARGE, 5000, true]);
+check('InverterHub 1.10 meldet keinen Totmann (rc_failsafe_decl_sec 0, z. B. Kostal): nicht steuern, laufende Steuerung aus', $acts() === ['ctl_rc_mode=0'], json_encode($acts()));
+$GLOBALS['VAL'][$rcFs] = 300; attr('SolisDispAt', 0); $GLOBALS['ACTIONS'] = [];
+call($ems, 'setGoodweMode', [GW_MODE_BAT_CHARGE, 5000, true]);
+check('mit deklariertem Totmann (300 s): wieder gesteuert', end($GLOBALS['ACTIONS'])[2] === 2, json_encode($acts()));
 
 // KeepAlive: Regelzyklus bleibt aus -> aus
 prop('EMS_Active', true); prop('EMS_DryRun', false); attr('LastGoodweEnable', true); attr('LastGoodweMode', GW_MODE_BAT_CHARGE); attr('LastGoodweWriteAt', time() - 3000); $GLOBALS['ACTIONS'] = [];

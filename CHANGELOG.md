@@ -2,6 +2,13 @@
 
 Ältere Versionen: [CHANGELOG-Archiv.md](CHANGELOG-Archiv.md)
 
+## 0.111.0 (2026-11-20)
+
+- **Fremdanbindung für Wärmepumpen und Zähler.** Wärmepumpen-Module anderer Autoren (heatpump-Vertrag, erkannt an `contractType`, ältere Stände am Feld `Type`) werden automatisch gefunden und zählen beim Wärmepumpen-Zusatzlauf mit. Geschaltet wird ihr Zusatzlauf nur nach Freigabe je Instanz („Fremdmodule, die das EMS steuern darf“), mit Rückfallzeit (`failsafeSec` > 0), frischen Daten und ohne fremden Regler. Fremde Zähler (meter-Vertrag) werden gelesen, z. B. für die Phasenströme des Phasenwächters; Einträge mit `measured: false` (geschätzt) werden nie zum Regeln verwendet (SUITE.md Fremdanbindung 7).
+- **Zusatzlauf mit Totmann:** Meldet eine Wärmepumpe `failsafeSec` > 0 mit `failsafeMode` 'deadman' (z. B. WPEEBUSHub 0.6.0), erneuert das EMS einen laufenden Zusatzlauf-Wunsch spätestens nach failsafeSec/2. Bei 'maxDuration' (HeishaMon 1.43.1) schreibt es nicht nach – das Modul beendet den Lauf selbst.
+- **Wechselrichter ohne bekannten Totmann nicht steuern:** Meldet InverterHub ab 0.96.0 (Vertrag 1.10) über `rc_failsafe_decl_sec` = 0, dass der Adapter keinen Totmann ins Gerät schreibt (z. B. Kostal), nutzt das EMS die Fernsteuerung nicht und schaltet eine laufende aus.
+- Geprüft: Kapitel 15b mit 9 Prüfungen (dazu 2 in Kapitel 14), alle Szenarien grün; sechs Mutationsproben (Type-Feld, Freigabeprüfung, Nachschreiben, geschätzte Werte, Fremdzähler, Zeitstempel) werden erkannt.
+
 ## 0.110.1 (2026-11-20)
 
 - Fremdanbindung: neues Vertragsfeld `failsafeMode` (SUITE.md Regel 5a). Bei `'maxDuration'` beendet das Fremdmodul einen EIN-Wunsch selbst (z. B. Wärmepumpen-Zusatzlauf), das EMS schreibt dann nicht nach. Fehlt das Feld, gilt wie bisher `'deadman'` (Nachschreiben spätestens nach failsafeSec/2). Außerdem: Meldet ein Fremdmodul `failsafeVerified: false` (Rückfall nicht am Gerät nachgewiesen, SUITE.md 5d), gibt das EMS kein Schreiben frei. Das Nachschreiben vor Ablauf gilt jetzt für **jede** Wallbox mit Totmann, auch für eigene Module (OCPPHub ab 0.9.0 mit eingeschaltetem Rückfall, ChargerEEBUSHub ab 0.3.0); im Ein/Aus-Weg wird dabei auch der zuletzt gesendete Strom erneuert (OCPPHub erneuert die Frist über ctl_curr_limit). Fünf neue/angepasste Prüfungen, Mutationsproben erkannt.

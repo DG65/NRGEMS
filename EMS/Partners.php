@@ -38,7 +38,7 @@ trait EMSPartnerDiscovery
                 $entries = (array_keys($data) === range(0, count($data) - 1)) ? $data : array($data);
                 foreach ($entries as $e) {
                     if (!is_array($e)) { continue; }
-                    $ct = (string)($e['contractType'] ?? ($e['function'] ?? ''));
+                    $ct = (string)($e['contractType'] ?? ($e['function'] ?? ($e['Type'] ?? ''))); // heatpump-Vertrag bis 1.18: Feld Type
                     if ($ct !== $type) { continue; }
                     if ((int)explode('.', (string)($e['contractVersion'] ?? '0'))[0] !== 1) { $errors[] = sprintf('%s #%d: Vertragsversion %s nicht unterstuetzt', $prefix, $id, (string)($e['contractVersion'] ?? '?')); continue; }
                     $e['instanceID'] = $id;
