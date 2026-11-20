@@ -121,3 +121,70 @@ attr('PartnerCache', json_encode(['extmeter' => [['source' => 'ext:FREMDZ', 'mea
 check('fremder Zaehler mit measured=false: Phasenstroeme nicht verwendet', call($ems, 'readPhaseCurrents') === null);
 attr('PartnerCache', json_encode(['extmeter' => [['source' => 'ext:FREMDZ', 'phaseCurrentIDs' => $pc]], 'meterhub' => [], 'inverterhub' => []]));
 check('fremder gemessener Zaehler: Phasenstroeme werden verwendet', (call($ems, 'readPhaseCurrents')[0] ?? null) == 60.0, json_encode(call($ems, 'readPhaseCurrents')));
+
+echo "\n15c) Fremdanbindung nur lesend: Prognose, Preis, Netzsignal (0.112.0)\n";
+const EXT_FC_GUID = '{AAAA0000-1111-2222-3333-4444555566AA}';
+const EXT_FC_IID = 4931; const EXT_PR_IID = 4932; const EXT_SG_IID = 4933;
+$GLOBALS['MODULES'][EXT_FC_GUID] = ['ModuleType' => 3, 'Prefix' => 'MYFC', 'ModuleName' => 'Meine Prognose'];
+foreach ([EXT_FC_IID, EXT_PR_IID, EXT_SG_IID] as $iid) { $GLOBALS['INSTMOD'][$iid] = EXT_FC_GUID; obj($iid, 1, 'Fremd ' . $iid, 0); }
+$GLOBALS['MYFC_PV'] = function (int $off): array {
+    $m = array_fill(0, 24, 0.0); $m[12] = 2000.0;
+    return ['contractType' => 'forecast', 'contractVersion' => '1.5', 'kind' => 'pv', 'date' => date('Y-m-d', strtotime("today +$off days")),
+        'resolution' => '60min', 'slots' => 24, 'unit' => 'W', 'mean' => $m, 'p50' => $m, 'kwh' => 2.0, 'generated' => time() - 600];
+};
+if (!function_exists('MYFC_GetForecast')) {
+    function MYFC_GetForecast($id, $off = 0) {
+        if ($id === EXT_FC_IID) { return ($GLOBALS['MYFC_PV'])((int)$off); }
+        return array(); // andere Instanzen: kein Prognosemodul
+    }
+    function MYFC_GetPriceCurve($id) {
+        if ($id !== EXT_PR_IID) { return array(); }
+        $d = strtotime('today'); $out = [];
+        for ($h = 0; $h < 24; $h++) { $out[] = ['start' => $d + $h * 3600, 'end' => $d + ($h + 1) * 3600, 'price' => 30.0 + $h, 'basis' => $GLOBALS['MYFC_BASIS'] ?? 'endkunde',
+            'netzentgelt' => $GLOBALS['MYFC_NE'] ?? 'enthalten', 'level' => null, 'contractVersion' => '1.2', 'contractType' => 'price']; }
+        return $out;
+    }
+    function MYFC_GetState($id) {
+        return $id === EXT_SG_IID ? ['contractType' => 'gridsignal', 'contractVersion' => '1.2', 'region' => '12345', 'state' => 1, 'updated' => time()] : array();
+    }
+}
+$ems = freshEms();
+$fc = call($ems, 'discoverForeignReadSources', ['GetForecast', 'forecast', ['PVF', 'LFC'], [0], ['kind']]);
+check('Fremd-Prognose gefunden: eine Instanz, kind pv', count($fc) === 1 && $fc[0]['instanceID'] === EXT_FC_IID && $fc[0]['kind'] === 'pv', json_encode($fc));
+$pr = call($ems, 'discoverForeignReadSources', ['GetPriceCurve', 'price', ['TIBBERGR', 'SPOT'], [], ['basis', 'netzentgelt']]);
+check('Fremd-Preis: 24 Eintraege ergeben EINEN Datensatz je Instanz', count($pr) === 1 && $pr[0]['instanceID'] === EXT_PR_IID && $pr[0]['basis'] === 'endkunde', json_encode($pr));
+$sg = call($ems, 'discoverForeignReadSources', ['GetState', 'gridsignal', ['SGW', 'SBH', 'SBHE'], [], ['region']]);
+check('Fremd-Netzsignal gefunden, region uebernommen', count($sg) === 1 && $sg[0]['region'] === '12345', json_encode($sg));
+attr('PartnerCache', json_encode(['extforecast' => $fc, 'extprice' => $pr, 'extgridsignal' => $sg]));
+$slots = call($ems, 'getPvfSlotsWatt');
+check('ohne eigenes PVF: PV-Prognose aus dem Fremdmodul, 24 Werte auf 96 Viertelstunden umgerechnet', count($slots) === 192 && $slots[50] > 1500 && $slots[10] == 0, sprintf('n=%d s50=%s', count($slots), $slots[50] ?? '-'));
+check('Fremd-Prognose kind pv wird nicht als Lastprognose genommen', call($ems, 'getLoadForecastSlots', [0, 0]) === array_fill(0, 96, null));
+$pvStart = call($ems, 'getPvStartTomorrowTs');
+check('PV-Start morgen aus 24-Stunden-Raster richtig (nicht Stunde 12 als Viertelstunde 12 = 3 Uhr)', $pvStart >= strtotime('tomorrow 10:00') && $pvStart <= strtotime('tomorrow 12:00'), date('Y-m-d H:i', (int)$pvStart));
+$GLOBALS['MYFC_PV_SAVE'] = $GLOBALS['MYFC_PV'];
+$GLOBALS['MYFC_PV'] = function (int $off): array { $f = ($GLOBALS['MYFC_PV_SAVE'])($off); $f['generated'] = time() - 7 * 3600; return $f; };
+check('Fremd-Prognose aelter als 6 h: nicht genutzt', call($ems, 'getPvfSlotsWatt') === array());
+$GLOBALS['MYFC_PV'] = function (int $off): array { $f = ($GLOBALS['MYFC_PV_SAVE'])($off); $f['contractVersion'] = '2.0'; return $f; };
+check('Fremd-Prognose mit Major 2: nicht genutzt', call($ems, 'getPvfSlotsWatt') === array());
+$GLOBALS['MYFC_PV'] = function (int $off): array { $f = ($GLOBALS['MYFC_PV_SAVE'])($off); $f['date'] = '2000-01-01'; return $f; };
+check('Fremd-Prognose fuer falschen Kalendertag: nicht genutzt', call($ems, 'getPvfSlotsWatt') === array());
+$GLOBALS['MYFC_PV'] = $GLOBALS['MYFC_PV_SAVE'];
+$prices = call($ems, 'parsePT15M', [call($ems, 'getPT15MTodayJson')]);
+check('ohne Tibber: Endkundenpreis inkl. Netzentgelt aus dem Fremdmodul (ct -> EUR wie Tibber)', abs(($prices[0] ?? 0) - 0.30) < 0.001 && abs(($prices[95] ?? 0) - 0.53) < 0.001, json_encode([$prices[0], $prices[95]]));
+$GLOBALS['MYFC_NE'] = 'fehlt';
+$pr2 = call($ems, 'discoverForeignReadSources', ['GetPriceCurve', 'price', ['TIBBERGR', 'SPOT'], [], ['basis', 'netzentgelt']]);
+attr('PartnerCache', json_encode(['extforecast' => $fc, 'extprice' => $pr2]));
+check('Endkundenpreis OHNE Netzentgelt: nicht fuer die Planung genutzt', call($ems, 'getTibberCombinedCurveJson') === '');
+unset($GLOBALS['MYFC_NE']); $GLOBALS['MYFC_BASIS'] = 'spot';
+$pr3 = call($ems, 'discoverForeignReadSources', ['GetPriceCurve', 'price', ['TIBBERGR', 'SPOT'], [], ['basis', 'netzentgelt']]);
+attr('PartnerCache', json_encode(['extprice' => $pr3]));
+$spot = call($ems, 'getSpotCurveLive');
+check('Fremd-Boersenpreis (basis spot): Kurve fuer die Negativpreis-Pflicht, Quelle ext:MYFC', count($spot) === 24 && $spot[0]['quelle'] === 'ext:MYFC' && $spot[0]['aufloesung'] === 3600, json_encode($spot[0] ?? null));
+check('Spot-Preis wird nicht als Endkundenpreis genommen', call($ems, 'getTibberCombinedCurveJson') === '');
+check('Statuszeile nennt das Fremdmodul', strpos(call($ems, 'getSpotStatusLine'), 'MYFC') !== false, call($ems, 'getSpotStatusLine'));
+unset($GLOBALS['MYFC_BASIS']);
+unset($GLOBALS['INSTMOD'][EXT_PR_IID]);
+attr('PartnerCache', json_encode(['extprice' => $pr]));
+check('Fremd-Instanz geloescht: keine Preisquelle mehr', call($ems, 'getTibberCombinedCurveJson') === '');
+$GLOBALS['INSTMOD'][EXT_PR_IID] = EXT_FC_GUID;
+attr('PartnerCache', '{}');

@@ -2,6 +2,12 @@
 
 Ältere Versionen: [CHANGELOG-Archiv.md](CHANGELOG-Archiv.md)
 
+## 0.112.0 (2026-11-20)
+
+- **Fremdanbindung für Preis, Prognose und Netzsignal (nur lesend).** Das EMS findet Module anderer Autoren mit `<PRÄFIX>_GetForecast` (forecast, kind pv/load), `<PRÄFIX>_GetPriceCurve` (price) und `<PRÄFIX>_GetState` (gridsignal) und nutzt sie, **wenn das eigene Modul fehlt** (PVF/LFC, Tibber Grid Reward, Börsenpreis, StromGedacht). Prognosen nur mit passendem Kalendertag, `generated` höchstens 6 h alt und Major 1; jede Rasterung (24/48/96) wird auf Viertelstunden umgerechnet. Ein Endkundenpreis (`basis` 'endkunde') dient der Planung nur mit `netzentgelt` 'enthalten'; ein Börsenpreis (`basis` 'spot') liefert die Kurve für die Negativpreis-Pflicht (§ 51 EEG) vor dem aus Tibber zurückgerechneten Wert. Die Verbund-Übersicht zeigt die Fremdquellen an.
+- **Korrektur PV-Start morgen:** Lieferte die PV-Prognose Stunden- oder Halbstundenwerte, wurde der Beginn der PV-Erzeugung als Viertelstunde gelesen (Stunde 9 als 2:15 Uhr). Die Reihe wird jetzt vorher auf 96 Viertelstunden umgerechnet.
+- Geprüft: Kapitel 15c mit 15 Prüfungen, alle Szenarien grün; Mutationsproben (Netzentgelt, Frische, Kalendertag, Preis-Rückfall, Umrechnung PV-Start) werden erkannt.
+
 ## 0.111.0 (2026-11-20)
 
 - **Fremdanbindung für Wärmepumpen und Zähler.** Wärmepumpen-Module anderer Autoren (heatpump-Vertrag, erkannt an `contractType`, ältere Stände am Feld `Type`) werden automatisch gefunden und zählen beim Wärmepumpen-Zusatzlauf mit. Geschaltet wird ihr Zusatzlauf nur nach Freigabe je Instanz („Fremdmodule, die das EMS steuern darf“), mit Rückfallzeit (`failsafeSec` > 0), frischen Daten und ohne fremden Regler. Fremde Zähler (meter-Vertrag) werden gelesen, z. B. für die Phasenströme des Phasenwächters; Einträge mit `measured: false` (geschätzt) werden nie zum Regeln verwendet (SUITE.md Fremdanbindung 7).

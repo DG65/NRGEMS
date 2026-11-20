@@ -16,7 +16,7 @@ trait EMSPartnerDiscovery
      * Laeuft nur im Partner-Zyklus (Minuten). Jeder Aufruf gekapselt; ein Modul, das wirft oder Muell liefert, wird uebersprungen
      * und in ExtDiscoveryErrors vermerkt. Gesamtbudget 3 s.
      */
-    private function discoverForeign(string $func, string $type, array $ownPrefixes): array
+    private function discoverForeign(string $func, string $type, array $ownPrefixes, array $args = array()): array
     {
         $out = array();
         $errors = array();
@@ -31,7 +31,7 @@ trait EMSPartnerDiscovery
             foreach (IPS_GetInstanceListByModuleID($guid) as $id) {
                 $status = (int)(IPS_GetInstance($id)['InstanceStatus'] ?? 0);
                 if ($status === 104) { continue; } // vom Nutzer deaktiviert
-                try { $data = call_user_func($prefix . '_' . $func, $id); }
+                try { $data = call_user_func_array($prefix . '_' . $func, array_merge(array($id), $args)); }
                 catch (\Throwable $e) { $errors[] = sprintf('%s #%d: %s', $prefix, $id, $e->getMessage()); continue; }
                 if (is_string($data)) { $data = json_decode($data, true); }
                 if (!is_array($data)) { continue; }
@@ -93,5 +93,85 @@ trait EMSPartnerDiscovery
         // SUITE.md Regel 5a: 'maxDuration' = das Modul beendet einen EIN-Wunsch selbst, Nachschreiben waere falsch
         if ((string)($e['failsafeMode'] ?? 'deadman') === 'maxDuration') { return false; }
         return time() - $lastAt >= max(10, intdiv($fs, 2));
+    }
+
+    /**
+     * 0.112.0: rein lesende Fremdquellen (forecast, price, gridsignal). Aus den Eintraegen von discoverForeign() wird je Instanz
+     * EIN Datensatz (bei price liefert jede Viertelstunde einen Eintrag). Behalten werden nur die Felder, die der Konsument zur
+     * Auswahl braucht; die Daten selbst werden bei Bedarf frisch abgerufen.
+     */
+    private function discoverForeignReadSources(string $func, string $type, array $ownPrefixes, array $args, array $keep): array
+    {
+        $out = array();
+        foreach ($this->discoverForeign($func, $type, $ownPrefixes, $args) as $e) {
+            $id = (int)$e['instanceID'];
+            if (isset($out[$id])) { continue; }
+            $r = array('instanceID' => $id, 'source' => $e['source'], 'extPrefix' => $e['extPrefix'], 'contractVersion' => (string)($e['contractVersion'] ?? ''));
+            foreach ($keep as $k) { if (array_key_exists($k, $e)) { $r[$k] = $e[$k]; } }
+            $out[$id] = $r;
+        }
+        return array_values($out);
+    }
+
+    /** Erster Fremd-Datensatz eines PartnerCache-Schluessels, der $match erfuellt und dessen Instanz noch existiert. */
+    private function extReadSource(string $cacheKey, callable $match): ?array
+    {
+        $cache = json_decode($this->ReadAttributeString('PartnerCache'), true);
+        foreach ((array)($cache[$cacheKey] ?? array()) as $r) {
+            if (!is_array($r) || !$match($r)) { continue; }
+            if (!IPS_InstanceExists((int)($r['instanceID'] ?? 0))) { continue; }
+            return $r;
+        }
+        return null;
+    }
+
+    /**
+     * Prognose eines Fremdmoduls (forecast 1.x, Anleitung Prognose EIGENES_PROGNOSE_MODUL.md) fuer $kind 'pv'|'load'.
+     * Wird nur genutzt, wenn das eigene Modul (PVF/LFC) fehlt. Geprueft: Typ, Art, Major 1, Kalendertag, generated nicht 0 und
+     * hoechstens 6 h alt, mean vorhanden; sonst null (= keine Prognose, der Aufrufer faellt auf seinen Standard zurueck).
+     */
+    private function extForecastDay(string $kind, int $offset): ?array
+    {
+        $r = $this->extReadSource('extforecast', function (array $r) use ($kind) { return (string)($r['kind'] ?? '') === $kind; });
+        if ($r === null) { return null; }
+        $fn = $r['extPrefix'] . '_GetForecast';
+        if (!function_exists($fn)) { return null; }
+        try { $fc = call_user_func($fn, (int)$r['instanceID'], $offset); } catch (\Throwable $e) { return null; }
+        if (is_string($fc)) { $fc = json_decode($fc, true); }
+        if (!is_array($fc) || (string)($fc['contractType'] ?? '') !== 'forecast' || (string)($fc['kind'] ?? '') !== $kind) { return null; }
+        if ((int)explode('.', (string)($fc['contractVersion'] ?? '0'))[0] !== 1) { return null; }
+        if ((string)($fc['date'] ?? '') !== date('Y-m-d', strtotime(sprintf('today %+d days', $offset)))) { return null; }
+        $gen = (int)($fc['generated'] ?? 0);
+        if ($gen <= 0 || time() - $gen > 6 * 3600) { return null; }
+        if (!is_array($fc['mean'] ?? null) || count($fc['mean']) < 2) { return null; }
+        $fc['source'] = $r['source'];
+        return $fc;
+    }
+
+    /**
+     * Preiskurve eines Fremdmoduls (price 1.x, Anleitung Tibber EIGENES_PREISMODUL.md). $basis 'endkunde' nur mit Netzentgelt
+     * (sonst waeren Ladeentscheidungen zu billig gerechnet), 'spot' fuer die Negativpreis-Pflicht. Je Eintrag Typ und Major
+     * geprueft; Eintraege ohne start/end/price fallen weg. Leer = keine Quelle.
+     */
+    private function extPriceCurve(string $basis): array
+    {
+        $r = $this->extReadSource('extprice', function (array $r) use ($basis) {
+            if ((string)($r['basis'] ?? '') !== $basis) { return false; }
+            return $basis !== 'endkunde' || (string)($r['netzentgelt'] ?? '') === 'enthalten';
+        });
+        if ($r === null) { return array(); }
+        $fn = $r['extPrefix'] . '_GetPriceCurve';
+        if (!function_exists($fn)) { return array(); }
+        try { $c = call_user_func($fn, (int)$r['instanceID']); } catch (\Throwable $e) { return array(); }
+        if (is_string($c)) { $c = json_decode($c, true); }
+        $out = array();
+        foreach ((array)$c as $e) {
+            if (!is_array($e) || (string)($e['contractType'] ?? '') !== 'price') { continue; }
+            if ((int)explode('.', (string)($e['contractVersion'] ?? '0'))[0] !== 1) { continue; }
+            if (!isset($e['start'], $e['end'], $e['price']) || (int)$e['end'] <= (int)$e['start'] || !is_numeric($e['price'])) { continue; }
+            $e['source'] = $r['source'];
+            $out[] = $e;
+        }
+        return $out;
     }
 }

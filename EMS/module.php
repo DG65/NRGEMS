@@ -45,6 +45,7 @@ define('EMS_LOG_VERBOSE',     2);
 define('EMS_COLOR_AUTO', 0x2E8B3D); // Gruen: Wert wurde automatisch uebernommen (🔗-Zeilen im Formular)
 // Quelltexte englisch, deutsche Fassung in locale.json; newsBanner() uebersetzt je Zeile.
 define('EMS_NEWS_VERSIONS', array(
+    '0.112.0' => array('NEW: External connection now also for price, forecast and grid signal modules by other authors. They are only read and are used when the matching NRG-Stack module (Tibber Grid Reward, Börsenpreis, Prognose, StromGedacht) is not installed. An end-customer price is only used for planning if it includes grid fees.'),
     '0.111.0' => array('NEW: External connection now also for heat pumps and meters. Heat pump modules by other authors are found automatically; their additional run is only switched once the instance is in "External modules the EMS may control" and the module reports a fallback time. External meters are read; estimated values are never used for control.'),
     '0.110.0' => array('NEW: Modules by other authors are connected automatically ("external connection", first for wallboxes, e.g. an Easee module): if a module complies with the NRG-Stack charger contract, the EMS finds it by itself and uses its values. It only switches such a wallbox once you add the instance to "External modules the EMS may control" under "My system" and the module reports a fallback time.'),
     '0.109.0' => array('NEW: Remote control for further inverters (FoxESS, Deye) via the InverterHub remote control with the manufacturer\'s dead-man timer (InverterHub 0.92.0). Not yet tested on a real device, therefore only used after you allow it under "My system" ("Allow untested remote control"). Solis keeps working as before.'),
@@ -1833,6 +1834,10 @@ class EMS extends IPSModule
         $ownPrefixes = array('CHUB', 'OHUB', 'CHEEB', 'EMS', 'MHUB', 'MHUBV', 'MHUBE', 'IHUB', 'HEISHA', 'WPHUB', 'WPMBHUB', 'WPMBGW', 'SAMEHS', 'WPEEB');
         $partners['extmeter']    = $this->discoverForeign('GetFunctions', 'meter', $ownPrefixes);
         $partners['extheatpump'] = $this->discoverForeign('GetFunctions', 'heatpump', $ownPrefixes);
+        // 0.112.0: rein lesende Fremdquellen; genutzt nur, wenn das eigene Modul fehlt (PVF/LFC, TIBBERGR/SPOT, SGW)
+        $partners['extforecast']   = $this->discoverForeignReadSources('GetForecast', 'forecast', array('PVF', 'LFC'), array(0), array('kind'));
+        $partners['extprice']      = $this->discoverForeignReadSources('GetPriceCurve', 'price', array('TIBBERGR', 'SPOT'), array(), array('basis', 'netzentgelt'));
+        $partners['extgridsignal'] = $this->discoverForeignReadSources('GetState', 'gridsignal', array('SGW', 'SBH', 'SBHE'), array(), array('region'));
         foreach ($partners['chargereebushub'] as $i => $e) { $partners['chargereebushub'][$i]['source'] = 'chargereebushub'; }
         // Fahrzeuge: herstellerneutraler Vertrag `vehicle` 1.0 (<PREFIX>_GetVehicleData, SUITE.md, 15.11.2026).
         // 'vehicles' ist die Quelle fuer alle Konsumenten; 'tessie' bleibt nur fuer die Verbund-Gesundheit
@@ -2116,6 +2121,21 @@ class EMS extends IPSModule
             'LFC'          => $this->getLfcInstance(),
             'StromGedacht' => $this->getStromGedachtInstance(),
         );
+        // 0.112.0: rein lesende Fremdquellen anzeigen, sofern das eigene Modul fehlt
+        $extRead = array(
+            'PVF' => array('extforecast', function (array $r) { return ($r['kind'] ?? '') === 'pv'; }),
+            'LFC' => array('extforecast', function (array $r) { return ($r['kind'] ?? '') === 'load'; }),
+            'StromGedacht' => array('extgridsignal', function (array $r) { return true; }),
+        );
+        foreach ($extRead as $own => $def) {
+            if ($softDependencies[$own] > 0) { continue; }
+            $r = $this->extReadSource($def[0], $def[1]);
+            if ($r !== null) { $softDependencies[(string)$r['source'] . ' (' . $own . ')'] = (int)$r['instanceID']; }
+        }
+        if ($this->getTibberGridRewardInstance() <= 0) {
+            $r = $this->extReadSource('extprice', function (array $r) { return true; });
+            if ($r !== null) { $softDependencies[(string)$r['source'] . ' (price)'] = (int)$r['instanceID']; }
+        }
         foreach ($softDependencies as $module => $id) {
             if ($id <= 0) {
                 continue;
@@ -2942,8 +2962,8 @@ class EMS extends IPSModule
         $prices = array_merge(array_values($this->parsePT15M($this->getPT15MTodayJson())), array_values($this->parsePT15M($this->getPT15MTomorrowJson(), 1)));
         $avg  = (float)$this->ReadPropertyInteger('NEG_Avg_House_Load_W');
         $lfc  = $this->getLfcInstance();
-        $lt   = $lfc > 0 ? $this->getLoadForecastSlots($lfc, 0) : array();
-        $lm   = $lfc > 0 ? $this->getLoadForecastSlots($lfc, 1) : array();
+        $lt   = $this->getLoadForecastSlots($lfc, 0); // ohne Prognose alle null -> Durchschnitt
+        $lm   = $this->getLoadForecastSlots($lfc, 1);
         $load = array();
         for ($i = 0; $i < 96; $i++) { $load[$i] = (float)($lt[$i] ?? $avg); $load[96 + $i] = (float)($lm[$i] ?? $avg); }
         $ops = array();
@@ -3133,12 +3153,19 @@ class EMS extends IPSModule
         return $out;
     }
 
-    private function getPvfSlotsWatt(string $quantile = 'p50')
+    /** PV-Prognose eines Tages: eigenes Modul (PVF), sonst Fremdmodul (0.112.0), sonst null. */
+    private function pvForecastDay(int $offset): ?array
     {
         $pvfId = $this->getPvfInstance();
-        if ($pvfId <= 0) { return array(); }
-        $today    = PVF_GetForecast($pvfId, 0);
-        $tomorrow = PVF_GetForecast($pvfId, 1);
+        if ($pvfId > 0) { $fc = @PVF_GetForecast($pvfId, $offset); return is_array($fc) ? $fc : null; }
+        return $this->extForecastDay('pv', $offset);
+    }
+
+    private function getPvfSlotsWatt(string $quantile = 'p50')
+    {
+        $today    = $this->pvForecastDay(0);
+        $tomorrow = $this->pvForecastDay(1);
+        if ($today === null && $tomorrow === null) { return array(); }
         // gewuenschtes Quantil (Standard p50); fehlt es, gilt p50
         $q = (isset($today[$quantile]) || isset($tomorrow[$quantile])) ? $quantile : 'p50';
         $todayP50    = isset($today[$q])    && is_array($today[$q])    ? $this->resampleTo96($today[$q])    : array_fill(0, 96, 0.0);
@@ -3177,8 +3204,9 @@ class EMS extends IPSModule
     private function getLoadForecastSlots(int $lfcId, int $offset): array
     {
         $empty = array_fill(0, 96, null);
-        if ($lfcId <= 0 || !function_exists('LFC_GetForecast')) { return $empty; }
-        $fc = @LFC_GetForecast($lfcId, $offset);
+        if ($lfcId > 0 && function_exists('LFC_GetForecast')) { $fc = @LFC_GetForecast($lfcId, $offset); }
+        elseif ($lfcId <= 0) { $fc = $this->extForecastDay('load', $offset); } // 0.112.0: Fremdmodul nur ohne eigenes LFC
+        else { return $empty; }
         if (!is_array($fc) || empty($fc['mean']) || !is_array($fc['mean'])) { return $empty; }
         $mean = array_values($fc['mean']);
         if (count($mean) < 2) { return $empty; }
@@ -3679,8 +3707,11 @@ class EMS extends IPSModule
             } catch (Throwable $e) {
                 $this->emsLog(EMS_LOG_BASIC, 'TIBBERGR_GetPriceCurve fehlgeschlagen: ' . $e->getMessage());
             }
+            return '';
         }
-        return '';
+        // 0.112.0: ohne Tibber-Modul ein fremdes Preismodul (price 1.x, Endkundenpreis inkl. Netzentgelt, ct/kWh wie Tibber)
+        $ext = $this->extPriceCurve('endkunde');
+        return empty($ext) ? '' : json_encode($ext);
     }
 
     /**
@@ -5113,11 +5144,11 @@ class EMS extends IPSModule
      */
     private function getPvStartTomorrowTs()
     {
-        $pvfId = $this->getPvfInstance();
-        if ($pvfId <= 0) { return 0; }
-        $tomorrow = PVF_GetForecast($pvfId, 1);
+        $tomorrow = $this->pvForecastDay(1);
         $mean = $tomorrow['mean'] ?? null;
         if (!is_array($mean) || empty($mean)) { return 0; }
+        // Index = Viertelstunde (slotTimestamp); Prognosen liefern je nach Raster 24/48/96 Slots (0.112.0, vorher nur bei 96 richtig)
+        $mean = $this->resampleTo96($mean);
         $dayMax = max($mean);
         if ($dayMax <= 0) { return 0; }
         $floor = max(10.0, 0.02 * $dayMax);
@@ -5921,7 +5952,7 @@ class EMS extends IPSModule
             $kn = array(); for ($i = max(0, $known - 96); $i < $known; $i++) { $kn[$d0 + $i * 900] = (float)$price192[$i]; }
             $estTs = $this->estimatePricesAnchored(array_values($need), $kn);
             $estIdx = array(); foreach ($need as $i => $ts) { if (isset($estTs[$ts])) { $estIdx[$i] = $estTs[$ts]; } }
-            $lfcX = $this->getLfcInstance(); $loadD2 = ($lfcX > 0) ? $this->getLoadForecastSlots($lfcX, 2) : array();
+            $lfcX = $this->getLfcInstance(); $loadD2 = $this->getLoadForecastSlots($lfcX, 2);
             list($dpP, $dpPvX, $dpL, $estFrom) = EMS_Planner::extendHorizon($dpP, $dpPvX, $dpL, $known, $estIdx, $loadD2, (float)$avgHouseWTomorrow);
         }
         $dp = $this->ReadPropertyBoolean('PLAN_Optimizer') ? $this->optimizeBattery($dpP, $dpPvX, $dpL, $nowSlot, $soc, $ctx, $dpForced, $estFrom) : array();
@@ -7865,9 +7896,8 @@ class EMS extends IPSModule
         $s['fc_active']     = $this->ReadPropertyBoolean('FORECAST_Active');
         $s['fc_today_kwh']  = 0.0;
         if ($s['fc_active']) {
-            $pvfId = $this->getPvfInstance();
-            if ($pvfId > 0) {
-                $today = PVF_GetForecast($pvfId, 0);
+            $today = $this->pvForecastDay(0);
+            if ($today !== null) {
                 // Platzhalter/veraltete Prognose ist "unbekannt", nicht "0 kWh heute"
                 $s['fc_today_kwh'] = $this->forecastUsable($today, 0)
                     ? (float)($today['kwh'] ?? 0.0)
@@ -8497,7 +8527,7 @@ class EMS extends IPSModule
             // p10 (Prognose-Sitzung 13.09.2026: bereits residuen-korrigiert,
             // reiner Cache-Read) -- vorsichtige Basis fuer B1
             $pvfId = $this->getPvfInstance();
-            $fcToday = ($pvfId > 0) ? PVF_GetForecast($pvfId, 0) : null;
+            $fcToday = $this->pvForecastDay(0);
             $p10 = $this->forecastUsable($fcToday, 0) ? (array)($fcToday['p10'] ?? array()) : array();
             $this->WriteAttributeString('FcPv10Today', json_encode(count($p10) >= 2 ? $this->resampleTo96($p10) : array()));
             // Prognoseguete (Prognose Build 98, Vertrag PVF_CONTRACT_ACCURACY 1.0)
@@ -8858,6 +8888,9 @@ class EMS extends IPSModule
             return $this->t('ℹ️ No spot price source found (neither the Börsenpreis module nor a Tibber tariff breakdown): the negative price obligation (§ 51 EEG) cannot be checked. Only needed if it applies to your system.');
         }
         $q = (string)($curve[0]['quelle'] ?? '');
+        if (strpos($q, 'ext:') === 0) {
+            return '✅ ' . sprintf($this->t('External module %s supplies the spot price curve for the negative price obligation (§ 51 EEG): %d periods.'), substr($q, 4), count($curve));
+        }
         if ($q !== 'boersenpreis') {
             return $this->t('ℹ️ No Börsenpreis module found: the substitute is the spot price derived back from the Tibber final price (only with an active tariff breakdown). It still applies to the negative price obligation (§ 51 EEG).');
         }
@@ -8890,6 +8923,13 @@ class EMS extends IPSModule
                 if (!empty($out)) { return $out; }
             }
         }
+        // 0.112.0: fremdes Boersenpreis-Modul (price 1.x, basis 'spot') vor dem Tibber-Rueckrechnen
+        $out = array();
+        foreach ($this->extPriceCurve('spot') as $e) {
+            $out[] = array('start' => (int)$e['start'], 'end' => (int)$e['end'], 'price' => (float)$e['price'],
+                'aufloesung' => (int)$e['end'] - (int)$e['start'], 'quelle' => (string)$e['source']);
+        }
+        if (!empty($out)) { return $out; }
         $tid = $this->getTibberGridRewardInstance();
         if ($tid > 0) {
             $c = @TIBBERGR_GetPriceCurve($tid);
