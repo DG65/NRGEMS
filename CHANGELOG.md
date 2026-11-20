@@ -2,6 +2,13 @@
 
 Ältere Versionen: [CHANGELOG-Archiv.md](CHANGELOG-Archiv.md)
 
+## 0.110.0 (2026-11-20)
+
+- **Neu: Fremdanbindung** (Code-Bestandsaufnahme/Fremdanbindung-Konzept.md, SUITE.md „Fremdanbindung“). Module anderer Autoren, die einen NRG-Stack-Vertrag einhalten, findet das EMS selbst – ohne ihr Präfix oder ihre GUID zu kennen (neuer Baustein `Partners.php`, gleiches Muster wie die Fahrzeugsuche). Zuerst für **Wallboxen** (Anlass: Easee-Modul von PeterChrisben): `<PRÄFIX>_GetFunctions` mit Einträgen `contractType`/`function` = `charger`, Vertrags-Major 1. Eigene Präfixe (CHUB, OHUB, CHEEB …) sind ausgenommen und haben Vorrang; dieselbe Wallbox über ChargerHub/OCPPHub (gleiche Seriennummer) zählt nur einmal.
+- **Lesen sofort, Steuern nur mit Freigabe und Rückfall:** Neue Liste „Fremdmodule, die das EMS steuern darf“ unter „🏠 Meine Anlage“ (Standard leer). Geschaltet wird eine Fremd-Wallbox nur, wenn ihre Instanz dort steht, das Modul eine Rückfallzeit `failsafeSec` > 0 meldet, die Daten frisch sind (`lastSeenAt` ≤ 10 min) und `managedBy` das EMS zulässt. Das EMS erneuert Freigabe und Strom spätestens nach `failsafeSec`/2, auch während des Cooldowns.
+- Fehlerhafte Fremdmodule (Ausnahme, falsche Vertragsversion) werden übersprungen und im Log genannt; Gesamtzeitbudget der Suche 3 s, nur im Partner-Zyklus.
+- Geprüft: neues Kapitel 15 mit 19 Prüfungen, alle 1.296 Szenarien grün, Planungskern und Übersetzungen grün. Zehn Mutationsproben (Freigabe, Rückfallpflicht, Frische, eigene Präfixe, Major-Version, Fehlerkapselung, Doppel über Seriennummer, Schreibrecht, Nachschreiben, Zeitstempel) werden alle erkannt; eine Probe deckte einen Einbaufehler auf (Nachschreiben im falschen Zweig), behoben.
+
 ## 0.109.0 (2026-11-19)
 
 - **Neu: gemeinsame Fernsteuerung für alle Hersteller (InverterHub-Vertrag 1.9 `remoteControl`, InverterHub 0.92.0).** Eine Abbildung statt je Hersteller eigener Zweige (neuer Baustein `InverterRemote.php`). Wechselrichter, die nur die neuen Steuerpunkte `ctl_rc_*` haben (heute FoxESS, Deye), steuert das EMS darüber; Solis nutzt `ctl_rc_*`, sobald der InverterHub sie anbietet, sonst weiter `ctl_dispatch_*` (Vertrag 1.8). GoodWe unverändert.

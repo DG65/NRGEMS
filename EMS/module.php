@@ -45,6 +45,7 @@ define('EMS_LOG_VERBOSE',     2);
 define('EMS_COLOR_AUTO', 0x2E8B3D); // Gruen: Wert wurde automatisch uebernommen (🔗-Zeilen im Formular)
 // Quelltexte englisch, deutsche Fassung in locale.json; newsBanner() uebersetzt je Zeile.
 define('EMS_NEWS_VERSIONS', array(
+    '0.110.0' => array('NEW: Modules by other authors are connected automatically ("external connection", first for wallboxes, e.g. an Easee module): if a module complies with the NRG-Stack charger contract, the EMS finds it by itself and uses its values. It only switches such a wallbox once you add the instance to "External modules the EMS may control" under "My system" and the module reports a fallback time.'),
     '0.109.0' => array('NEW: Remote control for further inverters (FoxESS, Deye) via the InverterHub remote control with the manufacturer\'s dead-man timer (InverterHub 0.92.0). Not yet tested on a real device, therefore only used after you allow it under "My system" ("Allow untested remote control"). Solis keeps working as before.'),
     '0.106.7' => array('CHANGED: The configuration form follows the order in which you set things up: ▶️ Operation, 🏠 My system, 🔋 Battery storage, 💰 Electricity price, 📅 Planning, 🚗 Wallboxes, 🌡️ Heat pump, ⚡ Grid & law, 🛡️ Safety & monitoring, 🔔 Notifications. The manual assignment of meters and inverter variables (only needed without partner modules) is at the very bottom. No setting was changed or lost, only the place where it appears. A saved order in "Form: layout" stays valid; the new sections start with their default.'),
     '0.101.0' => array('CHANGED (Symcon Store rules): Charging mode, charging target, deadline and weekly deadlines of the wallboxes and the manual day plan entries changed in the WebFront, in the panel "🚗 Operate wallboxes" or by other modules are now kept separately and no longer overwrite your settings. A value you change and apply in the settings replaces them; all existing values are kept. Removed: the button "Force apply". Switching a foreign variable without an action is no longer possible (it only changed the display); the log names such variables. The wallbox charging target slider in the WebFront now goes up to 200 kWh.'),
@@ -190,6 +191,7 @@ require_once __DIR__ . '/Inverter.php';
 require_once __DIR__ . '/InverterGoodwe.php';
 require_once __DIR__ . '/InverterSolis.php';
 require_once __DIR__ . '/InverterRemote.php';
+require_once __DIR__ . '/Partners.php';
 require_once __DIR__ . '/Wallbox.php';
 require_once __DIR__ . '/WallboxSources.php';
 require_once __DIR__ . '/Vehicle.php';
@@ -201,6 +203,7 @@ class EMS extends IPSModule
     use EMSInverterGoodwe;
     use EMSInverterSolis;
     use EMSInverterRemote;
+    use EMSPartnerDiscovery;
     use EMSWallbox;
     use EMSWallboxSources;
     use EMSVehicle;
@@ -501,6 +504,8 @@ class EMS extends IPSModule
         $this->RegisterPropertyInteger('WB1_Mode',            0);   // Wallbox-Modus: 0 automatisch, 1 Smart Charging (Tibber hat die Hoheit), 2 EMS steuert, 3 nur beobachten
         $this->RegisterPropertyInteger('WB2_Mode',            0);
         $this->RegisterPropertyBoolean('PLAN_Optimizer', true); // 0.102.0: Akku-Optimierer statt Schwellen (Nachtfenster/Absicherung/Rang)
+        $this->RegisterPropertyString('EXT_Write_Allowed', '[]');     // 0.110.0 Fremdanbindung: Instanzen fremder Module, an die EMS schreiben darf
+        $this->RegisterAttributeString('ExtDiscoveryErrors', '[]');
         $this->RegisterPropertyBoolean('INV_Remote_AllowUntested', false); // 0.109.0: ungetestete Fernsteuer-Adapter (InverterHub rc_tested = false, z. B. FoxESS, Deye) nur mit Freigabe
         $this->RegisterPropertyBoolean('WB_Smart_HouseFromBattery', true); // Smart Charging/Grid Reward excess: Netzbezug auf die Auto-Leistung regeln (Modus 9), Haus aus PV und Batterie; aus = Modus 2 (Haus aus dem Netz)
         $this->RegisterPropertyBoolean('WB_Smart_GridBuy',    true); // Smart-Charging-Auto aus dem Netz laden, Batterie bleibt geschont (Modus 2, Xmax=0)
@@ -700,6 +705,7 @@ class EMS extends IPSModule
         for ($i = 1; $i <= 2; $i++) {
             $this->RegisterAttributeInteger('WB' . $i . 'CurrentSentA', -1);    // zuletzt gesendete Stromstaerke (Ladearten), -1 = noch nichts
             $this->RegisterAttributeInteger('WB' . $i . 'CurrentSentAt', 0);
+            $this->RegisterAttributeInteger('WB' . $i . 'ExtKaAt', 0);   // 0.110.0: Nachschreiben fuer Fremd-Wallboxen mit Rueckfall
             $this->RegisterAttributeInteger('WB' . $i . 'PhaseSentAt', 0);
             $this->RegisterAttributeString('WB' . $i . 'ChargeText', '');        // Klartext der letzten Ladeart-Entscheidung fuers Panel
             $this->RegisterAttributeInteger('WB' . $i . 'TargetSession', 0);     // Anstecken erkannt (Unix-Zeit), 0 = kein Fahrzeug/keine Sitzung
@@ -1820,6 +1826,8 @@ class EMS extends IPSModule
         // EEBUS-Module: je Geraet eine eigene Instanz, die instanceID aus discoverContract() ist also das Geraet selbst.
         $partners['wpeebushub']      = $this->discoverContract(GUID_WPEEBUSHUB,  'WPEEB_GetFunctions');
         $partners['chargereebushub'] = $this->discoverContract(GUID_CHARGEREEBUSHUB, 'CHEEB_GetFunctions');
+        // 0.110.0 Fremdanbindung: Wallboxen anderer Autoren (charger-Vertrag 1.x, eigenes Praefix), z. B. Easee-Modul
+        $partners['extcharger'] = $this->discoverForeign('GetFunctions', 'charger', array('CHUB', 'OHUB', 'CHEEB', 'EMS', 'MHUB', 'IHUB'));
         foreach ($partners['chargereebushub'] as $i => $e) { $partners['chargereebushub'][$i]['source'] = 'chargereebushub'; }
         // Fahrzeuge: herstellerneutraler Vertrag `vehicle` 1.0 (<PREFIX>_GetVehicleData, SUITE.md, 15.11.2026).
         // 'vehicles' ist die Quelle fuer alle Konsumenten; 'tessie' bleibt nur fuer die Verbund-Gesundheit
@@ -1924,6 +1932,7 @@ class EMS extends IPSModule
                 count($partners['wphub']), count($partners['wpmodbushub']), count($partners['wpmodbushubgw']), count($partners['samsungehs']));
         }
         // EEBUS-Module ebenso nur nennen, wenn vorhanden
+        if (count((array)($partners['extcharger'] ?? array())) > 0) { $summary .= sprintf(' Fremd-Wallboxen=%d', count($partners['extcharger'])); }
         if (count($partners['wpeebushub']) + count($partners['chargereebushub']) > 0) {
             $summary .= sprintf(' WPEEBUSHub=%d ChargerEEBUSHub=%d', count($partners['wpeebushub']), count($partners['chargereebushub']));
         }

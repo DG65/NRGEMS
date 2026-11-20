@@ -216,6 +216,13 @@ trait EMSWallboxSources
             if ($this->eebusChargerSerialTwin($c, $list) !== null) { continue; }
             $list[] = $c;
         }
+        // 0.110.0 Fremdanbindung: Wallboxen fremder Module zaehlen additiv; dasselbe Geraet (gleiche Seriennummer) ueber eine
+        // eigene Anbindung hat Vorrang.
+        foreach ((array)($p['extcharger'] ?? array()) as $c) {
+            if (!empty($c['duplicateOf'])) { continue; }
+            if ($this->eebusChargerSerialTwin($c, $list) !== null) { continue; }
+            $list[] = $c;
+        }
         return $list;
     }
 
@@ -226,6 +233,7 @@ trait EMSWallboxSources
     private function chargerEmsWritable(array $e): bool
     {
         if (($e['source'] ?? '') === 'chargereebushub') { return false; }
+        if (!$this->extWritable($e)) { return false; } // Fremdmodul: Freigabe je Instanz + Rueckfall (failsafeSec) + frisch
         return in_array($e['managedBy'] ?? 'none', array('none', 'ems'), true);
     }
 
@@ -257,6 +265,7 @@ trait EMSWallboxSources
     private function chargerSourceLabel(array $entry): string
     {
         $src = (string)($entry['source'] ?? '');
+        if (strpos($src, 'ext:') === 0) { return substr($src, 4) . ' (' . $this->t('external module') . ')'; }
         return ($src === 'ocpphub') ? 'OCPPHub' : (($src === 'chargereebushub') ? 'ChargerEEBUSHub' : 'ChargerHub');
     }
 }

@@ -503,6 +503,16 @@ trait EMSWallbox
         $instance = $entry['instanceID'] ?? 0;
         if ($instance <= 0) { return; }
 
+        // Fremdmodul mit Rueckfall (failsafeSec): den zuletzt gesendeten Zustand vor Ablauf erneuern, auch waehrend des Cooldowns
+        if ($this->extKeepAliveDue($entry, $this->ReadAttributeInteger('WB' . (int)$num . 'ExtKaAt'))
+            && $this->ReadAttributeInteger('LastWB' . $num . 'Switch') > 0) {
+            if ($this->ReadAttributeBoolean('WB' . (int)$num . 'LastSentEnable')) {
+                $this->ipsWrite($instance, 'ctl_enable', true);
+            } else {
+                $this->ipsWrite($instance, 'ctl_enable', false);
+            }
+            $this->WriteAttributeInteger('WB' . (int)$num . 'ExtKaAt', time());
+        }
         $lastSwitch = $this->ReadAttributeInteger('LastWB' . $num . 'Switch');
         $cooldown   = $this->ReadPropertyInteger('WB_Cooldown_Sec');
         if ((time() - $lastSwitch) < $cooldown) {
@@ -865,7 +875,9 @@ trait EMSWallbox
         $on = !empty($plan['on']);
         if ($plan['enable']) {
             $currentChanged = ($aKey !== $sentA) && (($now - $this->ReadAttributeInteger('WB' . $n . 'CurrentSentAt')) >= 30 || $sentA < 0 || !$on);
-            if ($currentChanged) {
+            $keepAlive = $on && $this->extKeepAliveDue($entry, $this->ReadAttributeInteger('WB' . $n . 'CurrentSentAt'));
+            if ($keepAlive) { $this->ipsWrite($iid, 'ctl_enable', true); } // Fremdmodul mit Rueckfall: Zustand vor Ablauf erneuern
+            if ($currentChanged || $keepAlive) {
                 $this->ipsWrite($iid, 'ctl_curr_limit', (abs($a - round($a)) < 0.05) ? (int)round($a) : $a);
                 $this->WriteAttributeInteger('WB' . $n . 'CurrentSentA', $aKey);
                 $this->WriteAttributeInteger('WB' . $n . 'CurrentSentAt', $now);
