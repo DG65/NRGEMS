@@ -82,6 +82,12 @@ $GLOBALS['VAL'][$rcFs] = 0; $GLOBALS['VAR'][$rcFs]['VariableUpdated'] = 0; attr(
 call($ems, 'setGoodweMode', [GW_MODE_BAT_CHARGE, 5000, true]);
 check('rc_failsafe_decl_sec nie beschrieben (VariableUpdated 0, Befund Paul 20.11.): gilt als unbekannt, weiter gesteuert', end($GLOBALS['ACTIONS'])[2] === 2, json_encode($acts()));
 $GLOBALS['VAR'][$rcFs]['VariableUpdated'] = time(); $GLOBALS['VAL'][$rcFs] = 300;
+$GLOBALS['VAL'][$rcFs] = 80; attr('SolisDispLast', 2); attr('SolisDispLastW', 5000); attr('SolisDispAt', time() - 45); $GLOBALS['ACTIONS'] = [];
+call($ems, 'setGoodweMode', [GW_MODE_BAT_CHARGE, 5000, true]);
+check('Totmann 80 s gemeldet: nach 45 s schon nachgeschrieben (Haelfte 40 s statt fester 60 s)', in_array('ctl_rc_mode=2', $acts(), true), json_encode($acts()));
+$GLOBALS['VAL'][$rcFs] = 300; attr('SolisDispAt', time() - 45); $GLOBALS['ACTIONS'] = [];
+call($ems, 'setGoodweMode', [GW_MODE_BAT_CHARGE, 5000, true]);
+check('Totmann 300 s: nach 45 s noch nicht nachgeschrieben (hoechstens alle 60 s)', !in_array('ctl_rc_mode=2', $acts(), true), json_encode($acts()));
 
 // KeepAlive: Regelzyklus bleibt aus -> aus
 prop('EMS_Active', true); prop('EMS_DryRun', false); attr('LastGoodweEnable', true); attr('LastGoodweMode', GW_MODE_BAT_CHARGE); attr('LastGoodweWriteAt', time() - 3000); $GLOBALS['ACTIONS'] = [];

@@ -2,6 +2,11 @@
 
 Ältere Versionen: [CHANGELOG-Archiv.md](CHANGELOG-Archiv.md)
 
+## 0.112.2 (2026-11-20)
+
+- **Fernsteuerung nach dem gemeldeten Totmann nachschreiben:** Das EMS erneuert einen aktiven Modus jetzt spätestens nach der Hälfte von `rc_failsafe_decl_sec` (InverterHub-Vertrag 1.10), höchstens aber alle 60 s wie bisher. Vorher galten feste 60 s; ein Adapter mit kürzerem Totmann als 120 s wäre zwischen zwei Schreibvorgängen zurückgefallen (SUITE.md Fremdanbindung 5). Abgestimmt mit InverterHub 0.97.0 (Victron 180 s).
+- Geprüft: 2 neue Prüfungen in Kapitel 14, alle Szenarien grün, Mutationsprobe erkannt.
+
 ## 0.112.1 (2026-11-20)
 
 - **Solis-Fernsteuerung lief seit 0.111.0 nicht mehr (Befund Paul 20.11.):** InverterHub 0.96.1 legt `rc_failsafe_decl_sec` an, beschreibt die Variable bei Solis aber nicht (Ursache bei InverterHub gemeldet). Das EMS las den Anfangswert 0 als „kein Totmann“ und sperrte den Remote Dispatch; der Solis blieb in der Automatik, der Plan wurde nur beobachtet. Eine nie beschriebene Variable gilt jetzt als „unbekannt“ (bisheriges Verhalten), gesperrt wird nur bei einem tatsächlich gemeldeten 0.

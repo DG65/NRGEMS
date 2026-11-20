@@ -149,8 +149,13 @@ trait EMSInverterRemote
     private function remoteSend(int $iid, string $ch, int $dmode, int $dw, int $now, bool $gridCharge): void
     {
         $last = $this->ReadAttributeInteger('SolisDispLast');
+        // Nachschreiben spaetestens nach SOLIS_DISPATCH_REWRITE_SEC, bei kuerzerem gemeldetem Totmann (rc_failsafe_decl_sec, Vertrag
+        // 1.10) nach dessen Haelfte (SUITE.md Fremdanbindung 5; 0.112.2). Schneller als der 30-s-Zyklus geht es nicht.
+        $every = SOLIS_DISPATCH_REWRITE_SEC;
+        $fsId = ($ch === 'rc') ? $this->findChildVariableIdByIdent($iid, 'rc_failsafe_decl_sec') : 0;
+        if ($fsId > 0 && (int)GetValue($fsId) > 0) { $every = min($every, intdiv((int)GetValue($fsId), 2)); }
         $need = ($dmode !== $last) || (abs($dw - $this->ReadAttributeInteger('SolisDispLastW')) >= 100)
-            || ($now - $this->ReadAttributeInteger('SolisDispAt') >= SOLIS_DISPATCH_REWRITE_SEC);
+            || ($now - $this->ReadAttributeInteger('SolisDispAt') >= $every);
         if (!$need) { return; }
         $p = ($ch === 'rc') ? 'ctl_rc_' : 'ctl_dispatch_';
         if ($ch === 'rc') { $this->ipsWrite($iid, 'ctl_rc_failsafe_sec', SOLIS_DISPATCH_FAILSAFE_MIN * 60); }
