@@ -78,16 +78,20 @@ trait EMSPartnerDiscovery
         if (!$this->isExtSource($e)) { return true; }
         if (!$this->extWriteAllowed((int)($e['instanceID'] ?? 0))) { return false; }
         if ((int)($e['failsafeSec'] ?? 0) <= 0) { return false; }
+        if (array_key_exists('failsafeVerified', $e) && $e['failsafeVerified'] === false) { return false; } // SUITE.md 5d: Rueckfall nicht nachgewiesen
         $seen = $e['lastSeenAt'] ?? null;
         if ($seen !== null && time() - (int)$seen > 600) { return false; }
         return true;
     }
 
-    /** Nachschreiben faellig? Fremdeintraege mit Rueckfall spaetestens nach failsafeSec/2, sonst nie (Aenderungen genuegen). */
+    /** Nachschreiben faellig? Jeder Eintrag mit Totmann (failsafeSec > 0, failsafeMode 'deadman' = Standard) spaetestens nach failsafeSec/2; 'maxDuration' nie. */
     private function extKeepAliveDue(array $e, int $lastAt): bool
     {
         $fs = (int)($e['failsafeSec'] ?? 0);
-        if (!$this->isExtSource($e) || $fs <= 0) { return false; }
+        // gilt fuer JEDE Quelle mit Totmann (auch eigene, z. B. OCPPHub 0.9.0 mit eingeschaltetem Rueckfall), nicht nur Fremdmodule
+        if ($fs <= 0) { return false; }
+        // SUITE.md Regel 5a: 'maxDuration' = das Modul beendet einen EIN-Wunsch selbst, Nachschreiben waere falsch
+        if ((string)($e['failsafeMode'] ?? 'deadman') === 'maxDuration') { return false; }
         return time() - $lastAt >= max(10, intdiv($fs, 2));
     }
 }

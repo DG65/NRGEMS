@@ -507,6 +507,8 @@ trait EMSWallbox
         if ($this->extKeepAliveDue($entry, $this->ReadAttributeInteger('WB' . (int)$num . 'ExtKaAt'))
             && $this->ReadAttributeInteger('LastWB' . $num . 'Switch') > 0) {
             if ($this->ReadAttributeBoolean('WB' . (int)$num . 'LastSentEnable')) {
+                $sentA = $this->ReadAttributeInteger('WB' . (int)$num . 'CurrentSentA'); // zuletzt gesendeter Strom x10 (Ladeart-Weg)
+                if ($sentA > 0) { $a = $sentA / 10.0; $this->ipsWrite($instance, 'ctl_curr_limit', (abs($a - round($a)) < 0.05) ? (int)round($a) : $a); }
                 $this->ipsWrite($instance, 'ctl_enable', true);
             } else {
                 $this->ipsWrite($instance, 'ctl_enable', false);

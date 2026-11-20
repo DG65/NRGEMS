@@ -2,6 +2,10 @@
 
 Ältere Versionen: [CHANGELOG-Archiv.md](CHANGELOG-Archiv.md)
 
+## 0.110.1 (2026-11-20)
+
+- Fremdanbindung: neues Vertragsfeld `failsafeMode` (SUITE.md Regel 5a). Bei `'maxDuration'` beendet das Fremdmodul einen EIN-Wunsch selbst (z. B. Wärmepumpen-Zusatzlauf), das EMS schreibt dann nicht nach. Fehlt das Feld, gilt wie bisher `'deadman'` (Nachschreiben spätestens nach failsafeSec/2). Außerdem: Meldet ein Fremdmodul `failsafeVerified: false` (Rückfall nicht am Gerät nachgewiesen, SUITE.md 5d), gibt das EMS kein Schreiben frei. Das Nachschreiben vor Ablauf gilt jetzt für **jede** Wallbox mit Totmann, auch für eigene Module (OCPPHub ab 0.9.0 mit eingeschaltetem Rückfall, ChargerEEBUSHub ab 0.3.0); im Ein/Aus-Weg wird dabei auch der zuletzt gesendete Strom erneuert (OCPPHub erneuert die Frist über ctl_curr_limit). Fünf neue/angepasste Prüfungen, Mutationsproben erkannt.
+
 ## 0.110.0 (2026-11-20)
 
 - **Neu: Fremdanbindung** (Code-Bestandsaufnahme/Fremdanbindung-Konzept.md, SUITE.md „Fremdanbindung“). Module anderer Autoren, die einen NRG-Stack-Vertrag einhalten, findet das EMS selbst – ohne ihr Präfix oder ihre GUID zu kennen (neuer Baustein `Partners.php`, gleiches Muster wie die Fahrzeugsuche). Zuerst für **Wallboxen** (Anlass: Easee-Modul von PeterChrisben): `<PRÄFIX>_GetFunctions` mit Einträgen `contractType`/`function` = `charger`, Vertrags-Major 1. Eigene Präfixe (CHUB, OHUB, CHEEB …) sind ausgenommen und haben Vorrang; dieselbe Wallbox über ChargerHub/OCPPHub (gleiche Seriennummer) zählt nur einmal.
