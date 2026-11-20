@@ -206,3 +206,49 @@ call($ems, 'discoverForeign', ['GetFunctions', 'charger', ['CHUB']]);
 call($ems, 'discoverForeign', ['GetFunctions', 'meter', ['CHUB']]);
 check('gleicher Fehler bei abwechselnden Suchen: nur einmal geloggt', $logCount() - $before === 1, 'Logeintraege: ' . ($logCount() - $before));
 $GLOBALS['EASEE']['contractVersion'] = '1.13';
+
+echo "\n15e) Netzsignal im Tagesplan (0.113.0, Schieberegler)\n";
+$ctxA = ['avgHouseW' => 300.0, 'socMin' => 0.0, 'socReserve' => 10.0, 'capKwh' => 40.0, 'chargeKw' => 20.0, 'chargeCurve' => [],
+    'dischargeKw' => 20.0, 'maxW' => 34500.0, 'cycleCost' => 0.031, 'spread' => 0.03, 'feedTariff' => 0.1836];
+$ems = freshEms();
+// durchgehend billige Nacht (20 ct) 8-36, Tag 45 ct; Rot in 8-20 -> Laden wandert in den gruenen Teil 21-36.
+$pG = array_fill(0, 96, 0.45); foreach (range(8, 36) as $i) { $pG[$i] = 0.20; } foreach (range(8, 20) as $i) { $pG[$i] = 0.19; } // roter Teil 1 ct billiger: ohne Signal laedt er dort
+$pvG = array_fill(0, 96, 0.0); $ldG = array_fill(0, 96, 3000.0);
+$red = []; foreach (range(8, 20) as $i) { $red[$i] = 0.10; } // Rot bei 100 %
+$chgIn = function (array $o, array $r) { return count(array_filter($o, fn($x, $i) => $x['act'] === 'charge' && in_array($i, $r, true), ARRAY_FILTER_USE_BOTH)); };
+$o0 = call($ems, 'optimizeBattery', [$pG, $pvG, $ldG, 0, 15.0, $ctxA]);
+$ctxR = $ctxA; $ctxR['gridSig'] = $red;
+$o1 = call($ems, 'optimizeBattery', [$pG, $pvG, $ldG, 0, 15.0, $ctxR]);
+check('Netzsignal aus (0 %): laedt auch im spaeter roten Teil 8-20 (Vergleichsbasis)', $chgIn($o0, range(8, 20)) > 0, json_encode(array_count_values(array_column($o0, 'act'))));
+check('Netzsignal Rot (100 %, +10 ct) im 1 ct billigeren Teil: Laden wandert in den gruenen Teil', $chgIn($o1, range(8, 20)) === 0 && $chgIn($o1, range(21, 36)) > 0, json_encode([$chgIn($o1, range(8, 20)), $chgIn($o1, range(21, 36))]));
+// Preis schlaegt schwaches Signal: erstes Fenster 10 ct billiger, Rot nur +2 ct (20 % Gewichtung) -> bleibt beim billigen Fenster
+$pH = $pG; foreach (range(8, 20) as $i) { $pH[$i] = 0.10; }
+$ctxW = $ctxA; $ctxW['gridSig'] = array_map(fn($v) => $v * 0.2, $red);
+$o2 = call($ems, 'optimizeBattery', [$pH, $pvG, $ldG, 0, 15.0, $ctxW]);
+check('schwache Gewichtung: deutlich billigeres Fenster wird trotz Rot genutzt (Empfehlung, keine Pflicht)', $chgIn($o2, range(8, 20)) > 0, json_encode(array_count_values(array_column($o2, 'act'))));
+// PV nie gedrosselt: Einspeisung/PV-Laden unberuehrt -- ohne Netzbezug aendert Rot nichts
+$pvS = array_fill(0, 96, 0.0); for ($i = 40; $i < 60; $i++) { $pvS[$i] = 8000.0; }
+$ctxP = $ctxA; $ctxP['gridSig'] = array_fill(40, 20, 0.10);
+$oA = call($ems, 'optimizeBattery', [array_fill(0, 96, 0.30), $pvS, $ldG, 40, 30.0, $ctxA]);
+$oB = call($ems, 'optimizeBattery', [array_fill(0, 96, 0.30), $pvS, $ldG, 40, 30.0, $ctxP]);
+check('Rot waehrend PV-Ueberschuss: gleiche SOC-Kurve wie ohne Signal (PV nicht gedrosselt)', array_column($oA, 'soc') === array_column($oB, 'soc'), json_encode([end($oA), end($oB)]));
+// Zuordnung Signal -> Slots
+$GLOBALS['SGWSEG'] = [['contractType' => 'gridsignal', 'contractVersion' => '1.2', 'source' => 'test', 'from' => strtotime('today 02:00'), 'to' => strtotime('today 05:00'), 'value' => 4],
+                      ['contractType' => 'gridsignal', 'contractVersion' => '1.2', 'source' => 'test', 'from' => strtotime('today 12:00'), 'to' => strtotime('today 13:00'), 'value' => -1]];
+if (!function_exists('SIGX_GetForecast')) {
+    function SIGX_GetForecast($id, $von, $bis) { return $GLOBALS['SGWSEG']; }
+    function SIGX_GetState($id) { return ['contractType' => 'gridsignal', 'contractVersion' => '1.2', 'state' => 1, 'updated' => time()]; }
+}
+$GLOBALS['MODULES']['{AAAA0000-1111-2222-3333-4444555566CC}'] = ['ModuleType' => 3, 'Prefix' => 'SIGX', 'ModuleName' => 'Signal'];
+$GLOBALS['INSTMOD'][4951] = '{AAAA0000-1111-2222-3333-4444555566CC}'; obj(4951, 1, 'Signal', 0);
+attr('PartnerCache', json_encode(['extgridsignal' => [['instanceID' => 4951, 'source' => 'ext:SIGX', 'extPrefix' => 'SIGX']]]));
+$sg = call($ems, 'gridSignalSurcharges', [50, 192]);
+check('Signal-Zuordnung 50 %: Rot 02:00-05:00 = +5 ct (Slots 8-19), Supergruen 12-13 Uhr = -2,5 ct, sonst nichts',
+    abs(($sg[8] ?? 0) - 0.05) < 1e-9 && abs(($sg[19] ?? 0) - 0.05) < 1e-9 && !isset($sg[7]) && !isset($sg[20]) && abs(($sg[48] ?? 0) + 0.025) < 1e-9 && !isset($sg[100]),
+    json_encode(array_filter($sg)));
+$GLOBALS['SGWSEG'][] = ['contractType' => 'gridsignal', 'source' => 'gsi', 'from' => strtotime('today 06:00'), 'to' => strtotime('today 07:00'), 'value' => 3.6];
+$GLOBALS['SGWSEG'][] = ['contractType' => 'gridsignal', 'source' => 'energycharts', 'from' => strtotime('today 08:00'), 'to' => strtotime('today 09:00'), 'value' => 2];
+$sg = call($ems, 'gridSignalSurcharges', [50, 192]);
+check('GSI- und Energy-Charts-Segmente (andere Skala, wie bei StromGedacht live) werden nicht als Ampel gelesen', !isset($sg[24]) && !isset($sg[32]), json_encode(array_filter($sg)));
+check('Schieberegler 0 %: keine Aufschlaege', call($ems, 'gridSignalSurcharges', [0, 192]) === []);
+attr('PartnerCache', '{}');

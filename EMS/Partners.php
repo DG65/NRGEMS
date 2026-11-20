@@ -183,4 +183,54 @@ trait EMSPartnerDiscovery
         }
         return $out;
     }
+
+    /**
+     * 0.113.0: Netzsignal (gridsignal 1.x, StromGedacht SGW oder Fremdmodul) als Aufschlag je Slot fuer den Tagesplan.
+     * $weightPct 0..100 (Schieberegler). Index wie die Planreihen: 0 = heute 0:00 nach Wanduhr, 96 je Tag. Bei 100 %:
+     * Rot +10 ct, Orange +5 ct, Gelb +2 ct, Gruen 0, Supergruen -5 ct je kWh Netzbezug. Unbekannte Slots 0.
+     */
+    private function gridSignalSurcharges(int $weightPct, int $nSlots): array
+    {
+        $out = array();
+        if ($weightPct <= 0 || $nSlots <= 0) { return $out; }
+        $map = array(-1 => -0.5, 1 => 0.0, 2 => 0.2, 3 => 0.5, 4 => 1.0);
+        $scale = EMS_GRIDSIG_MAX_EUR * min(100, $weightPct) / 100.0;
+        $src = $this->gridSignalSource();
+        if ($src === null) { return $out; }
+        $from = strtotime('today'); $to = strtotime(sprintf('today +%d days', (int)ceil($nSlots / 96)));
+        $segs = array();
+        if (function_exists($src['prefix'] . '_GetForecast')) {
+            try { $segs = call_user_func($src['prefix'] . '_GetForecast', $src['id'], $from, $to); } catch (\Throwable $e) { $segs = array(); }
+            if (is_string($segs)) { $segs = json_decode($segs, true); }
+        }
+        $now = time();
+        try { $st = call_user_func($src['prefix'] . '_GetState', $src['id']); } catch (\Throwable $e) { $st = null; }
+        if (is_string($st)) { $st = json_decode($st, true); }
+        for ($i = 0; $i < $nSlots; $i++) {
+            $day = intdiv($i, 96);
+            $ts = mktime(intdiv($i % 96, 4), ($i % 4) * 15, 0, (int)date('n', $from), (int)date('j', $from) + $day, (int)date('Y', $from));
+            $v = null;
+            foreach ((array)$segs as $g) {
+                if (!is_array($g) || (string)($g['contractType'] ?? 'gridsignal') !== 'gridsignal') { continue; }
+                // Nur Ampel-Segmente: StromGedacht liefert in derselben Liste auch GSI (0-100) und Energy-Charts (0-2) mit
+                // eigener Skala (Befund Paul 20.11.2026); bei SGW zaehlt nur source 'stromgedacht'.
+                $gs = (string)($g['source'] ?? '');
+                if (in_array($gs, array('gsi', 'energycharts'), true) || ($src['prefix'] === 'SGW' && $gs !== 'stromgedacht')) { continue; }
+                if ((int)($g['from'] ?? 0) <= $ts && $ts < (int)($g['to'] ?? 0)) { $v = (int)round((float)($g['value'] ?? 1)); break; }
+            }
+            // aktueller Slot ohne Vorschau: Zustand von jetzt, sofern frisch (hoechstens 2 h)
+            if ($v === null && is_array($st) && $ts <= $now && $now < $ts + 900 && isset($st['state']) && $now - (int)($st['updated'] ?? 0) <= 7200) { $v = (int)$st['state']; }
+            if ($v !== null && isset($map[$v])) { $out[$i] = $scale * $map[$v]; }
+        }
+        return $out;
+    }
+
+    /** Netzsignal-Quelle: eigenes StromGedacht, sonst Fremdmodul (gridsignal). null = keine. */
+    private function gridSignalSource(): ?array
+    {
+        $id = (int)$this->getStromGedachtInstance();
+        if ($id > 0) { return array('prefix' => 'SGW', 'id' => $id); }
+        $r = $this->extReadSource('extgridsignal', function (array $r) { return true; });
+        return $r === null ? null : array('prefix' => (string)$r['extPrefix'], 'id' => (int)$r['instanceID']);
+    }
 }

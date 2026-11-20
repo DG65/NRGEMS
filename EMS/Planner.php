@@ -102,9 +102,12 @@ final class EMS_Planner
         for ($i = max($fromSlot, $n - 96); $i < $n; $i++) { $last[] = (float)$prices[$i]; }
         $endVal = min($last); // je kWh, die der Akku am Horizontende noch abgeben kann: erspart spaeter Netzbezug, angesetzt zum guenstigsten Preis
         $ctx['etaAc'] = $etaAc; $ctx['etaPv'] = $etaPv;
-        $sim = function (int $i, float $s, string $act) use ($prices, $pv, $load, $ctx, $feed, $cyc): array {
+        // 0.113.0 Netzsignal: Aufschlag (EUR/kWh) NUR auf Netzbezug je Slot (Rot teurer, Supergruen billiger). PV und Einspeisung
+        // bleiben unberuehrt -- Lehre aus der entfernten "Gruensten Ladezeit" (0.53.0), die PV drosselte.
+        $sig = (array)($ctx['gridSig'] ?? array());
+        $sim = function (int $i, float $s, string $act) use ($prices, $pv, $load, $ctx, $feed, $cyc, $sig): array {
             $b = $this->batteryStep($s, (float)($pv[$i] ?? 0.0), (float)($load[$i] ?? $ctx['avgHouseW']), $act, $ctx);
-            return array($b[0], $b[1] * (float)$prices[$i] - $b[2] * $feed + $b[5] * $cyc);
+            return array($b[0], $b[1] * ((float)$prices[$i] + (float)($sig[$i] ?? 0.0)) - $b[2] * $feed + $b[5] * $cyc);
         };
         $interp = function (array $V, float $s) use ($step, $ns): float {
             $x = max(0.0, min(100.0, $s)) / $step; $k = (int)floor($x); if ($k >= $ns) { return $V[$ns]; }

@@ -2,6 +2,11 @@
 
 Ältere Versionen: [CHANGELOG-Archiv.md](CHANGELOG-Archiv.md)
 
+## 0.113.0 (2026-11-20)
+
+- **Netzsignal im Tagesplan (Dietmar 20.11.2026: „als Zusatzkriterium im Tagesplan, einstellbar mit einem Schieberegler“).** Neuer Schieberegler „Netzsignal berücksichtigen (StromGedacht)“ beim Akku-Optimierer, 0–100 % in 10er-Schritten, ab Werk 0 % (aus, Plan unverändert). Der Optimierer rechnet auf jede kWh **Netzbezug** einen Aufschlag je Viertelstunde: bei 100 % Rot +10 ct, Orange +5 ct, Gelb +2 ct, Grün 0, Supergrün −5 ct (linear mit der Stellung). Dadurch wandert Netzladen aus roten in grüne Zeiten, und bei Rot deckt eher der Akku das Haus. PV und Einspeisung sind nie betroffen – Lehre aus der 0.53.0 entfernten „Grünsten Ladezeit“, die nur nach dem Index entschied und die PV drosselte. Das Signal ist eine Empfehlung: ein deutlich günstigerer Preis gewinnt weiter. Quelle: StromGedacht (`SGW_GetForecast`/`GetState`) oder ein fremdes Netzsignal-Modul (gridsignal 1.x). Gelesen werden nur Ampel-Segmente (`source` 'stromgedacht'); die in derselben Vorschau gelieferten GSI- (0–100) und Energy-Charts-Werte (0–2) haben eine andere Skala und bleiben außen vor (live auf Paul geprüft).
+- Geprüft: Kapitel 15e mit 7 Prüfungen, alle Szenarien grün; fünf Mutationsproben (Aufschlag, Aufschlag auf Einspeisung statt Bezug, Supergrün, Regler 0 %, Quellenfilter) erkannt.
+
 ## 0.112.2 (2026-11-20)
 
 - **Fernsteuerung nach dem gemeldeten Totmann nachschreiben:** Das EMS erneuert einen aktiven Modus jetzt spätestens nach der Hälfte von `rc_failsafe_decl_sec` (InverterHub-Vertrag 1.10), höchstens aber alle 60 s wie bisher. Vorher galten feste 60 s; ein Adapter mit kürzerem Totmann als 120 s wäre zwischen zwei Schreibvorgängen zurückgefallen (SUITE.md Fremdanbindung 5). Abgestimmt mit InverterHub 0.97.0 (Victron 180 s).

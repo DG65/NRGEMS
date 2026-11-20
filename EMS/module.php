@@ -37,6 +37,7 @@ define('EMS_OP_HOLD',          8); // Akku halten: GoodWe-Modus 8 (Batterie-Bere
 
 // Logging-Level
 define('EMS_LOG_OFF',         0);
+define('EMS_GRIDSIG_MAX_EUR', 0.10); // 0.113.0: Netzsignal-Aufschlag bei Rot und 100 % Gewichtung (EUR je kWh Netzbezug)
 define('EMS_LOG_BASIC',       1);
 define('EMS_LOG_VERBOSE',     2);
 
@@ -45,6 +46,7 @@ define('EMS_LOG_VERBOSE',     2);
 define('EMS_COLOR_AUTO', 0x2E8B3D); // Gruen: Wert wurde automatisch uebernommen (🔗-Zeilen im Formular)
 // Quelltexte englisch, deutsche Fassung in locale.json; newsBanner() uebersetzt je Zeile.
 define('EMS_NEWS_VERSIONS', array(
+    '0.113.0' => array('NEW: Grid signal in the day plan. With the slider "Consider grid signal (StromGedacht)" under the battery optimizer you decide how strongly the traffic light counts: the higher the setting, the more grid purchases at orange/red are avoided and super green is preferred. Only grid purchases are affected, never PV or feed-in. Default 0 % (off).'),
     '0.112.0' => array('NEW: External connection now also for price, forecast and grid signal modules by other authors. They are only read and are used when the matching NRG-Stack module (Tibber Grid Reward, Börsenpreis, Prognose, StromGedacht) is not installed. An end-customer price is only used for planning if it includes grid fees.'),
     '0.111.0' => array('NEW: External connection now also for heat pumps and meters. Heat pump modules by other authors are found automatically; their additional run is only switched once the instance is in "External modules the EMS may control" and the module reports a fallback time. External meters are read; estimated values are never used for control.'),
     '0.110.0' => array('NEW: Modules by other authors are connected automatically ("external connection", first for wallboxes, e.g. an Easee module): if a module complies with the NRG-Stack charger contract, the EMS finds it by itself and uses its values. It only switches such a wallbox once you add the instance to "External modules the EMS may control" under "My system" and the module reports a fallback time.'),
@@ -505,6 +507,7 @@ class EMS extends IPSModule
         $this->RegisterPropertyInteger('WB_Quelle',            0);   // 0 automatisch, 1 ChargerHub, 2 OCPPHub, 3 beide (verschiedene Geraete)
         $this->RegisterPropertyInteger('WB1_Mode',            0);   // Wallbox-Modus: 0 automatisch, 1 Smart Charging (Tibber hat die Hoheit), 2 EMS steuert, 3 nur beobachten
         $this->RegisterPropertyInteger('WB2_Mode',            0);
+        $this->RegisterPropertyInteger('PLAN_GridSignal_Weight', 0); // 0.113.0: Netzsignal im Tagesplan, 0 = aus, 100 = volle Gewichtung
         $this->RegisterPropertyBoolean('PLAN_Optimizer', true); // 0.102.0: Akku-Optimierer statt Schwellen (Nachtfenster/Absicherung/Rang)
         $this->RegisterPropertyString('EXT_Write_Allowed', '[]');     // 0.110.0 Fremdanbindung: Instanzen fremder Module, an die EMS schreiben darf
         $this->RegisterAttributeString('ExtDiscoveryErrors', '[]');
@@ -3293,7 +3296,7 @@ class EMS extends IPSModule
             . '|nw=' . ($this->ReadPropertyBoolean('PLAN_NightGrid_Active') ? $this->ReadPropertyInteger('PLAN_NightGrid_EndHour') : 0)
             . '|pd=' . ($this->ReadPropertyBoolean('PLAN_PreDischarge_Active') ? 1 : 0)
             . '|ab=' . ($this->ReadPropertyBoolean('PLAN_Bedarf_Aktiv') ? 1 : 0) . '/' . $this->ReadPropertyInteger('BAT_SOC_Safety_Margin_Pct') . '/' . $this->ReadPropertyInteger('PLAN_Abend_MinSoc') . '/' . $this->ReadPropertyInteger('PLAN_Abend_Hour')
-            . '|opt=' . ($this->ReadPropertyBoolean('PLAN_Optimizer') ? 1 : 0)
+            . '|opt=' . ($this->ReadPropertyBoolean('PLAN_Optimizer') ? 1 : 0) . '/gs' . $this->ReadPropertyInteger('PLAN_GridSignal_Weight')
             . '|man=' . md5($this->liveStr('PLAN_Manual'))
             . '|ext=' . $this->ReadPropertyInteger('PLAN_NightGrid_ExtendHours') . '/' . $this->ReadPropertyFloat('PLAN_NightGrid_ExtendTol_ct'));
     }
@@ -5955,6 +5958,7 @@ class EMS extends IPSModule
             $lfcX = $this->getLfcInstance(); $loadD2 = $this->getLoadForecastSlots($lfcX, 2);
             list($dpP, $dpPvX, $dpL, $estFrom) = EMS_Planner::extendHorizon($dpP, $dpPvX, $dpL, $known, $estIdx, $loadD2, (float)$avgHouseWTomorrow);
         }
+        $ctx['gridSig'] = $this->gridSignalSurcharges($this->ReadPropertyInteger('PLAN_GridSignal_Weight'), count($dpP));
         $dp = $this->ReadPropertyBoolean('PLAN_Optimizer') ? $this->optimizeBattery($dpP, $dpPvX, $dpL, $nowSlot, $soc, $ctx, $dpForced, $estFrom) : array();
 
         // 0.93.0: Nachtziel nach Bedarf bis zur naechsten Nacht (heute: Fensterende bis Mitternacht, morgen: bis Tagesende)
