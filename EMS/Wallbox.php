@@ -252,8 +252,17 @@ trait EMSWallbox
                 $this->emsLog(EMS_LOG_BASIC, sprintf('WB%d: Jetzt laden abgelaufen, es gilt wieder die Ladeart', $n));
             }
         }
+        // 0.114.0: Messung der Ladegeschwindigkeit (ChargerHub 1.15) -- anstossen und waehrenddessen nicht schalten
+        $calib = array();
+        for ($n = 1; $n <= $count; $n++) {
+            if ($modes[$n] !== 'ems') { continue; }
+            $ce = $this->getChargerEntry($n);
+            $this->maybeStartChargeCurve($n, $ce);
+            if (!empty($ce['calibrating'])) { $calib[$n] = true; }
+        }
         if (!in_array((string)($d['source'] ?? ''), array('netzbetreiber', 'nutzer'), true)) {
             for ($n = 1; $n <= $count; $n++) {
+                if (isset($calib[$n])) { continue; }
                 if ($modes[$n] !== 'ems' || ($this->liveInt('WB' . $n . '_ChargeMode') <= 0 && !$this->wallboxTargetConfigured($n) && $this->ReadAttributeInteger('WB' . $n . 'NowUntil') <= time())) { continue; }
                 $plan = $this->wallboxChargePlanFor($n, $s);
                 if ($plan === null) { continue; }
@@ -263,12 +272,17 @@ trait EMSWallbox
         }
         $this->enforceGridImportBudget($d, $s);
         for ($n = 1; $n <= $count; $n++) {
-            if ($modes[$n] !== 'ems') { continue; }
+            if ($modes[$n] !== 'ems' || isset($calib[$n])) { continue; }
             if (isset($plans[$n]) && !empty($d['wb' . $n . '_enable'])) { $this->applyWallboxChargePlan($n, $plans[$n]); }
             else { $this->controlWallbox($n, $d['wb' . $n . '_enable']); }
         }
         for ($n = 1; $n <= $count; $n++) {
+            if (isset($calib[$n])) {
+                $this->publishWallboxPlan($n, $this->t('Measuring the charging speed: the wallbox steps through the charging currents, EMS does not intervene.'));
+                continue;
+            }
             $this->publishWallboxPlan($n, $this->wallboxPlanText($n, $modes[$n], $d, $s, $plans[$n] ?? null));
+            if ($modes[$n] === 'ems') { $this->publishWallboxWindows($n, (isset($plans[$n]) && isset($plans[$n]['slots'])) ? $plans[$n] : null, $this->getChargerEntry($n)); }
         }
     }
 
@@ -768,8 +782,13 @@ trait EMSWallbox
             return null;
         }
         $kw = $maxA * 230.0 * $phases / 1000.0;
-        $cfgW = $this->ReadPropertyInteger('WB' . $n . '_Max_Power_W');
-        if ($cfgW > 0) { $kw = min($kw, $cfgW / 1000.0); }
+        $learned = $this->wallboxLearnedPowerW($n, $entry);
+        if ($learned['w'] > 0) {
+            $kw = min($kw, $learned['w'] / 1000.0); // 0.114.0: gemessene bzw. aus dem Archiv gelernte Ladeleistung vor "Max. Leistung"
+        } else {
+            $cfgW = $this->ReadPropertyInteger('WB' . $n . '_Max_Power_W');
+            if ($cfgW > 0) { $kw = min($kw, $cfgW / 1000.0); }
+        }
         $plan = $this->wallboxTargetPlan(array('targetKwh' => $target, 'chargedKwh' => $this->wallboxSessionChargedKwh($n, (float)GetValue($eId)), 'now' => $now,
             'deadline' => $this->ReadAttributeInteger('WB' . $n . 'TargetDeadline'), 'prices' => $this->targetPriceMap(), 'powerKw' => $kw, 'bufferPct' => 20));
         if ($plan['state'] === 'done') {
@@ -783,8 +802,107 @@ trait EMSWallbox
             return null;
         }
         if ($plan['state'] === 'late') { $plan['text'] = '⚠️ ' . $plan['text']; }
+        if ($learned['w'] > 0) {
+            $plan['text'] .= sprintf($learned['src'] === 'measured' ? $this->t(' (planned with %s kW, measured)') : $this->t(' (planned with %s kW, learned from the archive)'), $this->num($kw, 1));
+        }
         $plan['currentA'] = $maxA;
+        $plan['powerW'] = (int)round($kw * 1000.0);
+        $plan['deadline'] = $this->ReadAttributeInteger('WB' . $n . 'TargetDeadline');
         return $plan;
+    }
+
+    /**
+     * 0.114.0 (Dietmar 23.11.2026, "mit Rueckgriff aufs Archiv"): erwartete Ladeleistung fuer die Ladeziel-Planung.
+     * 1. measuredMaxPowerW aus dem Vertrag (ChargerHub 1.15, Messung beim Anstecken), 2. sonst aus dem Archiv der Leistungsvariable:
+     * 90. Perzentil aller Werte ueber 1 kW der letzten 30 Tage (mindestens 8 Werte), hoechstens alle 6 h neu ausgewertet.
+     * array('w' => int, 'src' => 'measured'|'archive'|'')
+     */
+    private function wallboxLearnedPowerW(int $n, array $entry): array
+    {
+        $m = (int)($entry['measuredMaxPowerW'] ?? 0);
+        if ($m > 0) { return array('w' => $m, 'src' => 'measured'); }
+        $now = time();
+        if ($now - $this->ReadAttributeInteger('WB' . $n . 'ArchAt') >= 6 * 3600) {
+            $this->WriteAttributeInteger('WB' . $n . 'ArchAt', $now);
+            $this->WriteAttributeInteger('WB' . $n . 'ArchW', $this->archivedChargePowerW((int)($entry['powerID'] ?? 0), $now));
+        }
+        $w = $this->ReadAttributeInteger('WB' . $n . 'ArchW');
+        return array('w' => $w, 'src' => $w > 0 ? 'archive' : '');
+    }
+
+    /** Reine Auswertung: 90. Perzentil der archivierten Ladeleistung (W) ueber 1 kW, 0 = zu wenig Daten oder kein Archiv. */
+    private function archivedChargePowerW(int $powerId, int $now): int
+    {
+        $arch = $this->getArchiveInstanceId();
+        if ($arch <= 0 || $powerId <= 0 || !IPS_VariableExists($powerId)) { return 0; }
+        try {
+            if (!@AC_GetLoggingStatus($arch, $powerId)) { return 0; }
+            $rows = @AC_GetLoggedValues($arch, $powerId, $now - 30 * 86400, $now, 5000);
+        } catch (Throwable $e) { return 0; }
+        return self::chargePowerPercentile(is_array($rows) ? $rows : array());
+    }
+
+    public static function chargePowerPercentile(array $rows): int
+    {
+        $v = array();
+        foreach ($rows as $r) { $x = (float)($r['Value'] ?? 0); if ($x > 1000.0) { $v[] = $x; } }
+        if (count($v) < 8) { return 0; }
+        sort($v);
+        return (int)round($v[(int)floor(0.9 * (count($v) - 1))]);
+    }
+
+    /**
+     * 0.114.0: Messung der Ladegeschwindigkeit anstossen (ChargerHub 1.15, CHUB_MeasureChargeCurve): einmal je Sitzung, sobald ein
+     * Fahrzeug steckt und die Ladeart preisgesteuert ist (auch nach dem Umstellen), solange noch kein Messwert vorliegt.
+     */
+    private function maybeStartChargeCurve(int $n, array $entry): void
+    {
+        $plugId = (int)($entry['plugStateID'] ?? 0);
+        $plugged = ($plugId > 0 && IPS_VariableExists($plugId)) ? (bool)GetValue($plugId) : false;
+        if (!$plugged) {
+            if ($this->ReadAttributeInteger('WB' . $n . 'CurveTried') !== 0) { $this->WriteAttributeInteger('WB' . $n . 'CurveTried', 0); }
+            return;
+        }
+        if (($entry['source'] ?? '') !== 'chargerhub' || !function_exists('CHUB_MeasureChargeCurve')) { return; }
+        if ($this->liveInt('WB' . $n . '_ChargeMode') > 0 || !empty($entry['calibrating']) || (int)($entry['measuredMaxPowerW'] ?? 0) > 0) { return; }
+        if ($this->ReadAttributeInteger('WB' . $n . 'CurveTried') !== 0) { return; }
+        $this->WriteAttributeInteger('WB' . $n . 'CurveTried', time());
+        try { $r = @CHUB_MeasureChargeCurve((int)$entry['instanceID']); } catch (Throwable $e) { $r = $e->getMessage(); }
+        $this->emsLog(EMS_LOG_BASIC, sprintf('WB%d: Messung der Ladegeschwindigkeit angestossen (%s)', $n, is_string($r) ? $r : ''));
+    }
+
+    /** Reine Rechnung: Viertelstunden-Beginne zu Fenstern {from, to, powerW} zusammenfassen. */
+    public static function slotsToWindows(array $slots, int $powerW): array
+    {
+        sort($slots);
+        $out = array();
+        foreach ($slots as $t) {
+            $t = (int)$t;
+            $k = count($out) - 1;
+            if ($k >= 0 && $out[$k]['to'] === $t) { $out[$k]['to'] = $t + 900; continue; }
+            $w = array('from' => $t, 'to' => $t + 900);
+            if ($powerW > 0) { $w['powerW'] = $powerW; }
+            $out[] = $w;
+        }
+        return $out;
+    }
+
+    /** 0.114.0: geplante Ladefenster per CHUB_SetPlanWindows an den ChargerHub (Vertrag 1.15), nur bei Aenderung bzw. vor Ablauf. */
+    private function publishWallboxWindows(int $n, ?array $plan, array $entry): void
+    {
+        if (!function_exists('CHUB_SetPlanWindows')) { return; }
+        if (($entry['source'] ?? '') !== 'chargerhub' || (int)($entry['instanceID'] ?? 0) <= 0) { return; }
+        $now = time();
+        $win = ($plan !== null && !empty($plan['slots'])) ? self::slotsToWindows((array)$plan['slots'], (int)($plan['powerW'] ?? 0)) : array();
+        $win = array_values(array_filter($win, function ($w) use ($now) { return $w['to'] > $now; }));
+        $json = json_encode($win);
+        $last = $this->ReadAttributeString('WB' . $n . 'WinSent');
+        if ($win === array() && ($last === '' || $last === '[]')) { return; }
+        $until = ($win === array()) ? 0 : max((int)($plan['deadline'] ?? 0), (int)end($win)['to']);
+        if ($json === $last && $now - $this->ReadAttributeInteger('WB' . $n . 'WinSentAt') < 3600) { return; }
+        try { @CHUB_SetPlanWindows((int)$entry['instanceID'], $json, $until); } catch (Throwable $e) { return; }
+        $this->WriteAttributeString('WB' . $n . 'WinSent', $json);
+        $this->WriteAttributeInteger('WB' . $n . 'WinSentAt', $now);
     }
 
     private function wallboxWriteEntry(int $num): ?array

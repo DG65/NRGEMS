@@ -129,6 +129,8 @@ function SBH_GetState($iid)               { return $GLOBALS['SBH_STATE']; }
 function SPOT_GetPriceCurve($iid)         { return $GLOBALS['SPOT_CURVE'] ?? []; }
 function TIBBERGR_GetPriceCurve($iid)     { return $GLOBALS['TIBBER_CURVE']; }
 function CHUB_SetPlanInfo($iid, $text, $until = 0) { $GLOBALS['PLANINFO'][] = [$iid, $text, $until]; return true; }
+function CHUB_SetPlanWindows($iid, $windows, $until = 0) { $GLOBALS['PLANWIN'][] = [$iid, $windows, $until]; return ''; }
+function CHUB_MeasureChargeCurve($iid) { $GLOBALS['CURVE'][] = $iid; return 'started'; }
 function TIBBERGR_GetActiveControls($iid) { return $GLOBALS['ACTIVE_CONTROLS']; }
 $GLOBALS['FLEX_DEVICES'] = [];
 function TIBBERGR_GetFlexDevices($iid)    { return $GLOBALS['FLEX_DEVICES']; }
@@ -318,7 +320,7 @@ function fmt(array $d) {
 define('EMS_TOOLS_DIR', __DIR__);
 foreach (['10-steuerung', '20-formular-sprache', '30-konstellationen-preise', '40-solis', '50-wallbox', '60-preise-planung',
           '70-regressionen-netzdienlich', '80-anlage-abrechnung', '90-simulation-waermepumpe', '100-formularstatus-bilanz',
-          '110-planung-verbund', '120-umbau-november', '130-phasenwaechter', '140-fernsteuerung', '150-fremdanbindung'] as $emsKapitel) {
+          '110-planung-verbund', '120-umbau-november', '130-phasenwaechter', '140-fernsteuerung', '150-fremdanbindung', '160-ladeleistung'] as $emsKapitel) {
     require __DIR__ . '/szenarien/' . $emsKapitel . '.php';
 }
 

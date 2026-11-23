@@ -46,6 +46,7 @@ define('EMS_LOG_VERBOSE',     2);
 define('EMS_COLOR_AUTO', 0x2E8B3D); // Gruen: Wert wurde automatisch uebernommen (🔗-Zeilen im Formular)
 // Quelltexte englisch, deutsche Fassung in locale.json; newsBanner() uebersetzt je Zeile.
 define('EMS_NEWS_VERSIONS', array(
+    '0.114.0' => array('NEW: Charging target plans with the real charging power. Until now the plan assumed "Max. power"; a car that charges more slowly missed the target. EMS now uses the charging power measured by ChargerHub (from 0.17.0, measured once when the car is plugged in and charging is price-controlled) or, until then, the power learned from the archive of the wallbox. The planned charging windows are passed to ChargerHub.'),
     '0.113.0' => array('NEW: Grid signal in the day plan. With the slider "Consider grid signal (StromGedacht)" under the battery optimizer you decide how strongly the traffic light counts: the higher the setting, the more grid purchases at orange/red are avoided and super green is preferred. Only grid purchases are affected, never PV or feed-in. Default 0 % (off).'),
     '0.112.0' => array('NEW: External connection now also for price, forecast and grid signal modules by other authors. They are only read and are used when the matching NRG-Stack module (Tibber Grid Reward, Börsenpreis, Prognose, StromGedacht) is not installed. An end-customer price is only used for planning if it includes grid fees.'),
     '0.111.0' => array('NEW: External connection now also for heat pumps and meters. Heat pump modules by other authors are found automatically; their additional run is only switched once the instance is in "External modules the EMS may control" and the module reports a fallback time. External meters are read; estimated values are never used for control.'),
@@ -725,6 +726,11 @@ class EMS extends IPSModule
             $this->RegisterAttributeInteger('WB' . $i . 'NowUntil', 0);          // "Jetzt laden" aktiv bis (Unix-Zeit), 0 = aus
             $this->RegisterAttributeString('WB' . $i . 'PlanSent', '');          // zuletzt an ChargerHub gemeldeter Plantext
             $this->RegisterAttributeInteger('WB' . $i . 'PlanSentAt', 0);
+            $this->RegisterAttributeInteger('WB' . $i . 'ArchW', 0);            // 0.114.0: Ladeleistung aus dem Archiv gelernt (W), 0 = unbekannt
+            $this->RegisterAttributeInteger('WB' . $i . 'ArchAt', 0);           // Zeitpunkt der letzten Archiv-Auswertung
+            $this->RegisterAttributeInteger('WB' . $i . 'CurveTried', 0);       // Messung der Ladegeschwindigkeit in dieser Sitzung angestossen (Unix-Zeit)
+            $this->RegisterAttributeString('WB' . $i . 'WinSent', '');          // zuletzt an ChargerHub gemeldete Ladefenster (JSON)
+            $this->RegisterAttributeInteger('WB' . $i . 'WinSentAt', 0);
         }
         $this->RegisterAttributeInteger('SolisLastMode', -1);     // zuletzt an den Solis gesendeter Zwangsmodus (0 frei, 1 Laden, 2 Entladen, -1 = unbekannt)
         $this->RegisterAttributeInteger('SolisLastPowerW', 0);
